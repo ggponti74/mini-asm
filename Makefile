@@ -1,6 +1,6 @@
 # Compiler and flags
-CC = gcc
-CFLAGS = -Wall -Wextra -I./src
+CC = i686-w64-mingw32-gcc
+CFLAGS = -Wall -Wextra -I./src -m32
 
 # Source and output
 SRC = $(wildcard src/*.c)
