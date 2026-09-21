@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build EXE
-        run: gcc -o mini-asm.exe src/*.c
+        run: gcc -I./src -o mini-asm.exe src/*.c
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
