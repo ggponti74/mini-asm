@@ -12,6 +12,5 @@ all: $(OUT)
 $(OUT): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $^
 
-# Clean up build artifacts
 clean:
 	rm -f $(OUT)
