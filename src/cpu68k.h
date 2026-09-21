@@ -12,12 +12,5 @@ typedef struct {
     uint32_t SR;     // Status register (flags)
 } CPU68K;
 
-// Opcodes are modular: each entry maps a mnemonic to bytes
-typedef struct {
-    const char *mnemonic;   // e.g. "RTS"
-    const uint8_t *bytes;   // raw x86 opcode sequence
-    size_t length;          // length of opcode sequence
-} OpcodeEntry;
-
 #endif // CPU68K_H
 

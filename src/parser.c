@@ -1,5 +1,8 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>  // for atoi
+
 
 #include "parser.h"
 #include "opcodes.h"
@@ -38,4 +41,41 @@ const OpcodeEntry* parse_line(const char *line, size_t line_num) {
     // Future: add MOVE, ADD, etc. with operand validation
 
     return entry;
+}
+
+// Very simple tokenizer for demo purposes
+size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
+    size_t count = 0;
+    const char *p = strchr(line, ' '); // find first space after mnemonic
+    if (!p) return 0;
+    p++; // move past space
+
+    char token[64];
+    while (*p && count < max_ops) {
+        // skip commas and spaces
+        while (isspace((unsigned char)*p) || *p == ',') p++;
+
+        // copy token until comma or end
+        size_t len = 0;
+        while (*p && *p != ',' && *p != '\n' && len < sizeof(token)-1) {
+            token[len++] = *p++;
+        }
+        token[len] = '\0';
+
+        // classify operand
+        if (token[0] == 'D' && isdigit(token[1])) {
+            ops[count].type = OPERAND_REGISTER;
+            ops[count].value.reg = token[1] - '0';
+        } else if (token[0] == '#') {
+            ops[count].type = OPERAND_IMMEDIATE;
+            ops[count].value.imm = atoi(&token[1]);
+        } else {
+            ops[count].type = OPERAND_LABEL;
+            ops[count].value.label = strdup(token);
+        }
+
+        count++;
+    }
+
+    return count;
 }

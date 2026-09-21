@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <elf.h>   // provides Elf32_Ehdr, Elf32_Phdr, constants like ET_EXEC, EM_386
+
 
 // Align to 512 bytes for file alignment
 #define FILE_ALIGN 0x200
