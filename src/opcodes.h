@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "cpu68k.h"
+#include "src/cpu68k.h"
 
 // Lookup function: find an opcode entry by mnemonic
 const OpcodeEntry* lookup_opcode(const char *mnemonic);

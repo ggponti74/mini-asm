@@ -1,9 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "parser.h"
-#include "opcodes.h"
-#include "pe_writer.h"
+
+#include "src/parser.h"
+#include "src/opcodes.h"
+#include "src/pe_writer.h"
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
