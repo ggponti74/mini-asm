@@ -10,8 +10,8 @@ OUT = mini-asm.exe
 all: $(OUT)
 
 $(OUT): $(SRC)
-    $(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^
 
 # Clean up build artifacts
 clean:
-    rm -f $(OUT)
+	rm -f $(OUT)
