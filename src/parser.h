@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#include "src/cpu68k.h"
+#include "cpu68k.h"
 
 // Parse a single line of source code.
 // Returns an OpcodeEntry pointer if valid, NULL if error.

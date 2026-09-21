@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "src/opcodes.h"
+#include "opcodes.h"
 
 // Define raw opcode bytes
 static const uint8_t RTS_BYTES[] = { 0xC3 }; // x86 RET

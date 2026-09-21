@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "src/parser.h"
-#include "src/opcodes.h"
+#include "parser.h"
+#include "opcodes.h"
 
 // Simple error reporting
 static void report_error(size_t line, size_t col, const char *msg) {
