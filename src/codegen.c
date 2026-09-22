@@ -33,9 +33,11 @@ static void encode_operand(const Operand *op, OutputBuffer *out) {
 void emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
     if (!entry || !out) return;
 
-    // Write base opcode (always 2 bytes)
-    buffer_write(out, (uint8_t)(entry->opcode >> 8));
-    buffer_write(out, (uint8_t)(entry->opcode & 0xFF));
+    // Write base opcode (entry->size bytes, most-significant byte first,
+    // matching the literal byte order used in opcode_table[])
+    for (size_t i = entry->size; i > 0; i--) {
+        buffer_write(out, (uint8_t)(entry->opcode >> ((i - 1) * 8)));
+    }
 
     // Write operands
     for (size_t i = 0; i < entry->operand_count; i++) {

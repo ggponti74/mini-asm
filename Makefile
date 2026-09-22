@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -I./src
 
 # Source and output
 SRC = $(wildcard src/*.c)
-OUT = mini-asm.exe
+OUT = mini-asm
 
 # Default target
 all: $(OUT)

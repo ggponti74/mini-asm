@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Build operands (parser should fill this)
-        Operand ops[entry->size];
+        Operand ops[entry->operand_count];
         size_t op_count = extract_operands(line, ops, entry->operand_count);
 
         // Validate operand count

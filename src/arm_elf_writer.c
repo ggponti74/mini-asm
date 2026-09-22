@@ -2,7 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
-void write_arm_elf(const char *filename) {
+#include "arm_elf_writer.h"
+
+void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+    if (!buf) return;
+
     FILE *f = fopen(filename, "wb");
     if (!f) return;
 
@@ -29,8 +33,8 @@ void write_arm_elf(const char *filename) {
     phdr.p_type   = PT_LOAD;
     phdr.p_offset = 0x8000;      // file offset where code starts
     phdr.p_vaddr  = 0x8000;      // virtual address
-    phdr.p_filesz = 4;           // one ARM instruction
-    phdr.p_memsz  = 4;
+    phdr.p_filesz = (Elf32_Word)buf->size;  // actual assembled code size
+    phdr.p_memsz  = (Elf32_Word)buf->size;
     phdr.p_flags  = PF_X | PF_R;
     phdr.p_align  = 4;
 
@@ -42,9 +46,8 @@ void write_arm_elf(const char *filename) {
     memset(pad, 0, sizeof(pad));
     fwrite(pad, 1, sizeof(pad), f);
 
-    // write ARM32 "BX LR" instruction
-    unsigned char code[4] = { 0x1E, 0xFF, 0x2F, 0xE1 }; // little-endian
-    fwrite(code, 1, 4, f);
+    // write the assembled instruction bytes produced by emit_code()
+    fwrite(buf->data, 1, buf->size, f);
 
     fclose(f);
 }
