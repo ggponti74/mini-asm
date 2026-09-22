@@ -1,0 +1,101 @@
+diff --git a/Makefile b/Makefile
+index 6f7f04e..6984513 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,10 @@
+ # Compiler and flags
+ CC = gcc
+-CFLAGS = -Wall -Wextra -I./src
++
++# Target architecture: ARM (default) or X86
++# Build with: make TARGET=X86
++TARGET ?= ARM
++CFLAGS = -Wall -Wextra -I./src -DTARGET_$(TARGET)
+ 
+ # Source and output
+ SRC = $(wildcard src/*.c)
+diff --git a/src/main.c b/src/main.c
+index 284de0e..ac57562 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -5,8 +5,14 @@
+ #include "parser.h"
+ #include "opcodes.h"
+ #include "codegen.h"
+-#include "elf_writer.h"
++
++#if defined(TARGET_ARM)
+ #include "arm_elf_writer.h"
++#elif defined(TARGET_X86)
++#include "elf_writer.h"
++#else
++#error "No target architecture defined. Build with -DTARGET_ARM or -DTARGET_X86 (see Makefile TARGET variable)."
++#endif
+ 
+ int main(int argc, char *argv[]) {
+     if (argc < 2) {
+@@ -61,7 +67,11 @@ int main(int argc, char *argv[]) {
+ 
+     if (errors == 0) {
+         printf("Assembly complete. %zu bytes emitted.\n", buf.size);
+-        write_arm_elf("a.out", &buf);   // ✅ produce ELF file
++#if defined(TARGET_ARM)
++        write_arm_elf("a.out", &buf);   // ✅ produce ARM ELF file
++#elif defined(TARGET_X86)
++        write_elf("a.out", &buf);       // ✅ produce x86 ELF file
++#endif
+     } else {
+         printf("Assembly failed with %d error(s).\n", errors);
+     }
+diff --git a/src/opcodes.c b/src/opcodes.c
+index eae6f30..a7ac014 100644
+--- a/src/opcodes.c
++++ b/src/opcodes.c
+@@ -5,13 +5,22 @@
+ #include "codegen.h"
+ 
+ 
+-// Define raw opcode bytes
+-//static const uint8_t RTS_BYTES[] = { 0xC3 }; // x86 RET
+-
++// mini-asm's source language is 68K-style mnemonics (RTS, etc.) regardless
++// of target platform. Only the encoded machine code bytes differ per
++// architecture — the mnemonic stays "RTS" for both.
++#if defined(TARGET_ARM)
++static const OpcodeEntry opcode_table[] = {
++    // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
++    { "RTS", 0x1EFF2FE1, 4, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // ARM32 "BX LR"
++};
++#elif defined(TARGET_X86)
+ static const OpcodeEntry opcode_table[] = {
+     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
+-    { "RTS", 0x1EFF2FE1, 4, 1, 0, { OPERAND_NONE, OPERAND_NONE } },
++    { "RTS", 0xC3, 1, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // x86 "RET"
+ };
++#else
++#error "No target architecture defined. Build with -DTARGET_ARM or -DTARGET_X86 (see Makefile TARGET variable)."
++#endif
+ 
+ const OpcodeEntry* lookup_opcode(const char *mnemonic) {
+     for (size_t i = 0; i < sizeof(opcode_table)/sizeof(opcode_table[0]); i++) {
+diff --git a/src/parser.c b/src/parser.c
+index 034cc10..0b77d1e 100644
+--- a/src/parser.c
++++ b/src/parser.c
+@@ -28,13 +28,12 @@ const OpcodeEntry* parse_line(const char *line, size_t line_num) {
+         return NULL;
+     }
+ 
+-    // Validate operand count
+-    if (strcmp(mnemonic, "RTS") == 0) {
+-        // RTS must have no operands
++    // Validate operand count for zero-operand instructions (e.g. RTS, RET)
++    if (entry->operand_count == 0) {
+         char extra[32];
+         if (sscanf(line + strlen(mnemonic), "%31s", extra) == 1) {
+             report_error(line_num, (size_t)(strlen(mnemonic) + 2),
+-                         "RTS does not take operands");
++                         "instruction does not take operands");
+             return NULL;
+         }
+     }

@@ -5,8 +5,14 @@
 #include "parser.h"
 #include "opcodes.h"
 #include "codegen.h"
-#include "elf_writer.h"
+
+#if defined(TARGET_ARM)
 #include "arm_elf_writer.h"
+#elif defined(TARGET_X86)
+#include "elf_writer.h"
+#else
+#error "No target architecture defined. Build with -DTARGET_ARM or -DTARGET_X86 (see Makefile TARGET variable)."
+#endif
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -61,7 +67,11 @@ int main(int argc, char *argv[]) {
 
     if (errors == 0) {
         printf("Assembly complete. %zu bytes emitted.\n", buf.size);
-        write_arm_elf("a.out", &buf);   // ✅ produce ELF file
+#if defined(TARGET_ARM)
+        write_arm_elf("a.out", &buf);   // ✅ produce ARM ELF file
+#elif defined(TARGET_X86)
+        write_elf("a.out", &buf);       // ✅ produce x86 ELF file
+#endif
     } else {
         printf("Assembly failed with %d error(s).\n", errors);
     }

@@ -28,13 +28,12 @@ const OpcodeEntry* parse_line(const char *line, size_t line_num) {
         return NULL;
     }
 
-    // Validate operand count
-    if (strcmp(mnemonic, "RTS") == 0) {
-        // RTS must have no operands
+    // Validate operand count for zero-operand instructions (e.g. RTS, RET)
+    if (entry->operand_count == 0) {
         char extra[32];
         if (sscanf(line + strlen(mnemonic), "%31s", extra) == 1) {
             report_error(line_num, (size_t)(strlen(mnemonic) + 2),
-                         "RTS does not take operands");
+                         "instruction does not take operands");
             return NULL;
         }
     }
