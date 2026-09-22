@@ -3,6 +3,10 @@
 
 #include <stdio.h>
 
+#include "codegen.h"
+
+void write_pe(const char *filename, const OutputBuffer *buf);
+
 // Start a new PE file, writing DOS + PE headers
 void pe_begin(FILE *f);
 

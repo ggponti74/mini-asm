@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
-#include <elf.h>   // provides Elf32_Ehdr, Elf32_Phdr, constants like ET_EXEC, EM_386
 
+#include "pe_writer.h"
 
 // Align to 512 bytes for file alignment
 #define FILE_ALIGN 0x200
@@ -42,6 +42,9 @@ typedef struct {
     uint16_t Characteristics;
 } COFFHeader;
 #pragma pack(pop)
+
+void write_pe(const char *filename, const OutputBuffer *buf)
+{}
 
 // Minimal pe_begin: writes DOS stub + PE signature
 void pe_begin(FILE *f) {

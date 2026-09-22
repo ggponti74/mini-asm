@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
 #if defined(TARGET_ARM)
         write_arm_elf("a.out", &buf);   // ✅ produce ARM ELF file
 #elif defined(TARGET_X86)
-        write_elf("a.out", &buf);       // ✅ produce x86 ELF file
+        write_pe("a.out", &buf);       // ✅ produce x86 ELF file
 #endif
     } else {
         printf("Assembly failed with %d error(s).\n", errors);
