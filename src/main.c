@@ -9,7 +9,7 @@
 #if defined(TARGET_ARM)
 #include "arm_elf_writer.h"
 #elif defined(TARGET_X86)
-#include "elf_writer.h"
+#include "pe_writer.h"
 #else
 #error "No target architecture defined. Build with -DTARGET_ARM or -DTARGET_X86 (see Makefile TARGET variable)."
 #endif
