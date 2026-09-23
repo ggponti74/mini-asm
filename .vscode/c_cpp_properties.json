@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "name": "Win64-Portable",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE",
+                "WIN32",
+                "_WIN64"
+            ],
+            "compilerPath": "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\mingw64\\bin\\gcc.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "windows-gcc-x64"
+        },
+        {
+            "name": "Linux-Portable",
+          "includePath": [
+                "${workspaceFolder}/**",
+                // 🐧 The updated recursive path to your downloaded Linux headers
+                "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\linux_include/include/**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "__linux__",
+                "__x86_64__"
+            ],
+            // We use the same compiler path for syntax checking, but simulate the Linux workspace layout
+            "compilerPath": "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\mingw64\\bin\\gcc.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "Custom GCC Build Task",
+      "command": "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\mingw64\\bin\\gcc.exe",
+      "args": [
+        // 🛠️ ADD YOUR GCC PARAMETERS HERE (One option per line)
+        "-g", // Include debugging symbols
+        "-Wall", // Enable all compiler warnings
+        "-O2", // Optimization level (O0, O2, O3, Os)
+        "-Wextra", // Enable extra compiler warnings
+        "-I./src", // Include source directory
+        "${workspaceFolder}\\src\\*.c",  
+
+        // If you are writing raw assembly without a C 'main' wrapper, uncomment the next line:
+        // "-nostdlib",
+
+        // Target Input File(s)
+        "${file}", // Compiles the file currently open on screen
+
+        // Output Executable Configuration
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe"
+      ],
+      "options": {
+        "cwd": "${fileDirname}"
+      },
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "Customizable GCC parameter configuration"
+    }
+  ]
+}
