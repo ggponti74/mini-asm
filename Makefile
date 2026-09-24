@@ -1,11 +1,5 @@
 # Compiler and flags
-ifeq ($(OS),Windows_NT)
-    CC = gcc   # or cl.exe for MSVC
-    # Windows build path, no elf.h
-else
-    CC = i686-elf-gcc
-    # Linux/ELF path
-endif
+CC = gcc   # or cl.exe for MSVC
 
 # Target architecture: ARM (default) or X86
 # Build with: make TARGET=X86
