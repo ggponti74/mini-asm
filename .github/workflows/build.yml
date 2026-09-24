@@ -15,7 +15,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mini-asm-arm
-          path: build/output/*
+          path: mini-asm
   windows-build:
     runs-on: windows-latest
     steps:
@@ -26,4 +26,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mini-asm-win
-          path: build/output/*
+          path: mini-asm
