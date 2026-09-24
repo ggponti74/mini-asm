@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build with Makefile
-        run: make --always-make
+        run: make --always-make TARGET=X86
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
