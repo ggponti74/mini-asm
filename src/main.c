@@ -6,6 +6,10 @@
 #include "opcodes.h"
 #include "codegen.h"
 
+// #undef TARGET_ARM
+// #undef TARGET_X86
+// #define TARGET_X86
+
 #if defined(TARGET_ARM)
 #include "arm_elf_writer.h"
 #elif defined(TARGET_X86)

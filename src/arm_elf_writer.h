@@ -5,6 +5,8 @@
 
 #include "codegen.h"
 
+#define EPILOGUE_SIZE 12   // BL (4) + mov r7,#1 (4) + svc 0 (4)
+
 void write_arm_elf(const char *filename, const OutputBuffer *buf);
 
 #endif
