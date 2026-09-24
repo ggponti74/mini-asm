@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  linux-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +16,16 @@ jobs:
         with:
           name: mini-asm
           path: mini-asm.exe
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compiler
+        run: choco install x86_64-elf-gcc
+      - name: Build (Windows)
+        run: make TARGET=X86 CC=x86_64-elf-gcc
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-asm
+          path: mini-asm
