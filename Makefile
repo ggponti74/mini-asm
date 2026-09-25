@@ -21,5 +21,5 @@ $(OUT): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f $(OUT)
+	rm -f $(OUT)*
 	

@@ -14,12 +14,14 @@ static const OpcodeEntry arm_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
     { "RTS", 0x1EFF2FE1, 4, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // ARM32 "BX LR"
     { "NOP", 0x0000A0E1, 4, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // ARM32 "MOV r0, r0"
+    { "MOVE", 0xE0D1F002, 4, 1, 2, { OPERAND_IMMEDIATE, OPERAND_REGISTER } },  // ARM32 "SBCS R15, Rn, Rm"
 };
 
 static const OpcodeEntry x86_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
     { "RTS", 0xC3, 1, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // x86 "RET"
     { "NOP", 0x90, 1, 1, 0, { OPERAND_NONE, OPERAND_NONE } },  // x86 "NOP"
+    { "MOVE", 0x89, 1, 1, 2, { OPERAND_IMMEDIATE, OPERAND_REGISTER } },  // x86 "MOV r/m32, r32"
 };
 
 static const OpcodeEntry *g_active_table = NULL;
