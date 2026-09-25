@@ -9,6 +9,7 @@
       -h, --help            show this help
 
     Available targets:
+
       x86    Windows PE32 console executable (x86)
       arm    Bare-metal/Linux ELF32 executable (ARM)
       elf    Linux ELF32 executable (x86)
