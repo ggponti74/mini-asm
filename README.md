@@ -1,4 +1,4 @@
-#Minimal 68K assembler for the x86/ELF/ARM architectures.
+# Minimal 68K assembler for the x86/ELF/ARM architectures.
 
 # Usage
 
