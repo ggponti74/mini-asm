@@ -1,10 +1,10 @@
 # Compiler and flags
 CC = gcc   # or cl.exe for MSVC
 
-# Target architecture: ARM (default) or X86
-# Build with: make TARGET=X86
-TARGET ?= ARM
-CFLAGS = -Wall -Wextra -I./src -DTARGET_$(TARGET)
+# Target platform selection now happens at runtime (mini-asm -t <target>),
+# not at build time, so a single binary bundles every output writer.
+# See src/platform.c for the list of available -t targets.
+CFLAGS = -Wall -Wextra -I./src
 
 # Source and output
 SRC = $(wildcard src/*.c)
