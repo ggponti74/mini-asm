@@ -1,6 +1,6 @@
-# Minimal 68K assembler for x86/ELF/ARM
+## Minimal 68K assembler for x86/ELF/ARM
 
-  # Usage
+  ### Usage
 
     mini-asm [-t target] [-o output] <source.asm>
 
@@ -14,6 +14,6 @@
       arm    Bare-metal/Linux ELF32 executable (ARM)
       elf    Linux ELF32 executable (x86)
   
-  # Feedback
+  ### Feedback
 
     Send your comments and suggestions to /dev/null
