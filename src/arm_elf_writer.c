@@ -1,5 +1,8 @@
+<<<<<<< HEAD
+=======
 #include <elf.h>
 
+>>>>>>> 234ca1715fcc8cbf884357847ac3bad88711f040
 #include <stdio.h>
 #include <string.h>
 

@@ -1,5 +1,4 @@
 #include "elf_writer.h"
-#include <elf.h>
 #include <stdio.h>
 #include <string.h>
 
