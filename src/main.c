@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
             target = platform_find(argv[++i]);
             if (!target) {
                 fprintf(stderr, "%s: unknown target '%s'\n\n", argv[0], argv[i]);
-                fprintf(stderr, "Available targets:\n\n");
+                fprintf(stderr, "Available targets:\n");
                 platform_print_targets(stderr);
                 return 1;
             }

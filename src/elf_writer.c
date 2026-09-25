@@ -2,12 +2,31 @@
 #include <stdio.h>
 #include <string.h>
 
+// write_elf: assembles a minimal, statically-linked x86 Linux ELF32
+// executable containing the assembled code, followed by an epilogue
+// that guarantees a clean exit(0).
+//
+// The user's own code may end in a mnemonic like RTS (-> x86 RET), which
+// is written as if returning to a caller. To make that work at the top
+// level (where there's no caller — just whatever the kernel left on the
+// stack at process start), the entry point is the epilogue, not the
+// code: it CALLs into the code (pushing the epilogue's own address as
+// the return address), the code runs and RETs, landing back right after
+// the CALL, which then does sys_exit(0). Mirrors the BL-back-into-code
+// trick write_arm_elf() uses for the same reason.
 void write_elf(const char *filename, const OutputBuffer *buf) {
+    if (!buf) return;
+
     FILE *f = fopen(filename, "wb");
     if (!f) return;
 
     const uint32_t base_addr = 0x08048000;
     const size_t header_size = sizeof(Elf32_Ehdr) + sizeof(Elf32_Phdr);
+    (void)header_size; // headers are padded out to 0x1000 below, not packed tightly
+
+    const uint32_t code_addr = base_addr + 0x1000;
+    const uint32_t epilogue_addr = code_addr + (uint32_t)buf->size;
+    const uint32_t total_size = (uint32_t)buf->size + ELF_EPILOGUE_SIZE;
 
     Elf32_Ehdr ehdr;
     memset(&ehdr, 0, sizeof(ehdr));
@@ -21,7 +40,7 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     ehdr.e_type    = ET_EXEC;
     ehdr.e_machine = EM_386;   // x86 Linux
     ehdr.e_version = EV_CURRENT;
-    ehdr.e_entry   = base_addr + header_size; // entry = start of code
+    ehdr.e_entry   = epilogue_addr;  // start in the epilogue, not the code
     ehdr.e_phoff   = sizeof(Elf32_Ehdr);
     ehdr.e_ehsize  = sizeof(Elf32_Ehdr);
     ehdr.e_phentsize = sizeof(Elf32_Phdr);
@@ -30,25 +49,36 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     Elf32_Phdr phdr;
     memset(&phdr, 0, sizeof(phdr));
     phdr.p_type   = PT_LOAD;
-    //phdr.p_offset = header_size;             // file offset of code
-    //phdr.p_vaddr  = base_addr + header_size; // virtual address of code
-    phdr.p_filesz = buf->size;
-    phdr.p_memsz  = buf->size;
+    phdr.p_offset = 0x1000;
+    phdr.p_vaddr  = code_addr;
+    phdr.p_paddr  = code_addr;
+    // Code + epilogue both live in this one PT_LOAD segment.
+    phdr.p_filesz = total_size;
+    phdr.p_memsz  = total_size;
     phdr.p_flags  = PF_X | PF_R;
     phdr.p_align  = 0x1000;
-
-    phdr.p_offset = 0x1000;
-    phdr.p_vaddr  = base_addr + 0x1000;
-    ehdr.e_entry  = phdr.p_vaddr;
-
 
     // Write headers
     fwrite(&ehdr, 1, sizeof(ehdr), f);
     fwrite(&phdr, 1, sizeof(phdr), f);
 
-    // Write code immediately after headers
+    // Write the assembled instruction bytes produced by emit_code()
     fseek(f, 0x1000, SEEK_SET);
     fwrite(buf->data, 1, buf->size, f);
+
+    // --- epilogue: call code_addr ; mov eax,1 ; xor ebx,ebx ; int 0x80 ---
+    // The CALL pushes (address of the "mov eax,1" below) as the return
+    // address and jumps into the user's code. When the user's code RETs,
+    // it lands right back here and falls into sys_exit(0).
+    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 5);
+    uint8_t epilogue[ELF_EPILOGUE_SIZE] = {
+        0xE8, 0x00, 0x00, 0x00, 0x00,   // call code_addr (rel32 patched below)
+        0xB8, 0x01, 0x00, 0x00, 0x00,   // mov eax, 1
+        0x31, 0xDB,                     // xor ebx, ebx
+        0xCD, 0x80                      // int 0x80
+    };
+    memcpy(&epilogue[1], &call_rel, sizeof(call_rel));
+    fwrite(epilogue, 1, sizeof(epilogue), f);
 
     fclose(f);
 }
