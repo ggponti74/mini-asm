@@ -4,7 +4,8 @@
 
 // write_elf: assembles a minimal, statically-linked x86 Linux ELF32
 // executable containing the assembled code, followed by an epilogue
-// that guarantees a clean exit(0).
+// that guarantees a clean exit(EAX) -- i.e. exit(D0), since D0 maps to
+// EAX under this table's register numbering.
 //
 // The user's own code may end in a mnemonic like RTS (-> x86 RET), which
 // is written as if returning to a caller. To make that work at the top
@@ -12,8 +13,11 @@
 // stack at process start), the entry point is the epilogue, not the
 // code: it CALLs into the code (pushing the epilogue's own address as
 // the return address), the code runs and RETs, landing back right after
-// the CALL, which then does sys_exit(0). Mirrors the BL-back-into-code
-// trick write_arm_elf() uses for the same reason.
+// the CALL. From there the epilogue saves off whatever the code left in
+// EAX/D0 *before* clobbering EAX with the syscall number, so the
+// process's real exit status is whatever the assembled program computed,
+// not a hardcoded 0. Mirrors the BL-back-into-code trick write_arm_elf()
+// uses for the same reason.
 void write_elf(const char *filename, const OutputBuffer *buf) {
     if (!buf) return;
 
@@ -66,15 +70,17 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     fseek(f, 0x1000, SEEK_SET);
     fwrite(buf->data, 1, buf->size, f);
 
-    // --- epilogue: call code_addr ; mov eax,1 ; xor ebx,ebx ; int 0x80 ---
-    // The CALL pushes (address of the "mov eax,1" below) as the return
+    // --- epilogue: call code_addr ; mov ebx,eax ; mov eax,1 ; int 0x80 ---
+    // The CALL pushes (address of the "mov ebx,eax" below) as the return
     // address and jumps into the user's code. When the user's code RETs,
-    // it lands right back here and falls into sys_exit(0).
+    // it lands right back here, saves EAX/D0 into EBX (the sys_exit exit
+    // status register) *before* EAX gets overwritten with the syscall
+    // number, and falls into sys_exit(D0).
     const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 5);
     uint8_t epilogue[ELF_EPILOGUE_SIZE] = {
         0xE8, 0x00, 0x00, 0x00, 0x00,   // call code_addr (rel32 patched below)
-        0xB8, 0x01, 0x00, 0x00, 0x00,   // mov eax, 1
-        0x31, 0xDB,                     // xor ebx, ebx
+        0x89, 0xC3,                     // mov ebx, eax   (exit status <- D0)
+        0xB8, 0x01, 0x00, 0x00, 0x00,   // mov eax, 1     (sys_exit)
         0xCD, 0x80                      // int 0x80
     };
     memcpy(&epilogue[1], &call_rel, sizeof(call_rel));

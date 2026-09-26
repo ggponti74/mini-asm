@@ -1,59 +1,36 @@
-#ifndef MINIASM_PARSER_H
-#define MINIASM_PARSER_H
+#ifndef PARSER_H
+#define PARSER_H
 
+#include <stdio.h>
 #include <stddef.h>
-#include <stdint.h>
 
+#include "cpu68k.h"
 #include "opcodes.h"
-#include "registers.h"
 
-#define MAX_LINE_LEN 128
+// Parse a single line of source code.
+// Returns an OpcodeEntry pointer if valid, NULL if error.
+// line_num is used for error reporting.
+const OpcodeEntry* parse_line(const char *line, size_t line_num);
 
-typedef enum {
-    OPERAND_IMMEDIATE,
-    OPERAND_REGISTER
-} OperandKind;
+// Strips a trailing ';' comment (and the whitespace before it) from `line`
+// in place, along with any trailing newline/CR. Call this on each raw line
+// before parse_line()/extract_operands() so neither has to know about
+// comment syntax. After stripping, a comment-only or blank line becomes
+// an empty string ("") -- callers should treat that as "nothing to do
+// here", not a parse error.
+void strip_comment(char *line);
 
+// Operand structure
 typedef struct {
-    OperandKind kind;
-    int32_t immediate;  /* valid when kind == OPERAND_IMMEDIATE */
-    int reg_index;       /* valid when kind == OPERAND_REGISTER, 0-7 */
+    OperandType type;
+    union {
+        int reg;          // register index (e.g., D0 = 0, A0 = 8, etc.)
+        int32_t imm;      // immediate value
+        const char *label;// label name (resolved later)
+    } value;
 } Operand;
 
-typedef struct {
-    Opcode opcode;
-    Size size;
-    Operand src;
-    Operand dst;
-    int line_number;
-    char source_line[MAX_LINE_LEN];
-} Instruction;
+// Extract operands from a line into an array
+size_t extract_operands(const char *line, Operand *ops, size_t max_ops);
 
-typedef struct {
-    Instruction *items;
-    size_t count;
-    size_t capacity;
-} Program;
-
-typedef enum {
-    PARSE_OK,     /* instruction parsed into *out */
-    PARSE_SKIP,   /* blank line or comment-only line; nothing to execute */
-    PARSE_ERROR   /* syntax error; message written to errbuf */
-} ParseResult;
-
-/* Parse one operand ("#5", "d0", ...). Returns 1 on success, 0 on failure. */
-int parse_operand(const char *text, Operand *out);
-
-/* Parse a single source line. On PARSE_OK, *out is filled in. On
- * PARSE_ERROR, a human-readable message is written to errbuf. */
-ParseResult parse_line(const char *line, int line_number, Instruction *out,
-                        char *errbuf, size_t errbuf_size);
-
-/* Parse a whole program (newline-separated source). Returns 1 on success
- * with *out filled in (caller must program_free it), 0 on the first
- * error encountered (message written to errbuf). */
-int parse_program(const char *source, Program *out, char *errbuf, size_t errbuf_size);
-
-void program_free(Program *prog);
-
-#endif /* MINIASM_PARSER_H */
+#endif // PARSER_H

@@ -1,3 +1,2 @@
-    MOVE #0, d0
-    NOP
+    MOVE #5, D0 ; testing register
     RTS
