@@ -1,38 +1,24 @@
-#ifndef OPCODES_H
-#define OPCODES_H
+#ifndef MINIASM_OPCODES_H
+#define MINIASM_OPCODES_H
 
+#include "registers.h"
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
-
-// Operand kinds
+/* Each (mnemonic, size) combination is its own opcode. This mirrors the
+ * 68k, where size is encoded directly into the instruction, and keeps
+ * cpu.c's dispatch a flat switch with no separate runtime size lookup. */
 typedef enum {
-    OPERAND_NONE,      // no operand (e.g., RTS)
-    OPERAND_REGISTER,  // register (Dn, An)
-    OPERAND_IMMEDIATE, // immediate value (#123)
-    OPERAND_LABEL      // symbolic label
-} OperandType;
+    OP_MOVE_B,
+    OP_MOVE_W,
+    OP_MOVE_L,
+    OP_COUNT
+} Opcode;
 
-// Opcode entry structure
-typedef struct {
-    const       char *mnemonic;       // e.g., "RTS", "MOVE"
-    int         opcode;         // base opcode value
-    size_t      size;            // instruction size in bytes
-    size_t      length;         // total instruction length in bytes
-    size_t      operand_count;  // expected number of operands
-    OperandType operand_types[2]; // expected operand types (up to 2 for simplicity)
-} OpcodeEntry;
+/* Resolve a mnemonic ("move", already lowercased) plus an optional size
+ * suffix character ('b', 'w', 'l', or '\0' for "no suffix given", which
+ * defaults to byte) into an Opcode and its Size.
+ *
+ * Returns 1 and fills in opcode/size on success, 0 if the combination is
+ * not recognized. */
+int opcode_lookup(const char *mnemonic, char suffix, Opcode *opcode, Size *size);
 
-// Selects which CPU architecture's opcode table lookup_opcode() searches.
-// The instruction encoding (not just the container format) differs per
-// target CPU, so this must be called once — e.g. right after main()
-// resolves the PlatformTarget — before any call to lookup_opcode().
-// Recognized names: "arm", "x86". Returns false for an unrecognized name.
-bool opcodes_select_arch(const char *arch_name);
-
-// Lookup function: find opcode by mnemonic in the currently selected
-// architecture's table (see opcodes_select_arch()).
-const OpcodeEntry* lookup_opcode(const char *mnemonic);
-
-#endif // OPCODES_H
+#endif /* MINIASM_OPCODES_H */
