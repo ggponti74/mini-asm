@@ -1,0 +1,4 @@
+./mini-asm test.asm -t ARM
+chmod +x test
+./test
+

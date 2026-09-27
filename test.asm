@@ -1,2 +1,2 @@
-    MOVE #5, D0 ; testing register
+    MOVE.L  #5, D0 ; testing register
     RTS
