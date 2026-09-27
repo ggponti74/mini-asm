@@ -1,4 +1,4 @@
-./mini-asm test.asm -t ARM
-chmod +x test
-./test
-
+make clean && make
+./mini-asm -t elf -o test test.asm
+file test.exe
+./test; echo "exit: $?"

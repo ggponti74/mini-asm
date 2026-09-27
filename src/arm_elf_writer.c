@@ -13,7 +13,7 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   const uint32_t total_size = (uint32_t)buf->size + EPILOGUE_SIZE;
 
   FILE *f = fopen(filename, "wb");
-  if (!f)vi smote
+  if (!f)
     return;
 
   Elf32_Ehdr ehdr;

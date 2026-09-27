@@ -1,0 +1,126 @@
+diff --git a/src/arm_elf_writer.c b/src/arm_elf_writer.c
+index a365f12..9b23ae3 100644
+--- a/src/arm_elf_writer.c
++++ b/src/arm_elf_writer.c
+@@ -13,7 +13,7 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+   const uint32_t total_size = (uint32_t)buf->size + EPILOGUE_SIZE;
+ 
+   FILE *f = fopen(filename, "wb");
+-  if (!f)vi smote
++  if (!f)
+     return;
+ 
+   Elf32_Ehdr ehdr;
+diff --git a/src/codegen.c b/src/codegen.c
+index 000feed..2446e93 100644
+--- a/src/codegen.c
++++ b/src/codegen.c
+@@ -56,18 +56,106 @@ static bool emit_x86_move_imm32(const Operand *operands, OutputBuffer *out) {
+     return true;
+ }
+ 
++// Write a 32-bit ARM instruction word to the buffer least-significant-byte
++// first (ARM is little-endian), unlike the generic MSB-first path below,
++// whose table constants are pre-byte-swapped to compensate.
++static void arm_write_word_le(uint32_t word, OutputBuffer *out) {
++    buffer_write(out, (uint8_t)(word & 0xFF));
++    buffer_write(out, (uint8_t)((word >> 8) & 0xFF));
++    buffer_write(out, (uint8_t)((word >> 16) & 0xFF));
++    buffer_write(out, (uint8_t)((word >> 24) & 0xFF));
++}
++
++// ARM's "MOV Rd, #imm" (A1 encoding) doesn't take an arbitrary 32-bit
++// immediate -- it takes an 8-bit value rotated right by an even number of
++// bits (0..30), encoded as a 4-bit rotate field + the 8-bit value packed
++// into a 12-bit imm12. This finds a (rotate, imm8) pair that reproduces
++// `value`, if one exists, by trying every even rotation and checking
++// whether rotating `value` left by that amount collapses it into 8 bits
++// (the inverse of the CPU's right-rotation at decode time).
++static bool arm_try_encode_imm12(uint32_t value, uint32_t *out_imm12) {
++    for (uint32_t rot = 0; rot < 16; rot++) {
++        uint32_t shift = rot * 2;
++        uint32_t rotated = (value << shift) | (value >> ((32 - shift) & 31));
++        if (rotated <= 0xFFu) {
++            *out_imm12 = (rot << 8) | rotated;
++            return true;
++        }
++    }
++    return false;
++}
++
++// ARM has no "MOV Rd, #imm32" -- immediates are limited to the rotated
++// 8-bit form above. This used to be papered over with a placeholder
++// opcode (0xE0D1F002, actually ARM's "SBCS R15, Rn, Rm") that isn't a
++// move at all, plus the generic opcode+operand-bytes model below, which
++// doesn't fit ARM anyway: ARM instructions are always exactly 4 bytes,
++// with the register and immediate packed *inside* those 4 bytes, not
++// appended after -- appending bytes (like x86 or the old 68k model does)
++// produces a non-instruction and throws off word alignment for
++// everything emitted afterward.
++// So MOVE is special-cased here too: emit a real "MOV Rd, #imm" when the
++// immediate fits the rotated 8-bit encoding (true for small values like
++// #5), or fall back to a MOVW/MOVT pair (ARMv6T2+, universal on ARM
++// Linux) to load any other 32-bit constant. Either way this always
++// writes a whole number of 4-byte instructions.
++static bool emit_arm_move_imm(const Operand *operands, OutputBuffer *out) {
++    const Operand *imm = NULL, *reg = NULL;
++    for (int i = 0; i < 2; i++) {
++        if (operands[i].type == OPERAND_IMMEDIATE) imm = &operands[i];
++        if (operands[i].type == OPERAND_REGISTER) reg = &operands[i];
++    }
++    if (!imm || !reg || reg->value.reg < 0 || reg->value.reg > 7) return false;
++
++    uint32_t value = (uint32_t)imm->value.imm;
++    uint32_t rd = (uint32_t)reg->value.reg;
++    uint32_t imm12;
++
++    if (arm_try_encode_imm12(value, &imm12)) {
++        // MOV Rd, #imm  (cond=AL, I=1, opcode=1101/MOV, S=0)
++        arm_write_word_le(0xE3A00000u | (rd << 12) | imm12, out);
++        return true;
++    }
++
++    // Doesn't fit a single rotated-immediate -- load it in two halves.
++    // MOVW zero-extends, so if the top half is zero, MOVW alone suffices.
++    uint16_t lo = (uint16_t)(value & 0xFFFFu);
++    uint16_t hi = (uint16_t)((value >> 16) & 0xFFFFu);
++    uint32_t movw = 0xE3000000u | (((uint32_t)lo >> 12) << 16) | (rd << 12) | (lo & 0xFFFu);
++    arm_write_word_le(movw, out);
++    if (hi != 0) {
++        uint32_t movt = 0xE3400000u | (((uint32_t)hi >> 12) << 16) | (rd << 12) | (hi & 0xFFFu);
++        arm_write_word_le(movt, out);
++    }
++    return true;
++}
++
+ // Emit full instruction
+ void emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
+     if (!entry || !out) return;
+-puts(entry->mnemonic);
++
++    // Matches "MOVE" and the size-suffixed "MOVE.B"/"MOVE.W"/"MOVE.L" --
++    // all four share the same (immediate, register) operand shape and the
++    // same broken generic/placeholder encoding on x86 and ARM, so all four
++    // go through the same special-cased encoders below.
++    bool is_move = strncmp(entry->mnemonic, "MOVE", 4) == 0 &&
++                   (entry->mnemonic[4] == '\0' || entry->mnemonic[4] == '.');
++
+     const char *arch = opcodes_active_arch_name();
+     if (arch && strcmp(arch, "x86") == 0 &&
+-        strcmp(entry->mnemonic, "MOVE") == 0 &&
++        is_move &&
+         entry->operand_count == 2) {
+         if (emit_x86_move_imm32(operands, out)) return;
+         // Operands weren't the (immediate, register) shape this handles;
+         // fall through to the generic path below.
+     }
++    if (arch && strcmp(arch, "arm") == 0 &&
++        is_move &&
++        entry->operand_count == 2) {
++        if (emit_arm_move_imm(operands, out)) return;
++        // Operands weren't the (immediate, register) shape this handles;
++        // fall through to the generic path below.
++    }
+ 
+     // Write base opcode (entry->size bytes, most-significant byte first,
+     // matching the literal byte order used in opcode_table[])

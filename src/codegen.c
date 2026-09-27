@@ -59,7 +59,7 @@ static bool emit_x86_move_imm32(const Operand *operands, OutputBuffer *out) {
 // Emit full instruction
 void emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
     if (!entry || !out) return;
-puts(entry->mnemonic);
+
     const char *arch = opcodes_active_arch_name();
     if (arch && strcmp(arch, "x86") == 0 &&
         strcmp(entry->mnemonic, "MOVE") == 0 &&
