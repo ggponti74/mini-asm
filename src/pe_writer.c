@@ -1,6 +1,6 @@
+#include <string.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "pe_writer.h"
 

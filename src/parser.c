@@ -1,7 +1,7 @@
+#include <string.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h> // for atoi
-#include <string.h>
 
 #include "opcodes.h"
 #include "parser.h"

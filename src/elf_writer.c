@@ -1,6 +1,7 @@
-#include "elf_writer.h"
-#include <stdio.h>
 #include <string.h>
+#include <stdio.h>
+
+#include "elf_writer.h"
 
 // write_elf: assembles a minimal, statically-linked x86 Linux ELF32
 // executable containing the assembled code, followed by an epilogue

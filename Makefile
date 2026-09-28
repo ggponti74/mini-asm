@@ -9,6 +9,7 @@ CFLAGS = -Wall -Wextra -I./src
 # Source and output
 SRC = $(wildcard src/*.c)
 ifeq ($(OS),Windows_NT)
+	CFLAGS += -D__USE_MINGW_ANSI_STDIO=1
     OUT = mini-asm.exe
 else
     OUT = mini-asm
