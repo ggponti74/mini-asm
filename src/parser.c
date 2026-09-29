@@ -13,7 +13,8 @@ static void report_error(size_t line, size_t col, const char *msg) {
 
 void strip_comment(char *line) {
   char *semi = strchr(line, ';');
-  if (semi) *semi = '\0';
+  if (semi)
+    *semi = '\0';
 
   // Trim trailing whitespace, including the newline fgets() leaves in.
   size_t len = strlen(line);
@@ -66,10 +67,14 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   // so the mnemonic itself got glued onto the first operand into one
   // unrecognizable token.
   const char *p = line;
-  while (*p && isspace((unsigned char)*p)) p++;
-  while (*p && !isspace((unsigned char)*p)) p++;
-  while (*p && isspace((unsigned char)*p)) p++;
-  if (!*p) return 0;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  while (*p && !isspace((unsigned char)*p))
+    p++;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  if (!*p)
+    return 0;
 
   char token[64];
   while (*p && count < max_ops) {
@@ -78,7 +83,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     while (*p != '\0' && (isspace((unsigned char)*p) || *p == ',')) {
       p++;
     }
-    if (*p == '\0') break;
+    if (*p == '\0')
+      break;
 
     // copy token until comma, whitespace, or end
     size_t len = 0;
@@ -87,10 +93,12 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       token[len++] = *p++;
     }
     token[len] = '\0';
-    if (len == 0) break;
+    if (len == 0)
+      break;
 
     // classify operand
-    if ((token[0] == 'D' || token[0] == 'd') && isdigit((unsigned char)token[1])) {
+    if ((token[0] == 'D' || token[0] == 'd') &&
+        isdigit((unsigned char)token[1])) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = token[1] - '0';
     } else if (token[0] == '#') {
@@ -105,4 +113,81 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   }
 
   return count;
+}
+
+// True if `s` looks like a data register name (d0-d7, either case).
+static int is_register_name(const char *s) {
+  return (s[0] == 'D' || s[0] == 'd') && s[1] >= '0' && s[1] <= '7' &&
+         s[2] == '\0';
+}
+
+// Label names: start with a letter or '_', then letters, digits or '_'.
+// Register names are rejected so a label can never be shadowed by the
+// register classification in extract_operands().
+static int is_valid_label_name(const char *s) {
+  if (!(isalpha((unsigned char)s[0]) || s[0] == '_')) return 0;
+  for (const char *p = s + 1; *p; p++) {
+    if (!(isalnum((unsigned char)*p) || *p == '_')) return 0;
+  }
+  return !is_register_name(s);
+}
+
+const char *split_label(const char *line, char *label_out,
+                        size_t label_size, size_t line_num) {
+  label_out[0] = '\0';
+
+  // Skip indentation; `start` is the first token's first character.
+  const char *start = line;
+  while (*start && isspace((unsigned char)*start)) start++;
+
+  // First token = run of non-whitespace characters.
+  const char *end = start;
+  while (*end && !isspace((unsigned char)*end)) end++;
+  size_t len = (size_t)(end - start);
+  if (len == 0) return start;  // empty line; parse_line() will complain
+
+  char first[64];
+  if (len >= sizeof first) len = sizeof first - 1;
+  memcpy(first, start, len);
+  first[len] = '\0';
+
+  // Case 1: trailing colon forces label parsing (so "move:" is legal).
+  if (first[len - 1] == ':') {
+    first[len - 1] = '\0';
+    if (!is_valid_label_name(first) || strlen(first) >= label_size) {
+      report_error(line_num, (size_t)(start - line) + 1, "Invalid label name");
+      return NULL;
+    }
+    strcpy(label_out, first);
+    const char *rest = end;
+    while (*rest && isspace((unsigned char)*rest)) rest++;
+    return rest;
+  }
+
+  // Case 2: first token is a mnemonic -> no label.
+  if (lookup_opcode(first)) return start;
+
+  // Case 3: not a mnemonic, but the second token is -> colon-less label.
+  const char *second = end;
+  while (*second && isspace((unsigned char)*second)) second++;
+  const char *second_end = second;
+  while (*second_end && !isspace((unsigned char)*second_end)) second_end++;
+  size_t len2 = (size_t)(second_end - second);
+
+  if (len2 > 0 && len2 < 32) {
+    char tok[32];
+    memcpy(tok, second, len2);
+    tok[len2] = '\0';
+    if (lookup_opcode(tok)) {
+      if (!is_valid_label_name(first) || strlen(first) >= label_size) {
+        report_error(line_num, (size_t)(start - line) + 1, "Invalid label name");
+        return NULL;
+      }
+      strcpy(label_out, first);
+      return second;
+    }
+  }
+
+  // Case 4: no label; let parse_line() report "Unknown mnemonic".
+  return start;
 }

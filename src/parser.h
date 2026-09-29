@@ -33,4 +33,11 @@ typedef struct {
 // Extract operands from a line into an array
 size_t extract_operands(const char *line, Operand *ops, size_t max_ops);
 
+// Splits an optional leading label off `line`. Copies the label name into
+// label_out ("" if none) and returns a pointer to the instruction part of
+// the line, which is "" for a label-only line. Returns NULL on error
+// (already reported).
+const char *split_label(const char *line, char *label_out,
+                        size_t label_size, size_t line_num);
+                        
 #endif // PARSER_H
