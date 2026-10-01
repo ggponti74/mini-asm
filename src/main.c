@@ -7,6 +7,7 @@
 #include "parser.h"
 #include "platform.h"
 #include "symtab.h"
+#include "directives.h"
 
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
 #define MINI_ASM_POSIX_HOST 1
@@ -98,6 +99,14 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf)
       continue;
     }
 
+    int derr = directive_assemble(code, line_num, pass, buf);
+    if (derr >= 0)
+    {
+      errors += derr;
+      line_num++;
+      continue;
+    }
+    
     const OpcodeEntry *entry = parse_line(code, line_num);
     if (!entry)
     {
@@ -318,6 +327,6 @@ int main(int argc, char *argv[])
 
   symtab_free();
   free(buf.data);
-  
+
   return errors ? 1 : 0;
 }

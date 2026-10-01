@@ -5,6 +5,7 @@
 
 #include "opcodes.h"
 #include "parser.h"
+#include "directives.h"
 
 // Simple error reporting
 static void report_error(size_t line, size_t col, const char *msg)
@@ -196,8 +197,8 @@ const char *split_label(const char *line, char *label_out,
     return rest;
   }
 
-  // Case 2: first token is a mnemonic -> no label.
-  if (lookup_opcode(first))
+  // Case 2: first token is a mnemonic or directive -> no label.
+  if (lookup_opcode(first) || directive_is(first))
     return start;
 
   // Case 3: not a mnemonic, but the second token is -> colon-less label.
@@ -214,7 +215,7 @@ const char *split_label(const char *line, char *label_out,
     char tok[32];
     memcpy(tok, second, len2);
     tok[len2] = '\0';
-    if (lookup_opcode(tok))
+    if (lookup_opcode(tok) || directive_is(tok))
     {
       if (!is_valid_label_name(first) || strlen(first) >= label_size)
       {
@@ -225,6 +226,7 @@ const char *split_label(const char *line, char *label_out,
       return second;
     }
   }
+
 
   // Case 4: no label; let parse_line() report "Unknown mnemonic".
   return start;
