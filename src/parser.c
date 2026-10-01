@@ -7,42 +7,52 @@
 #include "parser.h"
 
 // Simple error reporting
-static void report_error(size_t line, size_t col, const char *msg) {
+static void report_error(size_t line, size_t col, const char *msg)
+{
   fprintf(stderr, "Error at line %zu, column %zu: %s\n", line, col, msg);
 }
 
-void strip_comment(char *line) {
+void strip_comment(char *line)
+{
   char *semi = strchr(line, ';');
   if (semi)
     *semi = '\0';
 
   // Trim trailing whitespace, including the newline fgets() leaves in.
   size_t len = strlen(line);
-  while (len > 0 && isspace((unsigned char)line[len - 1])) {
+  while (len > 0 && isspace((unsigned char)line[len - 1]))
+  {
     line[--len] = '\0';
   }
 }
 
-const OpcodeEntry *parse_line(const char *line, size_t line_num) {
+const OpcodeEntry *parse_line(const char *line, size_t line_num)
+{
+
   char mnemonic[32];
   int mnemonic_end = 0;
   int n = sscanf(line, "%31s%n", mnemonic, &mnemonic_end);
-  if (n != 1) {
+  if (n != 1)
+  {
     report_error(line_num, 1, "Empty or invalid line");
     return NULL;
   }
 
   // Lookup mnemonic
   const OpcodeEntry *entry = lookup_opcode(mnemonic);
-  if (!entry) {
+
+  if (!entry)
+  {
     report_error(line_num, 1, "Unknown mnemonic");
     return NULL;
   }
 
   // Validate operand count for zero-operand instructions (e.g. RTS, RET)
-  if (entry->operand_count == 0) {
+  if (entry->operand_count == 0)
+  {
     char extra[32];
-    if (sscanf(line + mnemonic_end, "%31s", extra) == 1) {
+    if (sscanf(line + mnemonic_end, "%31s", extra) == 1)
+    {
       report_error(line_num, (size_t)(mnemonic_end + 2),
                    "instruction does not take operands");
       return NULL;
@@ -54,7 +64,8 @@ const OpcodeEntry *parse_line(const char *line, size_t line_num) {
 }
 
 // Very simple tokenizer for demo purposes
-size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
+size_t extract_operands(const char *line, Operand *ops, size_t max_ops)
+{
   size_t count = 0;
 
   // Find where the operand list starts: skip any leading indentation,
@@ -77,10 +88,12 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     return 0;
 
   char token[64];
-  while (*p && count < max_ops) {
+  while (*p && count < max_ops)
+  {
 
     // skip white spaces and commas between tokens
-    while (*p != '\0' && (isspace((unsigned char)*p) || *p == ',')) {
+    while (*p != '\0' && (isspace((unsigned char)*p) || *p == ','))
+    {
       p++;
     }
     if (*p == '\0')
@@ -89,7 +102,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     // copy token until comma, whitespace, or end
     size_t len = 0;
     while (*p && *p != ',' && !isspace((unsigned char)*p) &&
-           len < sizeof(token) - 1) {
+           len < sizeof(token) - 1)
+    {
       token[len++] = *p++;
     }
     token[len] = '\0';
@@ -98,13 +112,18 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
 
     // classify operand
     if ((token[0] == 'D' || token[0] == 'd') &&
-        isdigit((unsigned char)token[1])) {
+        isdigit((unsigned char)token[1]))
+    {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = token[1] - '0';
-    } else if (token[0] == '#') {
+    }
+    else if (token[0] == '#')
+    {
       ops[count].type = OPERAND_IMMEDIATE;
       ops[count].value.imm = atoi(&token[1]);
-    } else {
+    }
+    else
+    {
       ops[count].type = OPERAND_LABEL;
       ops[count].value.label = strdup(token);
     }
@@ -116,7 +135,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
 }
 
 // True if `s` looks like a data register name (d0-d7, either case).
-static int is_register_name(const char *s) {
+static int is_register_name(const char *s)
+{
   return (s[0] == 'D' || s[0] == 'd') && s[1] >= '0' && s[1] <= '7' &&
          s[2] == '\0';
 }
@@ -124,62 +144,80 @@ static int is_register_name(const char *s) {
 // Label names: start with a letter or '_', then letters, digits or '_'.
 // Register names are rejected so a label can never be shadowed by the
 // register classification in extract_operands().
-static int is_valid_label_name(const char *s) {
-  if (!(isalpha((unsigned char)s[0]) || s[0] == '_')) return 0;
-  for (const char *p = s + 1; *p; p++) {
-    if (!(isalnum((unsigned char)*p) || *p == '_')) return 0;
+static int is_valid_label_name(const char *s)
+{
+  if (!(isalpha((unsigned char)s[0]) || s[0] == '_'))
+    return 0;
+  for (const char *p = s + 1; *p; p++)
+  {
+    if (!(isalnum((unsigned char)*p) || *p == '_'))
+      return 0;
   }
   return !is_register_name(s);
 }
 
 const char *split_label(const char *line, char *label_out,
-                        size_t label_size, size_t line_num) {
+                        size_t label_size, size_t line_num)
+{
   label_out[0] = '\0';
 
   // Skip indentation; `start` is the first token's first character.
   const char *start = line;
-  while (*start && isspace((unsigned char)*start)) start++;
+  while (*start && isspace((unsigned char)*start))
+    start++;
 
   // First token = run of non-whitespace characters.
   const char *end = start;
-  while (*end && !isspace((unsigned char)*end)) end++;
+  while (*end && !isspace((unsigned char)*end))
+    end++;
   size_t len = (size_t)(end - start);
-  if (len == 0) return start;  // empty line; parse_line() will complain
+  if (len == 0)
+    return start; // empty line; parse_line() will complain
 
   char first[64];
-  if (len >= sizeof first) len = sizeof first - 1;
+  if (len >= sizeof first)
+    len = sizeof first - 1;
   memcpy(first, start, len);
   first[len] = '\0';
 
   // Case 1: trailing colon forces label parsing (so "move:" is legal).
-  if (first[len - 1] == ':') {
+  if (first[len - 1] == ':')
+  {
     first[len - 1] = '\0';
-    if (!is_valid_label_name(first) || strlen(first) >= label_size) {
+    if (!is_valid_label_name(first) || strlen(first) >= label_size)
+    {
       report_error(line_num, (size_t)(start - line) + 1, "Invalid label name");
       return NULL;
     }
     strcpy(label_out, first);
     const char *rest = end;
-    while (*rest && isspace((unsigned char)*rest)) rest++;
+    while (*rest && isspace((unsigned char)*rest))
+      rest++;
     return rest;
   }
 
   // Case 2: first token is a mnemonic -> no label.
-  if (lookup_opcode(first)) return start;
+  if (lookup_opcode(first))
+    return start;
 
   // Case 3: not a mnemonic, but the second token is -> colon-less label.
   const char *second = end;
-  while (*second && isspace((unsigned char)*second)) second++;
+  while (*second && isspace((unsigned char)*second))
+    second++;
   const char *second_end = second;
-  while (*second_end && !isspace((unsigned char)*second_end)) second_end++;
+  while (*second_end && !isspace((unsigned char)*second_end))
+    second_end++;
   size_t len2 = (size_t)(second_end - second);
 
-  if (len2 > 0 && len2 < 32) {
+  if (len2 > 0 && len2 < 32)
+  {
     char tok[32];
     memcpy(tok, second, len2);
     tok[len2] = '\0';
-    if (lookup_opcode(tok)) {
-      if (!is_valid_label_name(first) || strlen(first) >= label_size) {
+    if (lookup_opcode(tok))
+    {
+      if (!is_valid_label_name(first) || strlen(first) >= label_size)
+      {
         report_error(line_num, (size_t)(start - line) + 1, "Invalid label name");
         return NULL;
       }
