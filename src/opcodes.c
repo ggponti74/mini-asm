@@ -15,11 +15,21 @@ static const OpcodeEntry x86_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
     {"RTS", 0xC3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "RET"
     {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "NOP"
-    {"MOVE", 0x89, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL}, // x86 "MOV"
+    {"MOVE", 0x89, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL}, // x86 "MOV"
     {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},   // x86 "LEA r32, [disp32]"
     // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
     // or 01 /r (reg) depending on the source operand kind.
     {"ADD", 0x01, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
+    // SUB: same shape as ADD (80 /5 ib | 81 /5 id | 28 /r | 29 /r).
+    {"SUB", 0x29, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
+    // The 68000 has no plain MUL/DIV: multiplication and division come as
+    // unsigned (MULU/DIVU) and signed (MULS/DIVS) instructions, and only in
+    // the .w form (16x16->32 multiply, 32/16->16r:16q divide). Opcode bytes
+    // here are placeholders; codegen.c emits a multi-instruction sequence.
+    {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
 };
 
 static const OpcodeEntry arm_opcode_table[] = {

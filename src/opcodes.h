@@ -16,11 +16,10 @@ typedef enum {
 } OperandType;
 
 // Operation size from a .b/.w/.l suffix. SIZE_UNSPEC means the mnemonic had
-// no suffix; codegen resolves it (DEFAULT_OPSIZE, or .l where a byte is
-// illegal, e.g. MOVE to an address register).
+// no suffix; codegen resolves it to DEFAULT_OPSIZE.
 typedef enum { SIZE_UNSPEC = 0, SIZE_B, SIZE_W, SIZE_L } OpSize;
 
-#define DEFAULT_OPSIZE SIZE_B   // mini-asm's rule: no suffix means byte
+#define DEFAULT_OPSIZE SIZE_W   // mini-asm's rule: no suffix means word (.w)
 
 // Bit masks for OpcodeEntry.size_mask (which suffixes an entry accepts).
 #define SIZES_B   0x1u

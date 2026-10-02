@@ -65,6 +65,46 @@ static int x86_reg_code(int reg) {
     return -1;
 }
 
+// x86 MOVE Rs, Rd (register to register) at the requested size.
+//   MOVE Ds/As, Dn : 88 /r | 66 89 /r | 89 /r   (ModRM = 11 sss ddd)
+//     .b/.w only replace the low byte/word of Dn, like the 68K. Sets N,Z from
+//     the value moved and clears V,C (X untouched): x86 "mov" touches no flags,
+//     so a same-size "test d,d" follows.
+//   MOVEA Rs, An   : 89 /r (.l)  |  0F BF /r movsx (.w, sign-extends)
+//     No byte size, and no flags change.
+// As on the 68K, an address register can't be a byte-sized source.
+static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize size,
+                              OutputBuffer *out) {
+    int s = x86_reg_code(src->value.reg), d = x86_reg_code(dst->value.reg);
+    if (s < 0 || d < 0) return false;
+    bool to_addr = dst->value.reg >= 8;
+
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (size == SIZE_B && to_addr)
+        return fail("MOVE to an address register can't be byte-sized (MOVEA has no .b)");
+    if (size == SIZE_B && src->value.reg >= 8)
+        return fail("byte-sized MOVE can't use an address register as the source");
+    if (size == SIZE_B && (s > 3 || d > 3)) return fail(ERR_BYTE_REG);
+
+    if (to_addr) {
+        if (size == SIZE_W) {                       // MOVEA.W: sign-extend
+            buffer_write(out, 0x0F); buffer_write(out, 0xBF);
+            buffer_write(out, (uint8_t)(0xC0 | (d << 3) | s));
+        } else {
+            buffer_write(out, 0x89);
+            buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        }
+        return true;
+    }
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x88 : 0x89);
+    buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x84 : 0x85);            // test d,d
+    buffer_write(out, (uint8_t)(0xC0 | (d << 3) | d));
+    return true;
+}
+
 // x86 MOVE #imm, reg at the requested size:
 //   .b  B0+r ib              (writes only the low byte: AL/CL/DL/BL)
 //   .w  66 B8+r iw           (writes only the low 16 bits)
@@ -76,6 +116,8 @@ static int x86_reg_code(int reg) {
 // "test r,r" of the same size follows (84 /r, 66 85 /r or 85 /r): it sets
 // SF/ZF, clears CF/OF, and leaves the register alone.
 static bool emit_x86_move_imm(const Operand *operands, OpSize size, OutputBuffer *out) {
+    if (operands[0].type == OPERAND_REGISTER && operands[1].type == OPERAND_REGISTER)
+        return emit_x86_move_reg(&operands[0], &operands[1], size, out);
     const Operand *imm = NULL, *reg = NULL;
     for (int i = 0; i < 2; i++) {
         if (operands[i].type == OPERAND_IMMEDIATE) imm = &operands[i];
@@ -86,7 +128,7 @@ static bool emit_x86_move_imm(const Operand *operands, OpSize size, OutputBuffer
     if (r < 0) return false;
 
     bool is_addr = reg->value.reg >= 8;
-    if (size == SIZE_UNSPEC) size = is_addr ? SIZE_L : DEFAULT_OPSIZE;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
     if (is_addr && size == SIZE_B)
         return fail("MOVE to an address register can't be byte-sized (MOVEA has no .b)");
     if (!imm_fits(imm->value.imm, size))
@@ -144,19 +186,24 @@ static bool emit_x86_lea(const Operand *operands, OutputBuffer *out) {
     return true;
 }
 
-// x86 ADD, with 68K operand order (add src, dst  ->  dst += src), at the
-// requested size (.b operates on the low byte only, .w on the low 16 bits,
-// leaving the rest of the register untouched, as on the 68K):
-//   add #imm, Dn : 80 /0 ib | 66 81 /0 iw | 81 /0 id   (ModRM = 11 000 ddd)
-//   add Ds,  Dn  : 00 /r    | 66 01 /r    | 01 /r      (ModRM = 11 sss ddd)
-// x86 ADD sets ZF/SF/CF/OF from the result at that size, which is what the
-// 68K sets in Z/N/C/V, so no extra code is needed for the condition codes.
-static bool emit_x86_add(const Operand *operands, OpSize size, OutputBuffer *out) {
+// x86 ADD / SUB, with 68K operand order (op src, dst  ->  dst = dst op src),
+// at the requested size (.b operates on the low byte only, .w on the low 16
+// bits, leaving the rest of the register untouched, as on the 68K):
+//   op #imm, Dn : 80 /n ib | 66 81 /n iw | 81 /n id   (ModRM = 11 nnn ddd)
+//   op Ds,  Dn  : 00 /r    | 66 01 /r    | 01 /r      (ModRM = 11 sss ddd)
+// with /n = /0 and base opcode 00/01 for ADD, /5 and 28/29 for SUB.
+// x86 ADD/SUB set ZF/SF/CF/OF from the result at that size, which is what
+// the 68K sets in Z/N/C/V (for SUB, x86 CF is a borrow, like the 68K's C),
+// so no extra code is needed for the condition codes.
+static bool emit_x86_addsub(const Operand *operands, OpSize size, bool is_sub,
+                            OutputBuffer *out) {
     const Operand *src = &operands[0], *dst = &operands[1];
     if (dst->type != OPERAND_REGISTER) return false;
-    // Like the real 68K, ADD targets a data register (A-register targets
-    // would be ADDA, a different instruction).
-    if (dst->value.reg > 7) return fail("ADD needs a data register (D0-D7) destination");
+    // Like the real 68K, these target a data register (A-register targets
+    // would be ADDA/SUBA, different instructions).
+    if (dst->value.reg > 7)
+        return fail(is_sub ? "SUB needs a data register (D0-D7) destination"
+                           : "ADD needs a data register (D0-D7) destination");
     int d = x86_reg_code(dst->value.reg);
     if (d < 0) return false;
     if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
@@ -167,22 +214,201 @@ static bool emit_x86_add(const Operand *operands, OpSize size, OutputBuffer *out
             return fail("immediate value doesn't fit the operation size");
         if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
         buffer_write(out, size == SIZE_B ? 0x80 : 0x81);
-        buffer_write(out, (uint8_t)(0xC0 | d));
+        buffer_write(out, (uint8_t)((is_sub ? 0xE8 : 0xC0) | d));
         write_le(out, (uint32_t)src->value.imm, size == SIZE_B ? 1 : size == SIZE_W ? 2 : 4);
         return true;
     }
     if (src->type == OPERAND_REGISTER) {
         if (size == SIZE_B && src->value.reg >= 8)
-            return fail("byte-sized ADD can't use an address register as the source");
+            return fail(is_sub ? "byte-sized SUB can't use an address register as the source"
+                               : "byte-sized ADD can't use an address register as the source");
         int sr = x86_reg_code(src->value.reg);
         if (sr < 0) return false;
         if (size == SIZE_B && sr > 3) return fail(ERR_BYTE_REG);
         if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-        buffer_write(out, size == SIZE_B ? 0x00 : 0x01);
+        buffer_write(out, (uint8_t)((is_sub ? 0x28 : 0x00) + (size == SIZE_B ? 0 : 1)));
         buffer_write(out, (uint8_t)(0xC0 | (sr << 3) | d));
         return true;
     }
     return false;
+}
+
+// ---- MULU/MULS/DIVU/DIVS ---------------------------------------------------
+// The 68000 forms are word-sized only:
+//   MULU.W / MULS.W  <ea>,Dn : Dn(32) = Dn.w * <ea>.w   (unsigned / signed)
+//   DIVU.W / DIVS.W  <ea>,Dn : Dn(32) / <ea>.w -> low word = quotient,
+//                              high word = remainder
+// The source is a data register or an immediate (never an address register).
+// Flags: MUL sets N,Z from the 32-bit result and clears V,C. DIV sets N,Z
+// from the 16-bit quotient and clears C; V is set (and Dn left untouched) if
+// the quotient doesn't fit 16 bits (N and Z are undefined then; we leave
+// N=1, Z=0). X is not modelled on x86 (see the other instructions).
+// Dividing by zero traps, as on the 68K (on Linux: SIGFPE).
+//
+// D4 maps to ESP, which these sequences push/pop through, so it's refused.
+#define X86_ESP 4
+#define ERR_ESP_REG "D4 maps to ESP on this target; MULU/MULS/DIVU/DIVS can't use it yet"
+
+// Shared operand checks. On success fills *d (x86 code of Dn), *s (x86
+// code of the source register, or -1 for an immediate) and *imm.
+static bool muldiv_operands(const Operand *operands, OpSize size,
+                            int *d, int *s, int32_t *imm) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER || dst->value.reg > 7)
+        return fail("MULU/MULS/DIVU/DIVS need a data register (D0-D7) destination");
+    if (size != SIZE_UNSPEC && size != SIZE_W)
+        return fail("MULU/MULS/DIVU/DIVS only exist as .w");
+    *d = x86_reg_code(dst->value.reg);
+    if (*d < 0) return false;
+    if (*d == X86_ESP) return fail(ERR_ESP_REG);
+    *s = -1;
+    *imm = 0;
+    if (src->type == OPERAND_IMMEDIATE) {
+        if (!imm_fits(src->value.imm, SIZE_W))
+            return fail("immediate value doesn't fit the operation size");
+        *imm = src->value.imm;
+        return true;
+    }
+    if (src->type != OPERAND_REGISTER) return false;
+    if (src->value.reg >= 8)
+        return fail("MULU/MULS/DIVU/DIVS can't take an address register as the source");
+    *s = x86_reg_code(src->value.reg);
+    if (*s < 0) return false;
+    if (*s == X86_ESP) return fail(ERR_ESP_REG);
+    return true;
+}
+
+// MULU.W / MULS.W. x86 "imul r32,r/m32" gives the right low 32 bits for
+// both signs once the 16-bit inputs are extended (zero-extended for MULU,
+// sign-extended for MULS), and the product always fits 32 bits. imul leaves
+// SF/ZF undefined, so a final "test d,d" sets them (and clears CF/OF = C/V).
+//   [push s ; ext s,s16 ;] ext d,d16 ; imul d,s|imm ; [pop s ;] test d,d
+// The source register is saved on the stack and restored: the 68K never
+// modifies the source.
+static bool emit_x86_mul(const Operand *operands, OpSize size, bool is_signed,
+                         OutputBuffer *out) {
+    int d, s;
+    int32_t imm;
+    if (!muldiv_operands(operands, size, &d, &s, &imm))
+        return false;
+    uint8_t ext = is_signed ? 0xBF : 0xB7;  // movsx / movzx r32,r/m16
+
+    if (s >= 0 && s != d) {
+        // Save the source first, then extend it in place.
+        buffer_write(out, (uint8_t)(0x50 + s));                     // push s
+        buffer_write(out, 0x0F); buffer_write(out, ext);
+        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | s));          // ext s, s16
+    }
+    buffer_write(out, 0x0F); buffer_write(out, ext);
+    buffer_write(out, (uint8_t)(0xC0 | (d << 3) | d));              // ext d, d16
+
+    if (s < 0) {
+        uint32_t v = is_signed ? (uint32_t)(int32_t)(int16_t)imm : (uint32_t)(uint16_t)imm;
+        buffer_write(out, 0x69);                                    // imul d,d,imm32
+        buffer_write(out, (uint8_t)(0xC0 | (d << 3) | d));
+        write_le(out, v, 4);
+    } else {
+        buffer_write(out, 0x0F); buffer_write(out, 0xAF);           // imul d,s (s==d: squares)
+        buffer_write(out, (uint8_t)(0xC0 | (d << 3) | s));
+        if (s != d)
+            buffer_write(out, (uint8_t)(0x58 + s));                 // pop s
+    }
+    buffer_write(out, 0x85);                                        // test d,d
+    buffer_write(out, (uint8_t)(0xC0 | (d << 3) | d));
+    return true;
+}
+
+// DIVU.W / DIVS.W via x86 div/idiv r32 (EDX:EAX / r32), which needs EAX and
+// EDX, plus a scratch register t for the extended divisor. EAX, EDX and t
+// are saved on the stack and restored, so only Dn changes. The 32-bit x86
+// quotient is then range-checked against 16 bits to reproduce the 68K's
+// overflow rule (the x86 itself only traps when the *32-bit* quotient
+// overflows, which can't happen for unsigned and is special-cased for
+// signed INT_MIN / -1).
+//
+//   push eax ; push edx ; push t
+//   t = ext16(divisor) | imm
+//   mov eax,Dn ; xor edx,edx | cdq
+//   div t | (cmp t,-1 ; jne L ; neg eax ; xor edx,edx ; jmp M ; L: idiv t ; M:)
+//   overflow check -> jne OVF
+//   Dn = (edx << 16) | ax ; test ax,ax     (flags: N,Z from quotient, C=V=0)
+//   jmp DONE
+//   OVF: mov al,7Fh ; add al,1             (flags: V=1, C=0; Dn untouched)
+//   DONE: pop t ; pop edx ; pop eax
+static bool emit_x86_div(const Operand *operands, OpSize size, bool is_signed,
+                         OutputBuffer *out) {
+    int d, s;
+    int32_t imm;
+    if (!muldiv_operands(operands, size, &d, &s, &imm))
+        return false;
+
+    // Scratch register: first of ECX, EBX, EBP, ESI, EDI not used as Dn / source.
+    static const int cand[] = {1, 3, 5, 6, 7};
+    int t = -1;
+    for (size_t i = 0; i < sizeof cand / sizeof cand[0]; i++)
+        if (cand[i] != d && cand[i] != s) { t = cand[i]; break; }
+
+    buffer_write(out, 0x50);                                        // push eax
+    buffer_write(out, 0x52);                                        // push edx
+    buffer_write(out, (uint8_t)(0x50 + t));                         // push t
+
+    if (s >= 0) {                                                   // movzx/movsx t, s16
+        buffer_write(out, 0x0F); buffer_write(out, is_signed ? 0xBF : 0xB7);
+        buffer_write(out, (uint8_t)(0xC0 | (t << 3) | s));
+    } else {                                                        // mov t, imm32
+        uint32_t v = is_signed ? (uint32_t)(int32_t)(int16_t)imm : (uint32_t)(uint16_t)imm;
+        buffer_write(out, (uint8_t)(0xB8 + t));
+        write_le(out, v, 4);
+    }
+    if (d != 0) {                                                   // mov eax, Dn
+        buffer_write(out, 0x89);
+        buffer_write(out, (uint8_t)(0xC0 | (d << 3)));
+    }
+
+    if (!is_signed) {
+        buffer_write(out, 0x31); buffer_write(out, 0xD2);           // xor edx,edx
+        buffer_write(out, 0xF7); buffer_write(out, (uint8_t)(0xF0 | t));  // div t
+        buffer_write(out, 0xA9);                                    // test eax,FFFF0000h
+        write_le(out, 0xFFFF0000u, 4);
+    } else {
+        buffer_write(out, 0x99);                                    // cdq
+        buffer_write(out, 0x83); buffer_write(out, (uint8_t)(0xF8 | t));
+        buffer_write(out, 0xFF);                                    // cmp t,-1
+        buffer_write(out, 0x75); buffer_write(out, 0x06);           // jne L (skip 6 bytes)
+        buffer_write(out, 0xF7); buffer_write(out, 0xD8);           // neg eax
+        buffer_write(out, 0x31); buffer_write(out, 0xD2);           // xor edx,edx
+        buffer_write(out, 0xEB); buffer_write(out, 0x02);           // jmp M (skip idiv)
+        buffer_write(out, 0xF7); buffer_write(out, (uint8_t)(0xF8 | t));  // L: idiv t
+        buffer_write(out, 0x0F); buffer_write(out, 0xBF);
+        buffer_write(out, (uint8_t)(0xC0 | (t << 3)));              // M: movsx t,ax
+        buffer_write(out, 0x39); buffer_write(out, (uint8_t)(0xC0 | (t << 3)));  // cmp eax,t
+    }
+
+    // Size of the "normal" path that follows, so the jne can skip it.
+    size_t write_len = (d == 0 || d == 2) ? 4 : 2;                  // store result into Dn
+    size_t normal_len = 3 + 3 + 2 + 3 + write_len + 2;              // shl, movzx, or, test, store, jmp
+    buffer_write(out, 0x75); buffer_write(out, (uint8_t)normal_len);// jne/jnz OVF
+
+    buffer_write(out, 0xC1); buffer_write(out, 0xE2); buffer_write(out, 0x10);  // shl edx,16
+    buffer_write(out, 0x0F); buffer_write(out, 0xB7); buffer_write(out, 0xC0);  // movzx eax,ax
+    buffer_write(out, 0x09); buffer_write(out, 0xD0);                           // or eax,edx
+    buffer_write(out, 0x66); buffer_write(out, 0x85); buffer_write(out, 0xC0);  // test ax,ax
+    if (d == 0) {                                                   // result replaces the saved EAX
+        buffer_write(out, 0x89); buffer_write(out, 0x44); buffer_write(out, 0x24); buffer_write(out, 0x08);
+    } else if (d == 2) {                                            // ... or the saved EDX
+        buffer_write(out, 0x89); buffer_write(out, 0x44); buffer_write(out, 0x24); buffer_write(out, 0x04);
+    } else {                                                        // mov Dn, eax
+        buffer_write(out, 0x89); buffer_write(out, (uint8_t)(0xC0 | d));
+    }
+    buffer_write(out, 0xEB); buffer_write(out, 0x04);               // jmp DONE (skip OVF)
+
+    buffer_write(out, 0xB0); buffer_write(out, 0x7F);               // OVF: mov al,7Fh
+    buffer_write(out, 0x04); buffer_write(out, 0x01);               //      add al,1  -> OF=1, CF=0
+
+    buffer_write(out, (uint8_t)(0x58 + t));                         // pop t
+    buffer_write(out, 0x5A);                                        // pop edx
+    buffer_write(out, 0x58);                                        // pop eax
+    return true;
 }
 
 // Emit full instruction
@@ -198,7 +424,17 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         if (strcmp(entry->mnemonic, "LEA") == 0)
             return emit_x86_lea(operands, out) ? 0 : -1;
         if (strcmp(entry->mnemonic, "ADD") == 0)
-            return emit_x86_add(operands, size, out) ? 0 : -1;
+            return emit_x86_addsub(operands, size, false, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "SUB") == 0)
+            return emit_x86_addsub(operands, size, true, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "MULU") == 0)
+            return emit_x86_mul(operands, size, false, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "MULS") == 0)
+            return emit_x86_mul(operands, size, true, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "DIVU") == 0)
+            return emit_x86_div(operands, size, false, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "DIVS") == 0)
+            return emit_x86_div(operands, size, true, out) ? 0 : -1;
     }
 
     for (size_t i = entry->size; i > 0; i--) {

@@ -170,7 +170,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       }
       fprintf(stderr,
               "Error at line %zu: can't encode %s with these operands on this "
-              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD needs a D register destination)\n",
+              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n",
               line_num, entry->mnemonic);
       errors++;
     }
