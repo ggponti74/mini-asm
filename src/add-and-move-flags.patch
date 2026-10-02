@@ -1,0 +1,166 @@
+diff --git a/src/codegen.c b/src/codegen.c
+index 1cff93e..46422f1 100644
+--- a/src/codegen.c
++++ b/src/codegen.c
+@@ -58,6 +58,17 @@ static bool emit_x86_move_imm32(const Operand *operands, OutputBuffer *out) {
+     buffer_write(out, (uint8_t)((v >> 8) & 0xFF));
+     buffer_write(out, (uint8_t)((v >> 16) & 0xFF));
+     buffer_write(out, (uint8_t)((v >> 24) & 0xFF));
++
++    // 68K MOVE to a data register sets N and Z from the value moved and
++    // clears V and C (X is untouched). x86 "mov" doesn't touch any flags,
++    // so follow it with "test r,r" (85 /r, ModRM = 11 rrr rrr): that sets
++    // SF/ZF from the value and clears CF/OF -- exactly the 68K result, and
++    // it doesn't modify the register. MOVE to an address register is really
++    // MOVEA on the 68K, which affects no flags, so no test there.
++    if (reg->value.reg <= 7) {
++        buffer_write(out, 0x85);
++        buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
++    }
+     return true;
+ }
+ 
+@@ -84,6 +95,41 @@ static bool emit_x86_lea(const Operand *operands, OutputBuffer *out) {
+     return true;
+ }
+ 
++// x86 ADD, with 68K operand order (add src, dst  ->  dst += src):
++//   add #imm, Dn : 81 /0 id  -> opcode 81, ModRM = 11 000 rrr, imm32
++//   add Ds,  Dn  : 01 /r     -> opcode 01, ModRM = 11 sss ddd
++// (01 /r is "ADD r/m32, r32": reg field = source, r/m field = destination.)
++// The real x86 ADD already updates ZF/SF/CF/OF the way the 68K ADD updates
++// Z/N/C/V, so no extra code is needed for the condition codes.
++static bool emit_x86_add(const Operand *operands, OutputBuffer *out) {
++    const Operand *src = &operands[0], *dst = &operands[1];
++    if (dst->type != OPERAND_REGISTER) return false;
++    // Like the real 68K, ADD targets a data register (A-register targets
++    // would be ADDA, a different instruction).
++    if (dst->value.reg > 7) return false;
++    int d = x86_reg_code(dst->value.reg);
++    if (d < 0) return false;
++
++    if (src->type == OPERAND_IMMEDIATE) {
++        buffer_write(out, 0x81);
++        buffer_write(out, (uint8_t)(0xC0 | d));
++        uint32_t v = (uint32_t)src->value.imm;
++        buffer_write(out, (uint8_t)(v & 0xFF));
++        buffer_write(out, (uint8_t)((v >> 8) & 0xFF));
++        buffer_write(out, (uint8_t)((v >> 16) & 0xFF));
++        buffer_write(out, (uint8_t)((v >> 24) & 0xFF));
++        return true;
++    }
++    if (src->type == OPERAND_REGISTER) {
++        int s = x86_reg_code(src->value.reg);
++        if (s < 0) return false;
++        buffer_write(out, 0x01);
++        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
++        return true;
++    }
++    return false;
++}
++
+ // Emit full instruction
+ int emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
+     if (!entry || !out) return -1;
+@@ -94,6 +140,8 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
+             return emit_x86_move_imm32(operands, out) ? 0 : -1;
+         if (strcmp(entry->mnemonic, "LEA") == 0)
+             return emit_x86_lea(operands, out) ? 0 : -1;
++        if (strcmp(entry->mnemonic, "ADD") == 0)
++            return emit_x86_add(operands, out) ? 0 : -1;
+     }
+ 
+     for (size_t i = entry->size; i > 0; i--) {
+diff --git a/src/cpu68k.h b/src/cpu68k.h
+index 1c6f3f5..60d6113 100644
+--- a/src/cpu68k.h
++++ b/src/cpu68k.h
+@@ -12,5 +12,12 @@ typedef struct {
+     uint32_t SR;     // Status register (flags)
+ } CPU68K;
+ 
++// 68K condition code register (low byte of SR): X N Z V C in bits 4..0.
++#define SR_C 0x01u  // carry
++#define SR_V 0x02u  // overflow
++#define SR_Z 0x04u  // zero
++#define SR_N 0x08u  // negative
++#define SR_X 0x10u  // extend
++
+ #endif // CPU68K_H
+ 
+diff --git a/src/main.c b/src/main.c
+index 3a94677..c30e81c 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -121,7 +121,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
+     /* Each operand must be the kind the opcode table asks for. */
+     int ok = 1;
+     for (size_t i = 0; i < entry->operand_count; i++) {
+-      if (ops[i].type != entry->operand_types[i]) {
++      if (!operand_matches(entry->operand_types[i], ops[i].type)) {
+         fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
+                 line_num, i + 1, entry->mnemonic);
+         ok = 0;
+@@ -156,7 +156,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
+     if (emit_code(entry, ops, buf) != 0) {
+       fprintf(stderr,
+               "Error at line %zu: can't encode %s with these operands on this "
+-              "target (supported registers: D0-D7 and A0; LEA needs an A register)\n",
++              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD needs a D register destination)\n",
+               line_num, entry->mnemonic);
+       errors++;
+     }
+diff --git a/src/opcodes.c b/src/opcodes.c
+index 56bb27a..0febc74 100644
+--- a/src/opcodes.c
++++ b/src/opcodes.c
+@@ -17,6 +17,9 @@ static const OpcodeEntry x86_opcode_table[] = {
+     {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}},           // x86 "NOP"
+     {"MOVE", 0x89, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}}, // x86 "MOV r/m32, r32"
+     {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}},   // x86 "LEA r32, [disp32]"
++    // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
++    // or 01 /r (reg) depending on the source operand kind.
++    {"ADD", 0x01, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}},
+ };
+ 
+ static const OpcodeEntry arm_opcode_table[] = {
+@@ -27,6 +30,13 @@ static const OpcodeEntry arm_opcode_table[] = {
+    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}},   // x86 "LEA r32, [disp32]"
+ };
+ 
++bool operand_matches(OperandType expected, OperandType actual)
++{
++    if (expected == OPERAND_REG_OR_IMM)
++        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE;
++    return expected == actual;
++}
++
+ static const OpcodeEntry *g_active_table = NULL;
+ static size_t g_active_count = 0;
+ static const char *g_active_arch_name = NULL;
+diff --git a/src/opcodes.h b/src/opcodes.h
+index 2dcd571..43f4aa9 100644
+--- a/src/opcodes.h
++++ b/src/opcodes.h
+@@ -11,7 +11,8 @@ typedef enum {
+     OPERAND_NONE,      // no operand (e.g., RTS)
+     OPERAND_REGISTER,  // register (Dn, An)
+     OPERAND_IMMEDIATE, // immediate value (#123)
+-    OPERAND_LABEL      // symbolic label
++    OPERAND_LABEL,     // symbolic label
++    OPERAND_REG_OR_IMM // table-only: accepts a register OR an immediate
+ } OperandType;
+ 
+ // Opcode entry structure
+@@ -24,6 +25,11 @@ typedef struct {
+     OperandType operand_types[2]; // expected operand types (up to 2 for simplicity)
+ } OpcodeEntry;
+ 
++// True if an operand of kind `actual` satisfies the table slot `expected`.
++// OPERAND_REG_OR_IMM accepts a register or an immediate; every other
++// slot kind must match exactly.
++bool operand_matches(OperandType expected, OperandType actual);
++
+ // Selects which CPU architecture's opcode table lookup_opcode() searches.
+ // The instruction encoding (not just the container format) differs per
+ // target CPU, so this must be called once — e.g. right after main()
