@@ -11,8 +11,22 @@ typedef enum {
     OPERAND_NONE,      // no operand (e.g., RTS)
     OPERAND_REGISTER,  // register (Dn, An)
     OPERAND_IMMEDIATE, // immediate value (#123)
-    OPERAND_LABEL      // symbolic label
+    OPERAND_LABEL,     // symbolic label
+    OPERAND_REG_OR_IMM // table-only: accepts a register OR an immediate
 } OperandType;
+
+// Operation size from a .b/.w/.l suffix. SIZE_UNSPEC means the mnemonic had
+// no suffix; codegen resolves it (DEFAULT_OPSIZE, or .l where a byte is
+// illegal, e.g. MOVE to an address register).
+typedef enum { SIZE_UNSPEC = 0, SIZE_B, SIZE_W, SIZE_L } OpSize;
+
+#define DEFAULT_OPSIZE SIZE_B   // mini-asm's rule: no suffix means byte
+
+// Bit masks for OpcodeEntry.size_mask (which suffixes an entry accepts).
+#define SIZES_B   0x1u
+#define SIZES_W   0x2u
+#define SIZES_L   0x4u
+#define SIZES_BWL (SIZES_B | SIZES_W | SIZES_L)
 
 // Opcode entry structure
 typedef struct {
@@ -22,7 +36,13 @@ typedef struct {
     size_t      length;         // total instruction length in bytes
     size_t      operand_count;  // expected number of operands
     OperandType operand_types[2]; // expected operand types (up to 2 for simplicity)
+    unsigned    size_mask;      // accepted size suffixes (SIZES_*); 0 = no suffix allowed
 } OpcodeEntry;
+
+// True if an operand of kind `actual` satisfies the table slot `expected`.
+// OPERAND_REG_OR_IMM accepts a register or an immediate; every other
+// slot kind must match exactly.
+bool operand_matches(OperandType expected, OperandType actual);
 
 // Selects which CPU architecture's opcode table lookup_opcode() searches.
 // The instruction encoding (not just the container format) differs per

@@ -107,6 +107,13 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       continue;
     }
 
+    OpSize size;
+    if (!parse_size_suffix(code, entry, &size, line_num)) {
+      errors++;
+      line_num++;
+      continue;
+    }
+
     Operand ops[entry->operand_count];
     size_t op_count = extract_operands(code, ops, entry->operand_count);
 
@@ -121,7 +128,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
     /* Each operand must be the kind the opcode table asks for. */
     int ok = 1;
     for (size_t i = 0; i < entry->operand_count; i++) {
-      if (ops[i].type != entry->operand_types[i]) {
+      if (!operand_matches(entry->operand_types[i], ops[i].type)) {
         fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
                 line_num, i + 1, entry->mnemonic);
         ok = 0;
@@ -153,10 +160,17 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       continue;
     }
 
-    if (emit_code(entry, ops, buf) != 0) {
+    if (emit_code(entry, ops, size, buf) != 0) {
+      const char *why = codegen_error();
+      if (why) {
+        fprintf(stderr, "Error at line %zu: %s\n", line_num, why);
+        errors++;
+        line_num++;
+        continue;
+      }
       fprintf(stderr,
               "Error at line %zu: can't encode %s with these operands on this "
-              "target (supported registers: D0-D7 and A0; LEA needs an A register)\n",
+              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD needs a D register destination)\n",
               line_num, entry->mnemonic);
       errors++;
     }

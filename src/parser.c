@@ -58,6 +58,40 @@ const OpcodeEntry *parse_line(const char *line, size_t line_num) {
   return entry;
 }
 
+int parse_size_suffix(const char *line, const OpcodeEntry *entry, OpSize *size,
+                      size_t line_num) {
+  *size = SIZE_UNSPEC;
+
+  const char *start = line;
+  while (*start && isspace((unsigned char)*start))
+    start++;
+  const char *end = start;
+  while (*end && !isspace((unsigned char)*end))
+    end++;
+
+  const char *dot = NULL;
+  for (const char *q = start; q < end; q++)
+    if (*q == '.')
+      dot = q;
+  if (!dot)
+    return 1;
+
+  size_t col = (size_t)(start - line) + 1;
+  char c = (dot + 2 == end) ? (char)tolower((unsigned char)dot[1]) : '\0';
+  OpSize s = c == 'b' ? SIZE_B : c == 'w' ? SIZE_W : c == 'l' ? SIZE_L : SIZE_UNSPEC;
+  if (s == SIZE_UNSPEC) {
+    report_error(line_num, col, "Invalid size suffix (use .b, .w or .l)");
+    return 0;
+  }
+  if (!(entry->size_mask & (1u << (s - 1)))) {
+    report_error(line_num, col,
+                 "this instruction does not accept that size on this target");
+    return 0;
+  }
+  *size = s;
+  return 1;
+}
+
 // Very simple tokenizer for demo purposes
 size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   size_t count = 0;

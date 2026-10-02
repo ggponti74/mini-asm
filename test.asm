@@ -1,4 +1,4 @@
-start:  LEA data, A0
-        MOVE #7, a0
-        RTS
-data:   dc.b 1, 2, 3
+start:  move.b #1, d0
+        move.b #2, d1
+        add.b  d1, d0      ; d0 = 84
+        rts

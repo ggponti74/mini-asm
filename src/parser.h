@@ -30,6 +30,13 @@ typedef struct {
     } value;
 } Operand;
 
+// Reads the optional .b/.w/.l suffix off the mnemonic at the start of
+// `line` (which must already have passed parse_line()). Stores SIZE_UNSPEC
+// in *size if there is no suffix. Returns 1 on success, or 0 after
+// reporting an error (suffix not accepted by this instruction/target).
+int parse_size_suffix(const char *line, const OpcodeEntry *entry, OpSize *size,
+                      size_t line_num);
+
 // Extract operands from a line into an array
 size_t extract_operands(const char *line, Operand *ops, size_t max_ops);
 
