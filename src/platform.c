@@ -5,7 +5,7 @@
 #include "pe_writer.h"
 #include "arm_elf_writer.h"
 #include "elf_writer.h"
-
+    
 // Small portable stand-in for strcasecmp()/_stricmp() so we don't have
 // to pull in platform-specific headers just to compare target names.
 static bool names_equal_ci(const char *a, const char *b) {
@@ -29,6 +29,7 @@ static const PlatformTarget k_targets[] = {
         .cpu_arch       = "x86",
         .default_ext    = ".exe",
         .needs_exec_bit = false,
+        .code_base = 0x00401000,
         .write          = write_pe,
     },
     {
@@ -37,6 +38,7 @@ static const PlatformTarget k_targets[] = {
         .cpu_arch       = "arm",
         .default_ext    = "",
         .needs_exec_bit = true,
+        .code_base = 0x00008000,
         .write          = write_arm_elf,
     },
     {
@@ -45,6 +47,7 @@ static const PlatformTarget k_targets[] = {
         .cpu_arch       = "x86",
         .default_ext    = "",
         .needs_exec_bit = true,
+        .code_base      = 0x08049000,
         .write          = write_elf,
     },
 };

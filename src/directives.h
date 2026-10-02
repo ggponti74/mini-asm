@@ -2,6 +2,7 @@
 #define DIRECTIVE_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "codegen.h"
 
@@ -14,6 +15,6 @@ int directive_is(const char *token);
 // (0 or 1). Returns -1 if the line is not a directive, so the caller
 // should fall through to the normal instruction path.
 int directive_assemble(const char *code, size_t line_num, int pass,
-                       OutputBuffer *buf);
+                       OutputBuffer *buf, uint32_t code_base);
 
 #endif // DIRECTIVE_H

@@ -57,35 +57,30 @@ static void derive_base_name(const char *source_path, char *out,
   }
 }
 
-static int assemble_pass(FILE *src, int pass, OutputBuffer *buf)
-{
+static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
+                         uint32_t code_base) {
   char line[256];
   size_t line_num = 1;
   int errors = 0;
 
-  while (fgets(line, sizeof(line), src))
-  {
+  while (fgets(line, sizeof(line), src)) {
     strip_comment(line);
-    if (line[0] == '\0')
-    {
+    if (line[0] == '\0') {
       line_num++;
       continue;
     }
 
     char label[64];
     const char *code = split_label(line, label, sizeof label, line_num);
-    if (!code)
-    {
+    if (!code) {
       errors++;
       line_num++;
       continue;
     }
 
-    if (label[0] && pass == 1)
-    {
+    if (label[0] && pass == 1) {
       size_t prev;
-      if (symtab_define(label, buf->size, line_num, &prev) != 0)
-      {
+      if (symtab_define(label, buf->size, line_num, &prev) != 0) {
         fprintf(stderr,
                 "Error at line %zu: label '%s' already defined at line %zu\n",
                 line_num, label, prev);
@@ -93,23 +88,20 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf)
       }
     }
 
-    if (*code == '\0')
-    { /* label-only line */
+    if (*code == '\0') { /* label-only line */
       line_num++;
       continue;
     }
 
-    int derr = directive_assemble(code, line_num, pass, buf);
-    if (derr >= 0)
-    {
+    int derr = directive_assemble(code, line_num, pass, buf, code_base);
+    if (derr >= 0) {
       errors += derr;
       line_num++;
       continue;
     }
-    
+
     const OpcodeEntry *entry = parse_line(code, line_num);
-    if (!entry)
-    {
+    if (!entry) {
       errors++;
       line_num++;
       continue;
@@ -118,8 +110,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf)
     Operand ops[entry->operand_count];
     size_t op_count = extract_operands(code, ops, entry->operand_count);
 
-    if (op_count != entry->operand_count)
-    {
+    if (op_count != entry->operand_count) {
       fprintf(stderr, "Error at line %zu: expected %zu operands, got %zu\n",
               line_num, entry->operand_count, op_count);
       errors++;
@@ -127,7 +118,49 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf)
       continue;
     }
 
-    emit_code(entry, ops, buf);
+    /* Each operand must be the kind the opcode table asks for. */
+    int ok = 1;
+    for (size_t i = 0; i < entry->operand_count; i++) {
+      if (ops[i].type != entry->operand_types[i]) {
+        fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
+                line_num, i + 1, entry->mnemonic);
+        ok = 0;
+      }
+    }
+
+    /* Label operands become absolute addresses. In pass 1 the label may
+       not be defined yet, so a placeholder of the same size is used. */
+    for (size_t i = 0; ok && i < entry->operand_count; i++) {
+      if (ops[i].type != OPERAND_LABEL) continue;
+      int32_t addr = 0;
+      if (pass == 2) {
+        size_t off;
+        if (!symtab_find(ops[i].value.label, &off)) {
+          fprintf(stderr, "Error at line %zu: undefined label '%s'\n",
+                  line_num, ops[i].value.label);
+          ok = 0;
+          break;
+        }
+        addr = (int32_t)(code_base + off);
+      }
+      ops[i].type = OPERAND_IMMEDIATE;
+      ops[i].value.imm = addr;
+    }
+
+    if (!ok) {
+      errors++;
+      line_num++;
+      continue;
+    }
+
+    if (emit_code(entry, ops, buf) != 0) {
+      fprintf(stderr,
+              "Error at line %zu: can't encode %s with these operands on this "
+              "target (supported registers: D0-D7 and A0; LEA needs an A register)\n",
+              line_num, entry->mnemonic);
+      errors++;
+    }
+
     line_num++;
   }
 
@@ -216,12 +249,13 @@ int main(int argc, char *argv[])
   buf.size = 0;
   buf.capacity = 1024;
 
-  int errors = assemble_pass(src, 1, &buf);
+  int errors = assemble_pass(src, 1, &buf, target->code_base);
+
   if (errors == 0)
   {
     rewind(src);
     buf.size = 0; /* discard pass-1 output */
-    errors = assemble_pass(src, 2, &buf);
+    errors = assemble_pass(src, 2, &buf, target->code_base);
   }
 
   // char line[256];

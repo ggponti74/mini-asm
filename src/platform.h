@@ -19,6 +19,7 @@ typedef struct {
     const char       *cpu_arch;       // instruction-encoding table to select, see opcodes_select_arch()
     const char       *default_ext;    // appended to the derived output name, e.g. ".exe" or "" for none
     bool              needs_exec_bit; // true if the output should get chmod +x on POSIX hosts
+    uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
     platform_write_fn write;          // emits the final executable from the assembled buffer
 } PlatformTarget;
 

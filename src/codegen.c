@@ -29,25 +29,30 @@ static void encode_operand(const Operand *op, OutputBuffer *out) {
     }
 }
 
-// x86's real "MOV r32, imm32" bakes the destination register into the
-// low 3 bits of the opcode byte itself (0xB8 + reg) and takes a 4-byte
-// little-endian immediate -- no ModRM byte at all. That doesn't fit the
-// generic "opcode bytes, then each operand's bytes back to back" model
-// below (which previously produced e.g. "89 00 00 00 00": a real x86
-// opcode, 0x89 "MOV r/m32, r32", followed by garbage that the CPU reads
-// as a ModRM byte -- decoding to "MOV [EAX], EAX", a write through
-// whatever's in EAX, which is why this used to segfault immediately).
-// So this specific (mnemonic, arch, operand shape) combination is
-// special-cased here instead.
+// Maps mini-asm register numbers (Dn = 0..7, An = 8..15) to x86 register
+// encodings (0..7 = EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI). D0-D7 keep
+// the same-numbered x86 register. A0 maps to ESI, which means it shares
+// a register with D6 -- x86-32 only has 8 general registers, so D0-D7
+// and A0-A7 can't all be distinct. Returns -1 for registers with no
+// mapping yet.
+static int x86_reg_code(int reg) {
+    if (reg >= 0 && reg <= 7) return reg;
+    if (reg == 8) return 6;  // A0 -> ESI
+    return -1;
+}
+
+// (keep your existing explanatory comment for MOV r32, imm32 here)
 static bool emit_x86_move_imm32(const Operand *operands, OutputBuffer *out) {
     const Operand *imm = NULL, *reg = NULL;
     for (int i = 0; i < 2; i++) {
         if (operands[i].type == OPERAND_IMMEDIATE) imm = &operands[i];
         if (operands[i].type == OPERAND_REGISTER) reg = &operands[i];
     }
-    if (!imm || !reg || reg->value.reg < 0 || reg->value.reg > 7) return false;
+    if (!imm || !reg) return false;
+    int r = x86_reg_code(reg->value.reg);
+    if (r < 0) return false;
 
-    buffer_write(out, (uint8_t)(0xB8 + reg->value.reg));
+    buffer_write(out, (uint8_t)(0xB8 + r));
     uint32_t v = (uint32_t)imm->value.imm;
     buffer_write(out, (uint8_t)(v & 0xFF));
     buffer_write(out, (uint8_t)((v >> 8) & 0xFF));
@@ -56,27 +61,46 @@ static bool emit_x86_move_imm32(const Operand *operands, OutputBuffer *out) {
     return true;
 }
 
+// x86 "LEA r32, [disp32]": opcode 8D, ModRM = 00 rrr 101 (absolute
+// 32-bit address, no base register), then the address as a 4-byte
+// little-endian value. main.c has already turned the label operand into
+// an immediate holding the label's absolute address.
+static bool emit_x86_lea(const Operand *operands, OutputBuffer *out) {
+    const Operand *addr = &operands[0], *reg = &operands[1];
+    if (addr->type != OPERAND_IMMEDIATE || reg->type != OPERAND_REGISTER)
+        return false;
+    // Like the real 68K, LEA targets an address register (A0-A7) only.
+    if (reg->value.reg < 8) return false;
+    int r = x86_reg_code(reg->value.reg);
+    if (r < 0) return false;
+
+    buffer_write(out, 0x8D);
+    buffer_write(out, (uint8_t)((r << 3) | 0x05));
+    uint32_t v = (uint32_t)addr->value.imm;
+    buffer_write(out, (uint8_t)(v & 0xFF));
+    buffer_write(out, (uint8_t)((v >> 8) & 0xFF));
+    buffer_write(out, (uint8_t)((v >> 16) & 0xFF));
+    buffer_write(out, (uint8_t)((v >> 24) & 0xFF));
+    return true;
+}
+
 // Emit full instruction
-void emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
-    if (!entry || !out) return;
+int emit_code(const OpcodeEntry *entry, Operand *operands, OutputBuffer *out) {
+    if (!entry || !out) return -1;
 
     const char *arch = opcodes_active_arch_name();
-    if (arch && strcmp(arch, "x86") == 0 &&
-        strcmp(entry->mnemonic, "MOVE") == 0 &&
-        entry->operand_count == 2) {
-        if (emit_x86_move_imm32(operands, out)) return;
-        // Operands weren't the (immediate, register) shape this handles;
-        // fall through to the generic path below.
+    if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 2) {
+        if (strcmp(entry->mnemonic, "MOVE") == 0)
+            return emit_x86_move_imm32(operands, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "LEA") == 0)
+            return emit_x86_lea(operands, out) ? 0 : -1;
     }
 
-    // Write base opcode (entry->size bytes, most-significant byte first,
-    // matching the literal byte order used in opcode_table[])
     for (size_t i = entry->size; i > 0; i--) {
         buffer_write(out, (uint8_t)(entry->opcode >> ((i - 1) * 8)));
     }
-
-    // Write operands
     for (size_t i = 0; i < entry->operand_count; i++) {
         encode_operand(&operands[i], out);
     }
+    return 0;
 }
