@@ -21,6 +21,11 @@ typedef enum { SIZE_UNSPEC = 0, SIZE_B, SIZE_W, SIZE_L } OpSize;
 
 #define DEFAULT_OPSIZE SIZE_W   // mini-asm's rule: no suffix means word (.w)
 
+// On a branch (BRA/BSR) the suffix picks the displacement size, not an
+// operation size. Unsuffixed branches use .w (the safest: reaches anywhere
+// the x86 targets can encode), independent of DEFAULT_OPSIZE.
+#define BRANCH_DEFAULT_SIZE SIZE_W
+
 // Bit masks for OpcodeEntry.size_mask (which suffixes an entry accepts).
 #define SIZES_B   0x1u
 #define SIZES_W   0x2u

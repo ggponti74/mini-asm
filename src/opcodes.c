@@ -30,6 +30,10 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
     {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
     {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    // BRA/BSR: opcode byte is a placeholder; codegen.c picks EB (short jmp),
+    // E9 (jmp rel32) or E8 (call rel32).
+    {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BSR", 0xE8, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
 };
 
 static const OpcodeEntry arm_opcode_table[] = {

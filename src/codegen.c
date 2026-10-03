@@ -53,6 +53,50 @@ static void write_le(OutputBuffer *out, uint32_t v, int bytes) {
 #define X86_OPSIZE_PREFIX 0x66  // switches a 32-bit x86 operation to 16 bits
 #define ERR_BYTE_REG "byte-sized operations only work on D0-D3 on this target (D4-D7 would hit AH/CH/DH/BH)"
 
+static uint32_t g_pc = 0;
+static bool g_final_pass = false;
+
+void codegen_set_context(uint32_t pc, bool final_pass) {
+    g_pc = pc;
+    g_final_pass = final_pass;
+}
+
+// BRA / BSR with the target already turned into an absolute address:
+//   BRA.b      EB cb     jmp rel8   (2 bytes, target within -128..+127)
+//   BRA.w/.l   E9 cd     jmp rel32  (5 bytes)
+//   BSR.any    E8 cd     call rel32 (5 bytes)
+// rel = target - address of the *next* x86 instruction. x86 has no short
+// call, so BSR.b is as long as BSR.w. On the 68K the suffix is the
+// displacement size; here only .b changes the encoding (a 16-bit x86 branch
+// would truncate EIP). CALL pushes the return address and RTS (ret) pops it,
+// the same stack protocol as BSR/RTS; jmp and call change no flags, like
+// BRA and BSR. The x86 distance differs from what the 68K encoding would
+// need, so 68K's own .b/.w range limits are not enforced -- only the real
+// x86 limit of the short form is.
+static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
+                            OpSize size, OutputBuffer *out) {
+    if (operands[0].type != OPERAND_IMMEDIATE) return false;  // resolved label
+    bool is_bsr = strcmp(entry->mnemonic, "BSR") == 0;
+    if (size == SIZE_UNSPEC) size = BRANCH_DEFAULT_SIZE;
+    bool is_short = !is_bsr && size == SIZE_B;
+    uint32_t len = is_short ? 2 : 5;
+
+    int32_t rel = 0;  // pass 1 only reserves space
+    if (g_final_pass)
+        rel = (int32_t)((uint32_t)operands[0].value.imm - (g_pc + len));
+
+    if (is_short) {
+        if (g_final_pass && (rel < -128 || rel > 127))
+            return fail("branch target is too far for BRA.B on this target (the x86 code between is more than 127 bytes); use BRA.W");
+        buffer_write(out, 0xEB);
+        write_le(out, (uint32_t)rel, 1);
+    } else {
+        buffer_write(out, is_bsr ? 0xE8 : 0xE9);
+        write_le(out, (uint32_t)rel, 4);
+    }
+    return true;
+}
+
 // Maps mini-asm register numbers (Dn = 0..7, An = 8..15) to x86 register
 // encodings (0..7 = EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI). D0-D7 keep
 // the same-numbered x86 register. A0 maps to ESI, which means it shares
@@ -436,6 +480,9 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         if (strcmp(entry->mnemonic, "DIVS") == 0)
             return emit_x86_div(operands, size, true, out) ? 0 : -1;
     }
+    if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
+        (strcmp(entry->mnemonic, "BRA") == 0 || strcmp(entry->mnemonic, "BSR") == 0))
+        return emit_x86_branch(entry, operands, size, out) ? 0 : -1;
 
     for (size_t i = entry->size; i > 0; i--) {
         buffer_write(out, (uint8_t)(entry->opcode >> ((i - 1) * 8)));

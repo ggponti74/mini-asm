@@ -160,6 +160,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       continue;
     }
 
+    codegen_set_context(code_base + (uint32_t)buf->size, pass == 2);
     if (emit_code(entry, ops, size, buf) != 0) {
       const char *why = codegen_error();
       if (why) {

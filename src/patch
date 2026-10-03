@@ -1,74 +1,126 @@
 diff --git a/src/codegen.c b/src/codegen.c
-index 9089225..e4c625d 100644
+index e4c625d..9db0ce4 100644
 --- a/src/codegen.c
 +++ b/src/codegen.c
-@@ -65,6 +65,46 @@ static int x86_reg_code(int reg) {
-     return -1;
- }
+@@ -53,6 +53,50 @@ static void write_le(OutputBuffer *out, uint32_t v, int bytes) {
+ #define X86_OPSIZE_PREFIX 0x66  // switches a 32-bit x86 operation to 16 bits
+ #define ERR_BYTE_REG "byte-sized operations only work on D0-D3 on this target (D4-D7 would hit AH/CH/DH/BH)"
  
-+// x86 MOVE Rs, Rd (register to register) at the requested size.
-+//   MOVE Ds/As, Dn : 88 /r | 66 89 /r | 89 /r   (ModRM = 11 sss ddd)
-+//     .b/.w only replace the low byte/word of Dn, like the 68K. Sets N,Z from
-+//     the value moved and clears V,C (X untouched): x86 "mov" touches no flags,
-+//     so a same-size "test d,d" follows.
-+//   MOVEA Rs, An   : 89 /r (.l)  |  0F BF /r movsx (.w, sign-extends)
-+//     No byte size, and no flags change.
-+// As on the 68K, an address register can't be a byte-sized source.
-+static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize size,
-+                              OutputBuffer *out) {
-+    int s = x86_reg_code(src->value.reg), d = x86_reg_code(dst->value.reg);
-+    if (s < 0 || d < 0) return false;
-+    bool to_addr = dst->value.reg >= 8;
++static uint32_t g_pc = 0;
++static bool g_final_pass = false;
 +
-+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
-+    if (size == SIZE_B && to_addr)
-+        return fail("MOVE to an address register can't be byte-sized (MOVEA has no .b)");
-+    if (size == SIZE_B && src->value.reg >= 8)
-+        return fail("byte-sized MOVE can't use an address register as the source");
-+    if (size == SIZE_B && (s > 3 || d > 3)) return fail(ERR_BYTE_REG);
++void codegen_set_context(uint32_t pc, bool final_pass) {
++    g_pc = pc;
++    g_final_pass = final_pass;
++}
 +
-+    if (to_addr) {
-+        if (size == SIZE_W) {                       // MOVEA.W: sign-extend
-+            buffer_write(out, 0x0F); buffer_write(out, 0xBF);
-+            buffer_write(out, (uint8_t)(0xC0 | (d << 3) | s));
-+        } else {
-+            buffer_write(out, 0x89);
-+            buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
-+        }
-+        return true;
++// BRA / BSR with the target already turned into an absolute address:
++//   BRA.b      EB cb     jmp rel8   (2 bytes, target within -128..+127)
++//   BRA.w/.l   E9 cd     jmp rel32  (5 bytes)
++//   BSR.any    E8 cd     call rel32 (5 bytes)
++// rel = target - address of the *next* x86 instruction. x86 has no short
++// call, so BSR.b is as long as BSR.w. On the 68K the suffix is the
++// displacement size; here only .b changes the encoding (a 16-bit x86 branch
++// would truncate EIP). CALL pushes the return address and RTS (ret) pops it,
++// the same stack protocol as BSR/RTS; jmp and call change no flags, like
++// BRA and BSR. The x86 distance differs from what the 68K encoding would
++// need, so 68K's own .b/.w range limits are not enforced -- only the real
++// x86 limit of the short form is.
++static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
++                            OpSize size, OutputBuffer *out) {
++    if (operands[0].type != OPERAND_IMMEDIATE) return false;  // resolved label
++    bool is_bsr = strcmp(entry->mnemonic, "BSR") == 0;
++    if (size == SIZE_UNSPEC) size = BRANCH_DEFAULT_SIZE;
++    bool is_short = !is_bsr && size == SIZE_B;
++    uint32_t len = is_short ? 2 : 5;
++
++    int32_t rel = 0;  // pass 1 only reserves space
++    if (g_final_pass)
++        rel = (int32_t)((uint32_t)operands[0].value.imm - (g_pc + len));
++
++    if (is_short) {
++        if (g_final_pass && (rel < -128 || rel > 127))
++            return fail("branch target is too far for BRA.B on this target (the x86 code between is more than 127 bytes); use BRA.W");
++        buffer_write(out, 0xEB);
++        write_le(out, (uint32_t)rel, 1);
++    } else {
++        buffer_write(out, is_bsr ? 0xE8 : 0xE9);
++        write_le(out, (uint32_t)rel, 4);
 +    }
-+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-+    buffer_write(out, size == SIZE_B ? 0x88 : 0x89);
-+    buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
-+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-+    buffer_write(out, size == SIZE_B ? 0x84 : 0x85);            // test d,d
-+    buffer_write(out, (uint8_t)(0xC0 | (d << 3) | d));
 +    return true;
 +}
 +
- // x86 MOVE #imm, reg at the requested size:
- //   .b  B0+r ib              (writes only the low byte: AL/CL/DL/BL)
- //   .w  66 B8+r iw           (writes only the low 16 bits)
-@@ -76,6 +116,8 @@ static int x86_reg_code(int reg) {
- // "test r,r" of the same size follows (84 /r, 66 85 /r or 85 /r): it sets
- // SF/ZF, clears CF/OF, and leaves the register alone.
- static bool emit_x86_move_imm(const Operand *operands, OpSize size, OutputBuffer *out) {
-+    if (operands[0].type == OPERAND_REGISTER && operands[1].type == OPERAND_REGISTER)
-+        return emit_x86_move_reg(&operands[0], &operands[1], size, out);
-     const Operand *imm = NULL, *reg = NULL;
-     for (int i = 0; i < 2; i++) {
-         if (operands[i].type == OPERAND_IMMEDIATE) imm = &operands[i];
+ // Maps mini-asm register numbers (Dn = 0..7, An = 8..15) to x86 register
+ // encodings (0..7 = EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI). D0-D7 keep
+ // the same-numbered x86 register. A0 maps to ESI, which means it shares
+@@ -436,6 +480,9 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
+         if (strcmp(entry->mnemonic, "DIVS") == 0)
+             return emit_x86_div(operands, size, true, out) ? 0 : -1;
+     }
++    if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
++        (strcmp(entry->mnemonic, "BRA") == 0 || strcmp(entry->mnemonic, "BSR") == 0))
++        return emit_x86_branch(entry, operands, size, out) ? 0 : -1;
+ 
+     for (size_t i = entry->size; i > 0; i--) {
+         buffer_write(out, (uint8_t)(entry->opcode >> ((i - 1) * 8)));
+diff --git a/src/codegen.h b/src/codegen.h
+index a0b57d1..c1a7fb6 100644
+--- a/src/codegen.h
++++ b/src/codegen.h
+@@ -18,6 +18,12 @@ void buffer_write(OutputBuffer *out, uint8_t byte);
+ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
+               OutputBuffer *out);
+ 
++// Tells codegen where the next instruction will sit (its absolute address)
++// and whether labels are resolved yet (pass 2). Branches need this to turn
++// an absolute target into a relative displacement; in pass 1 they only
++// reserve the right number of bytes. Call before each emit_code().
++void codegen_set_context(uint32_t pc, bool final_pass);
++
+ // After emit_code() returns -1: a human-readable reason, or NULL if there
+ // isn't a specific one.
+ const char *codegen_error(void);
+diff --git a/src/main.c b/src/main.c
+index 87492a1..693e4ad 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -160,6 +160,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
+       continue;
+     }
+ 
++    codegen_set_context(code_base + (uint32_t)buf->size, pass == 2);
+     if (emit_code(entry, ops, size, buf) != 0) {
+       const char *why = codegen_error();
+       if (why) {
 diff --git a/src/opcodes.c b/src/opcodes.c
-index 3cba7d2..89eed4f 100644
+index 89eed4f..789d7bd 100644
 --- a/src/opcodes.c
 +++ b/src/opcodes.c
-@@ -15,7 +15,7 @@ static const OpcodeEntry x86_opcode_table[] = {
-     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
-     {"RTS", 0xC3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "RET"
-     {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "NOP"
--    {"MOVE", 0x89, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL}, // x86 "MOV"
-+    {"MOVE", 0x89, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL}, // x86 "MOV"
-     {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},   // x86 "LEA r32, [disp32]"
-     // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
-     // or 01 /r (reg) depending on the source operand kind.
-     
+@@ -30,6 +30,10 @@ static const OpcodeEntry x86_opcode_table[] = {
+     {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+     {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+     {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
++    // BRA/BSR: opcode byte is a placeholder; codegen.c picks EB (short jmp),
++    // E9 (jmp rel32) or E8 (call rel32).
++    {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
++    {"BSR", 0xE8, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+ };
+ 
+ static const OpcodeEntry arm_opcode_table[] = {
+diff --git a/src/opcodes.h b/src/opcodes.h
+index 7bbb0c6..f22eed2 100644
+--- a/src/opcodes.h
++++ b/src/opcodes.h
+@@ -21,6 +21,11 @@ typedef enum { SIZE_UNSPEC = 0, SIZE_B, SIZE_W, SIZE_L } OpSize;
+ 
+ #define DEFAULT_OPSIZE SIZE_W   // mini-asm's rule: no suffix means word (.w)
+ 
++// On a branch (BRA/BSR) the suffix picks the displacement size, not an
++// operation size. Unsuffixed branches use .w (the safest: reaches anywhere
++// the x86 targets can encode), independent of DEFAULT_OPSIZE.
++#define BRANCH_DEFAULT_SIZE SIZE_W
++
+ // Bit masks for OpcodeEntry.size_mask (which suffixes an entry accepts).
+ #define SIZES_B   0x1u
+ #define SIZES_W   0x2u
+ 
