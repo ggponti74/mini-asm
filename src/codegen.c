@@ -61,25 +61,137 @@ void codegen_set_context(uint32_t pc, bool final_pass) {
     g_final_pass = final_pass;
 }
 
-// BRA / BSR with the target already turned into an absolute address:
-//   BRA.b      EB cb     jmp rel8   (2 bytes, target within -128..+127)
-//   BRA.w/.l   E9 cd     jmp rel32  (5 bytes)
-//   BSR.any    E8 cd     call rel32 (5 bytes)
+static int x86_reg_code(int reg);   // defined below
+
+// CMP / CMPA / CMPI: compute (dst - src) at the operation size, set the
+// flags, and change no register. 68K CMP sets N, Z, V and C (C is the
+// borrow) and leaves X alone; x86 CMP sets SF, ZF, OF and CF the same way
+// from the same subtraction, so it is a direct match:
+//   cmp src, Dn : 38 /r | 66 39 /r | 39 /r   (ModRM = 11 sss ddd:
+//                 "CMP r/m, r" is r/m - r, so r/m = dst, reg = src)
+//   cmp #i, Dn  : 80 /7 ib | 66 81 /7 iw | 81 /7 id   (ModRM = 11 111 ddd)
+// CMPA (also CMP with an A-register destination) always compares all 32
+// bits of An; a .w source is sign-extended first:
+//   immediate   -> sign-extended at assembly time, then 81 /7 id
+//   register    -> push src; movsx src,src16; cmp ; pop src (pop leaves
+//                  the flags alone), so the source register is unchanged.
+//                  When src is An itself the compare goes against the
+//                  pushed copy: cmp [esp], src.
+typedef enum { CMP_PLAIN, CMP_ADDR, CMP_IMM } CmpKind;
+
+static bool emit_x86_cmp(const Operand *operands, OpSize size, CmpKind kind,
+                         OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER) return false;
+    bool dst_addr = dst->value.reg >= 8;
+    int d = x86_reg_code(dst->value.reg);
+    if (d < 0) return false;
+
+    if (kind == CMP_IMM && dst_addr)
+        return fail("CMPI needs a data register (D0-D7) destination");
+    if (kind == CMP_ADDR && !dst_addr)
+        return fail("CMPA needs an address register destination (use CMP for data registers)");
+    bool addr_cmp = dst_addr;                       // CMPA semantics
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (addr_cmp && size == SIZE_B)
+        return fail("comparing with an address register can't be byte-sized (CMPA has no .b)");
+    if (!addr_cmp && size == SIZE_B && d > 3) return fail(ERR_BYTE_REG);
+
+    if (src->type == OPERAND_IMMEDIATE) {
+        if (!imm_fits(src->value.imm, size))
+            return fail("immediate value doesn't fit the operation size");
+        uint32_t v = (uint32_t)src->value.imm;
+        if (addr_cmp) {
+            if (size == SIZE_W) v = (uint32_t)(int32_t)(int16_t)v;   // CMPA.W sign-extends
+            buffer_write(out, 0x81);
+            buffer_write(out, (uint8_t)(0xF8 | d));
+            write_le(out, v, 4);
+            return true;
+        }
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x81);
+        buffer_write(out, (uint8_t)(0xF8 | d));
+        write_le(out, v, size == SIZE_B ? 1 : size == SIZE_W ? 2 : 4);
+        return true;
+    }
+
+    if (src->type != OPERAND_REGISTER) return false;
+    if (size == SIZE_B && src->value.reg >= 8)
+        return fail("byte-sized CMP can't use an address register as the source");
+    int s = x86_reg_code(src->value.reg);
+    if (s < 0) return false;
+    if (size == SIZE_B && s > 3) return fail(ERR_BYTE_REG);
+
+    if (addr_cmp && size == SIZE_W) {
+        if (s == 4)
+            return fail("CMPA.W with D4 as the source isn't supported on this target (D4 is ESP)");
+        buffer_write(out, (uint8_t)(0x50 + s));                      // push src
+        buffer_write(out, 0x0F); buffer_write(out, 0xBF);            // movsx src, src16
+        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | s));
+        if (s == d) {                                                // cmp [esp], src
+            buffer_write(out, 0x39);
+            buffer_write(out, (uint8_t)(0x04 | (s << 3)));
+            buffer_write(out, 0x24);
+        } else {                                                     // cmp dst, src
+            buffer_write(out, 0x39);
+            buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        }
+        buffer_write(out, (uint8_t)(0x58 + s));                      // pop src
+        return true;
+    }
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x38 : 0x39);
+    buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+    return true;
+}
+
+// 68K condition -> x86 condition code (the low nibble of Jcc: 7x / 0F 8x).
+// After a 68K compare/arithmetic instruction the N, Z, V, C flags are in the
+// x86 SF, ZF, OF, CF with the same meaning (C is the borrow for compares),
+// so every 68K condition is exactly one x86 condition:
+//   HI C=0&Z=0 -> A   LS C=1|Z=1 -> BE   CC/HS C=0 -> AE   CS/LO C=1 -> B
+//   NE Z=0 -> NE      EQ Z=1 -> E        VC V=0 -> NO      VS V=1 -> O
+//   PL N=0 -> NS      MI N=1 -> S        GE N=V -> GE      LT N!=V -> L
+//   GT Z=0&N=V -> G   LE Z=1|N!=V -> LE
+static const struct { const char *mnemonic; int x86_cc; } k_bcc[] = {
+    {"BHI", 0x7}, {"BLS", 0x6}, {"BCC", 0x3}, {"BHS", 0x3}, {"BCS", 0x2}, {"BLO", 0x2},
+    {"BNE", 0x5}, {"BEQ", 0x4}, {"BVC", 0x1}, {"BVS", 0x0}, {"BPL", 0x9}, {"BMI", 0x8},
+    {"BGE", 0xD}, {"BLT", 0xC}, {"BGT", 0xF}, {"BLE", 0xE},
+};
+
+// Returns the x86 condition code for a Bcc mnemonic, or -1 if it isn't one.
+static int bcc_x86_cc(const char *mnemonic) {
+    for (size_t i = 0; i < sizeof k_bcc / sizeof k_bcc[0]; i++)
+        if (strcmp(mnemonic, k_bcc[i].mnemonic) == 0) return k_bcc[i].x86_cc;
+    return -1;
+}
+
+static bool is_branch_mnemonic(const char *m) {
+    return strcmp(m, "BRA") == 0 || strcmp(m, "BSR") == 0 || bcc_x86_cc(m) >= 0;
+}
+
+// BRA / BSR / Bcc with the target already turned into an absolute address:
+//   BRA.b      EB cb        jmp rel8    (2 bytes, target within -128..+127)
+//   BRA.w/.l   E9 cd        jmp rel32   (5 bytes)
+//   BSR.any    E8 cd        call rel32  (5 bytes)
+//   Bcc.b      7x cb        jcc rel8    (2 bytes, target within -128..+127)
+//   Bcc.w/.l   0F 8x cd     jcc rel32   (6 bytes)
 // rel = target - address of the *next* x86 instruction. x86 has no short
 // call, so BSR.b is as long as BSR.w. On the 68K the suffix is the
 // displacement size; here only .b changes the encoding (a 16-bit x86 branch
 // would truncate EIP). CALL pushes the return address and RTS (ret) pops it,
-// the same stack protocol as BSR/RTS; jmp and call change no flags, like
-// BRA and BSR. The x86 distance differs from what the 68K encoding would
-// need, so 68K's own .b/.w range limits are not enforced -- only the real
-// x86 limit of the short form is.
+// the same stack protocol as BSR/RTS; jmp, jcc and call change no flags, like
+// BRA, Bcc and BSR. The x86 distance differs from what the 68K encoding
+// would need, so 68K's own .b/.w range limits are not enforced -- only the
+// real x86 limit of the short form is.
 static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
                             OpSize size, OutputBuffer *out) {
     if (operands[0].type != OPERAND_IMMEDIATE) return false;  // resolved label
     bool is_bsr = strcmp(entry->mnemonic, "BSR") == 0;
+    int cc = bcc_x86_cc(entry->mnemonic);                      // -1 for BRA/BSR
     if (size == SIZE_UNSPEC) size = BRANCH_DEFAULT_SIZE;
     bool is_short = !is_bsr && size == SIZE_B;
-    uint32_t len = is_short ? 2 : 5;
+    uint32_t len = is_short ? 2 : (cc >= 0 ? 6 : 5);
 
     int32_t rel = 0;  // pass 1 only reserves space
     if (g_final_pass)
@@ -87,9 +199,13 @@ static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
 
     if (is_short) {
         if (g_final_pass && (rel < -128 || rel > 127))
-            return fail("branch target is too far for BRA.B on this target (the x86 code between is more than 127 bytes); use BRA.W");
-        buffer_write(out, 0xEB);
+            return fail("branch target is too far for a .B branch on this target (the x86 code between is more than 127 bytes); use .W");
+        buffer_write(out, cc >= 0 ? (uint8_t)(0x70 + cc) : 0xEB);
         write_le(out, (uint32_t)rel, 1);
+    } else if (cc >= 0) {
+        buffer_write(out, 0x0F);
+        buffer_write(out, (uint8_t)(0x80 + cc));
+        write_le(out, (uint32_t)rel, 4);
     } else {
         buffer_write(out, is_bsr ? 0xE8 : 0xE9);
         write_le(out, (uint32_t)rel, 4);
@@ -479,9 +595,15 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
             return emit_x86_div(operands, size, false, out) ? 0 : -1;
         if (strcmp(entry->mnemonic, "DIVS") == 0)
             return emit_x86_div(operands, size, true, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "CMP") == 0)
+            return emit_x86_cmp(operands, size, CMP_PLAIN, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "CMPA") == 0)
+            return emit_x86_cmp(operands, size, CMP_ADDR, out) ? 0 : -1;
+        if (strcmp(entry->mnemonic, "CMPI") == 0)
+            return emit_x86_cmp(operands, size, CMP_IMM, out) ? 0 : -1;
     }
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
-        (strcmp(entry->mnemonic, "BRA") == 0 || strcmp(entry->mnemonic, "BSR") == 0))
+        is_branch_mnemonic(entry->mnemonic))
         return emit_x86_branch(entry, operands, size, out) ? 0 : -1;
 
     for (size_t i = entry->size; i > 0; i--) {

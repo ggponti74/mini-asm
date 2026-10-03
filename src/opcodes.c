@@ -34,6 +34,34 @@ static const OpcodeEntry x86_opcode_table[] = {
     // E9 (jmp rel32) or E8 (call rel32).
     {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BSR", 0xE8, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    // Compares: opcode bytes are placeholders; codegen.c emits the x86 CMP.
+    // CMP  <src>, Dn|An   (CMP #imm,Dn is CMPI and CMP src,An is CMPA, as in
+    //                      the usual 68K assemblers)
+    // CMPA <src>, An      (.w or .l only; a .w source is sign-extended)
+    // CMPI #imm, Dn
+    // CMPM needs memory operands and isn't supported yet.
+    {"CMP",  0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
+    {"CMPA", 0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W | SIZES_L},
+    {"CMPI", 0x39, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+    // Conditional branches (Bcc): opcode bytes are placeholders; codegen.c
+    // emits the matching x86 Jcc. BHS = BCC and BLO = BCS (usual aliases).
+    // DBcc and Scc aren't supported yet.
+    {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BCC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BHS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BCS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BLO", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BNE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BEQ", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BVC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BVS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BPL", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BMI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BGE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BLT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BGT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    {"BLE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
 };
 
 static const OpcodeEntry arm_opcode_table[] = {
