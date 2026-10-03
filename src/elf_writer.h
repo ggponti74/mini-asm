@@ -5,10 +5,11 @@
 
 #include "codegen.h"
 
-// call code_addr ; mov eax,1 ; xor ebx,ebx ; int 0x80  ->  CALL into the
-// user's code, then Linux sys_exit(0) once it RETs back here. See
+// mov eax,[esp] ; lea esi,[esp+4] ; call code_addr ; mov ebx,eax ;
+// mov eax,1 ; int 0x80  ->  load the command line into D0/A0, CALL into the
+// user's code, then Linux sys_exit(D0) once it RETs back here. See
 // write_elf() for why the CALL (not a fallthrough) is needed.
-#define ELF_EPILOGUE_SIZE 14
+#define ELF_EPILOGUE_SIZE 21
 
 void write_elf(const char *filename, const OutputBuffer *buf);
 

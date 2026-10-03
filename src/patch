@@ -1,155 +1,88 @@
-diff --git a/src/directives.c b/src/directives.c
-index f6b70c3..9d8d486 100644
---- a/src/directives.c
-+++ b/src/directives.c
-@@ -30,4 +30,9 @@ static size_t dc_unit(const char *token) {
- int directive_is(const char *token) { return dc_unit(token) != 0; }
- 
-+void directive_print_list(FILE *out) {
-+  fprintf(out, "Directives:\n");
-+  fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
-+}
+diff --git a/README.md b/README.md
+index 634ec1f..e45a0bb 100644
+--- a/README.md
++++ b/README.md
+@@ -20,4 +20,16 @@
+     Example: mini-asm -t arm -l
+   
++  ### Command line (elf target)
 +
- static int dc_error(size_t line_num, const char *fmt, const char *arg) {
-   fprintf(stderr, "Error at line %zu: ", line_num);
-diff --git a/src/directives.h b/src/directives.h
-index 2b6e69c..3816d88 100644
---- a/src/directives.h
-+++ b/src/directives.h
-@@ -4,4 +4,5 @@
- #include <stddef.h>
- #include <stdint.h>
-+#include <stdio.h>
++    When an assembled program starts, it receives its command line in the
++    registers, counting the command itself:
++
++      D0   number of arguments (argc)
++      A0   pointer to the argument array: 32-bit pointers to NUL-terminated
++           strings, [A0] = the command, [A0+4] = first argument, ...,
++           ending with a 0 pointer
++
++    The x86 PE and ARM targets don't pass the command line yet.
++
+   ### Feedback
  
+diff --git a/src/elf_writer.c b/src/elf_writer.c
+index 0918dfe..27ec5a4 100644
+--- a/src/elf_writer.c
++++ b/src/elf_writer.c
+@@ -20,4 +20,12 @@
+ // not a hardcoded 0. Mirrors the BL-back-into-code trick write_arm_elf()
+ // uses for the same reason.
++//
++// Command line: the kernel starts a process with argc at [esp] and the
++// argv pointer array right above it (argv[0] = the command itself, then
++// the arguments, then a NULL). Before calling into the code, the entry
++// stub copies those into the 68K registers: D0 (EAX) = argc and
++// A0 (ESI) = pointer to argv, an array of 32-bit pointers to
++// NUL-terminated strings, argv[0] being the command and the array
++// ending with a 0 pointer. Both count the command itself.
+ void write_elf(const char *filename, const OutputBuffer *buf) {
+     if (!buf) return;
+@@ -75,12 +83,17 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
+     fwrite(buf->data, 1, buf->size, f);
+ 
+-    // --- epilogue: call code_addr ; mov ebx,eax ; mov eax,1 ; int 0x80 ---
+-    // The CALL pushes (address of the "mov ebx,eax" below) as the return
+-    // address and jumps into the user's code. When the user's code RETs,
+-    // it lands right back here, saves EAX/D0 into EBX (the sys_exit exit
+-    // status register) *before* EAX gets overwritten with the syscall
+-    // number, and falls into sys_exit(D0).
+-    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 5);
++    // --- entry stub + epilogue ---
++    //   mov eax,[esp]     ; D0 <- argc (counts the command itself)
++    //   lea esi,[esp+4]   ; A0 <- &argv[0]
++    //   call code_addr    ; pushes the address of the "mov ebx,eax" below
++    //   mov ebx,eax       ; exit status <- D0 (before EAX gets the syscall no.)
++    //   mov eax,1         ; sys_exit
++    //   int 0x80
++    // The first two instructions must run before the CALL: afterwards ESP
++    // has moved and the user's code is free to change EAX/ESI anyway.
++    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 7 + 5);
+     uint8_t epilogue[ELF_EPILOGUE_SIZE] = {
++        0x8B, 0x04, 0x24,               // mov eax, [esp]
++        0x8D, 0x74, 0x24, 0x04,         // lea esi, [esp+4]
+         0xE8, 0x00, 0x00, 0x00, 0x00,   // call code_addr (rel32 patched below)
+         0x89, 0xC3,                     // mov ebx, eax   (exit status <- D0)
+@@ -88,5 +101,5 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
+         0xCD, 0x80                      // int 0x80
+     };
+-    memcpy(&epilogue[1], &call_rel, sizeof(call_rel));
++    memcpy(&epilogue[8], &call_rel, sizeof(call_rel));
+     fwrite(epilogue, 1, sizeof(epilogue), f);
+ 
+diff --git a/src/elf_writer.h b/src/elf_writer.h
+index ef9265e..de55d8b 100644
+--- a/src/elf_writer.h
++++ b/src/elf_writer.h
+@@ -6,8 +6,9 @@
  #include "codegen.h"
-@@ -18,3 +19,6 @@ int directive_assemble(const char *code, size_t line_num, int pass,
-                        OutputBuffer *buf, uint32_t code_base);
  
-+// Prints the directives mini-asm understands (for -l/--list).
-+void directive_print_list(FILE *out);
-+
- #endif // DIRECTIVE_H
-\ No newline at end of file
-diff --git a/src/main.c b/src/main.c
-index 693e4ad..19f080d 100644
---- a/src/main.c
-+++ b/src/main.c
-@@ -18,5 +18,6 @@
- static void print_usage(const char *prog)
- {
--  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n\n", prog);
-+  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n", prog);
-+  fprintf(stderr, "       %s [-t target] -l\n\n", prog);
-   fprintf(
-       stderr,
-@@ -25,4 +26,7 @@ static void print_usage(const char *prog)
-   fprintf(stderr,
-           "  -o, --output <file>   override the assembled file's name\n");
-+  fprintf(stderr,
-+          "  -l, --list            list the instructions and directives available\n"
-+          "                        for the target (no source file needed)\n");
-   fprintf(stderr, "  -h, --help            show this help\n\n");
-   fprintf(stderr, "Available targets:\n");
-@@ -189,4 +193,5 @@ int main(int argc, char *argv[])
-   const char *output_override = NULL;
-   const char *source_path = NULL;
-+  int list_only = 0;
+-// call code_addr ; mov eax,1 ; xor ebx,ebx ; int 0x80  ->  CALL into the
+-// user's code, then Linux sys_exit(0) once it RETs back here. See
++// mov eax,[esp] ; lea esi,[esp+4] ; call code_addr ; mov ebx,eax ;
++// mov eax,1 ; int 0x80  ->  load the command line into D0/A0, CALL into the
++// user's code, then Linux sys_exit(D0) once it RETs back here. See
+ // write_elf() for why the CALL (not a fallthrough) is needed.
+-#define ELF_EPILOGUE_SIZE 14
++#define ELF_EPILOGUE_SIZE 21
  
-   for (int i = 1; i < argc; i++)
-@@ -217,4 +222,8 @@ int main(int argc, char *argv[])
-       output_override = argv[++i];
-     }
-+    else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0)
-+    {
-+      list_only = 1;
-+    }
-     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
-     {
-@@ -234,5 +243,5 @@ int main(int argc, char *argv[])
-   }
- 
--  if (!source_path)
-+  if (!source_path && !list_only)
-   {
-     print_usage(argv[0]);
-@@ -253,4 +262,13 @@ int main(int argc, char *argv[])
-   }
- 
-+  if (list_only)
-+  {
-+    opcodes_print_table(stdout);
-+    printf("\n");
-+    directive_print_list(stdout);
-+    printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
-+    return 0;
-+  }
-+
-   FILE *src = fopen(source_path, "r");
-   if (!src)
-diff --git a/src/opcodes.c b/src/opcodes.c
-index a6dc89d..7c6db28 100644
---- a/src/opcodes.c
-+++ b/src/opcodes.c
-@@ -152,2 +152,42 @@ const OpcodeEntry *lookup_opcode(const char *mnemonic)
-     return NULL; // not found
- }
-+
-+static const char *operand_kind_name(OperandType t)
-+{
-+    switch (t)
-+    {
-+    case OPERAND_REGISTER:   return "reg";
-+    case OPERAND_IMMEDIATE:  return "#imm";
-+    case OPERAND_LABEL:      return "label";
-+    case OPERAND_REG_OR_IMM: return "reg|#imm";
-+    default:                 return "";
-+    }
-+}
-+
-+void opcodes_print_table(FILE *out)
-+{
-+    if (!g_active_table)
-+        return;
-+
-+    fprintf(out, "Instructions for target CPU '%s':\n", g_active_arch_name);
-+    fprintf(out, "  %-6s %-8s %s\n", "MNEM", "SIZES", "OPERANDS");
-+    for (size_t i = 0; i < g_active_count; i++)
-+    {
-+        const OpcodeEntry *e = &g_active_table[i];
-+
-+        char sizes[8] = "";
-+        if (e->size_mask & SIZES_B) strcat(sizes, "b");
-+        if (e->size_mask & SIZES_W) strcat(sizes, "w");
-+        if (e->size_mask & SIZES_L) strcat(sizes, "l");
-+        if (!sizes[0]) strcpy(sizes, "-");
-+
-+        char ops[40] = "";
-+        for (size_t k = 0; k < e->operand_count && k < 2; k++)
-+        {
-+            if (k) strcat(ops, ", ");
-+            strcat(ops, operand_kind_name(e->operand_types[k]));
-+        }
-+
-+        fprintf(out, "  %-6s %-8s %s\n", e->mnemonic, sizes, ops);
-+    }
-+}
-diff --git a/src/opcodes.h b/src/opcodes.h
-index f22eed2..1a24cc4 100644
---- a/src/opcodes.h
-+++ b/src/opcodes.h
-@@ -4,4 +4,5 @@
- 
- #include <stddef.h>
-+#include <stdio.h>
- #include <stdint.h>
- #include <stdbool.h>
-@@ -69,3 +70,8 @@ const OpcodeEntry* lookup_opcode(const char *mnemonic);
- const char *opcodes_active_arch_name(void);
- 
-+// Prints the currently selected architecture's opcode table to `out`: one
-+// line per mnemonic with its accepted size suffixes and operand forms.
-+// Backs the -l/--list switch. Does nothing if no arch has been selected.
-+void opcodes_print_table(FILE *out);
-+
- #endif // OPCODES_H
+ void write_elf(const char *filename, const OutputBuffer *buf);
  

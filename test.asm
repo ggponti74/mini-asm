@@ -1,8 +1,9 @@
-start:  move	#3, d0
-        move	#2, d1
-	mulu	d0, d1
-	bra     end
+start:
+	cmp     #1, d1
+	BEQ     good
+        move #5, d0
+bad:    bra good
         rts
 
-end:    move 	d1, d0
+good:   move 	#0, d0
         rts

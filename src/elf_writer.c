@@ -19,6 +19,14 @@
 // process's real exit status is whatever the assembled program computed,
 // not a hardcoded 0. Mirrors the BL-back-into-code trick write_arm_elf()
 // uses for the same reason.
+//
+// Command line: the kernel starts a process with argc at [esp] and the
+// argv pointer array right above it (argv[0] = the command itself, then
+// the arguments, then a NULL). Before calling into the code, the entry
+// stub copies those into the 68K registers: D0 (EAX) = argc and
+// A0 (ESI) = pointer to argv, an array of 32-bit pointers to
+// NUL-terminated strings, argv[0] being the command and the array
+// ending with a 0 pointer. Both count the command itself.
 void write_elf(const char *filename, const OutputBuffer *buf) {
     if (!buf) return;
 
@@ -74,20 +82,25 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     fseek(f, 0x1000, SEEK_SET);
     fwrite(buf->data, 1, buf->size, f);
 
-    // --- epilogue: call code_addr ; mov ebx,eax ; mov eax,1 ; int 0x80 ---
-    // The CALL pushes (address of the "mov ebx,eax" below) as the return
-    // address and jumps into the user's code. When the user's code RETs,
-    // it lands right back here, saves EAX/D0 into EBX (the sys_exit exit
-    // status register) *before* EAX gets overwritten with the syscall
-    // number, and falls into sys_exit(D0).
-    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 5);
+    // --- entry stub + epilogue ---
+    //   mov eax,[esp]     ; D0 <- argc (counts the command itself)
+    //   lea esi,[esp+4]   ; A0 <- &argv[0]
+    //   call code_addr    ; pushes the address of the "mov ebx,eax" below
+    //   mov ebx,eax       ; exit status <- D0 (before EAX gets the syscall no.)
+    //   mov eax,1         ; sys_exit
+    //   int 0x80
+    // The first two instructions must run before the CALL: afterwards ESP
+    // has moved and the user's code is free to change EAX/ESI anyway.
+    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 7 + 5);
     uint8_t epilogue[ELF_EPILOGUE_SIZE] = {
+        0x8B, 0x04, 0x24,               // mov eax, [esp]
+        0x8D, 0x74, 0x24, 0x04,         // lea esi, [esp+4]
         0xE8, 0x00, 0x00, 0x00, 0x00,   // call code_addr (rel32 patched below)
         0x89, 0xC3,                     // mov ebx, eax   (exit status <- D0)
         0xB8, 0x01, 0x00, 0x00, 0x00,   // mov eax, 1     (sys_exit)
         0xCD, 0x80                      // int 0x80
     };
-    memcpy(&epilogue[1], &call_rel, sizeof(call_rel));
+    memcpy(&epilogue[8], &call_rel, sizeof(call_rel));
     fwrite(epilogue, 1, sizeof(epilogue), f);
 
     fclose(f);
