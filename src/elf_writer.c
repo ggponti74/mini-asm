@@ -58,9 +58,12 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     phdr.p_vaddr  = code_addr;
     phdr.p_paddr  = code_addr;
     // Code + epilogue both live in this one PT_LOAD segment.
+    // The emulated-register block follows the epilogue (4-byte aligned) and
+    // exists only in memory (p_memsz > p_filesz, zero-filled by the kernel).
+    // The segment is writable: 68K code and data share one flat space.
     phdr.p_filesz = total_size;
-    phdr.p_memsz  = total_size;
-    phdr.p_flags  = PF_X | PF_R;
+    phdr.p_memsz  = REGFILE_ALIGN_UP(total_size) + REGFILE_SIZE;
+    phdr.p_flags  = PF_X | PF_W | PF_R;
     phdr.p_align  = 0x1000;
 
     // Write headers

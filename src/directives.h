@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "codegen.h"
 
@@ -16,5 +17,8 @@ int directive_is(const char *token);
 // should fall through to the normal instruction path.
 int directive_assemble(const char *code, size_t line_num, int pass,
                        OutputBuffer *buf, uint32_t code_base);
+
+// Prints the directives mini-asm understands (for -l/--list).
+void directive_print_list(FILE *out);
 
 #endif // DIRECTIVE_H

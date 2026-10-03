@@ -24,6 +24,21 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
 // reserve the right number of bytes. Call before each emit_code().
 void codegen_set_context(uint32_t pc, bool final_pass);
 
+// Emulated-register block. The 68K has 16 registers (D0-D7, A0-A7) but x86
+// has 8, so registers with no physical home live in a small zero-filled
+// block in the program's own writable memory. The block sits right after
+// the code (plus whatever the target's writer appends after it, e.g. the
+// ELF epilogue), rounded up to a 4-byte boundary. Writers reserve
+// REGFILE_SIZE bytes there; main() computes the address after pass 1 (when
+// the code size is known) and hands it to codegen. Instruction lengths never
+// depend on the address (it is always a 4-byte displacement), so pass 1 and
+// pass 2 produce the same sizes.
+#define REGFILE_SIZE 64
+#define REGFILE_ALIGN_UP(n) (((n) + 3u) & ~3u)
+
+void codegen_set_regfile(uint32_t base);
+uint32_t codegen_regfile_base(void);
+
 // After emit_code() returns -1: a human-readable reason, or NULL if there
 // isn't a specific one.
 const char *codegen_error(void);

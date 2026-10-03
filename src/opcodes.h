@@ -3,6 +3,7 @@
 
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -67,5 +68,10 @@ const OpcodeEntry* lookup_opcode(const char *mnemonic);
 // destination register into the opcode byte itself and takes no ModRM
 // byte at all.
 const char *opcodes_active_arch_name(void);
+
+// Prints the currently selected architecture's opcode table to `out`: one
+// line per mnemonic with its accepted size suffixes and operand forms.
+// Backs the -l/--list switch. Does nothing if no arch has been selected.
+void opcodes_print_table(FILE *out);
 
 #endif // OPCODES_H

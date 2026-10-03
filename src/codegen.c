@@ -55,6 +55,15 @@ static void write_le(OutputBuffer *out, uint32_t v, int bytes) {
 
 static uint32_t g_pc = 0;
 static bool g_final_pass = false;
+static uint32_t g_regfile_base = 0;
+
+void codegen_set_regfile(uint32_t base) {
+    g_regfile_base = base;
+}
+
+uint32_t codegen_regfile_base(void) {
+    return g_regfile_base;
+}
 
 void codegen_set_context(uint32_t pc, bool final_pass) {
     g_pc = pc;

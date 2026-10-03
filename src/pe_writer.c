@@ -126,7 +126,11 @@ void write_pe(const char *filename, const OutputBuffer *buf)
     const uint32_t size_of_headers = align_up(headers_raw_size, FILE_ALIGN);
 
     const uint32_t code_raw_size = align_up((uint32_t)buf->size, FILE_ALIGN);
-    const uint32_t code_virtual_size = align_up((uint32_t)buf->size, SEC_ALIGN);
+    // .text is also the emulated-register block's home: REGFILE_SIZE zeroed
+    // bytes right after the code (4-byte aligned), present in memory only.
+    // 68K programs mix code and data, so .text is writable (RWX) for now.
+    const uint32_t text_virtual_size = REGFILE_ALIGN_UP((uint32_t)buf->size) + REGFILE_SIZE;
+    const uint32_t code_virtual_size = align_up(text_virtual_size, SEC_ALIGN);
 
     const uint32_t text_rva = SEC_ALIGN;            // .text starts at first section alignment boundary
     const uint32_t size_of_image = align_up(SEC_ALIGN, SEC_ALIGN) + code_virtual_size; // headers page + code page(s)
@@ -176,11 +180,11 @@ void write_pe(const char *filename, const OutputBuffer *buf)
     // --- Section header: .text ---
     IMAGE_SECTION_HEADER text = {0};
     memcpy(text.Name, ".text", 5);          // remaining bytes stay zero-padded
-    text.VirtualSize     = (uint32_t)buf->size;
+    text.VirtualSize     = text_virtual_size;
     text.VirtualAddress  = text_rva;
     text.SizeOfRawData   = code_raw_size;
     text.PointerToRawData = size_of_headers;
-    text.Characteristics = 0x60000020;      // CODE | MEM_EXECUTE | MEM_READ
+    text.Characteristics = 0xE0000020;      // CODE | MEM_EXECUTE | MEM_READ | MEM_WRITE
     fwrite(&text, sizeof(text), 1, f);
 
     // --- Pad headers out to FileAlignment ---

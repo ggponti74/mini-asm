@@ -1,123 +1,155 @@
-diff --git a/src/codegen.c b/src/codegen.c
-index 4942834..4a2e578 100644
---- a/src/codegen.c
-+++ b/src/codegen.c
-@@ -145,25 +145,53 @@ static bool emit_x86_cmp(const Operand *operands, OpSize size, CmpKind kind,
-     return true;
- }
+diff --git a/src/directives.c b/src/directives.c
+index f6b70c3..9d8d486 100644
+--- a/src/directives.c
++++ b/src/directives.c
+@@ -30,4 +30,9 @@ static size_t dc_unit(const char *token) {
+ int directive_is(const char *token) { return dc_unit(token) != 0; }
  
--// BRA / BSR with the target already turned into an absolute address:
--//   BRA.b      EB cb     jmp rel8   (2 bytes, target within -128..+127)
--//   BRA.w/.l   E9 cd     jmp rel32  (5 bytes)
--//   BSR.any    E8 cd     call rel32 (5 bytes)
-+// 68K condition -> x86 condition code (the low nibble of Jcc: 7x / 0F 8x).
-+// After a 68K compare/arithmetic instruction the N, Z, V, C flags are in the
-+// x86 SF, ZF, OF, CF with the same meaning (C is the borrow for compares),
-+// so every 68K condition is exactly one x86 condition:
-+//   HI C=0&Z=0 -> A   LS C=1|Z=1 -> BE   CC/HS C=0 -> AE   CS/LO C=1 -> B
-+//   NE Z=0 -> NE      EQ Z=1 -> E        VC V=0 -> NO      VS V=1 -> O
-+//   PL N=0 -> NS      MI N=1 -> S        GE N=V -> GE      LT N!=V -> L
-+//   GT Z=0&N=V -> G   LE Z=1|N!=V -> LE
-+static const struct { const char *mnemonic; int x86_cc; } k_bcc[] = {
-+    {"BHI", 0x7}, {"BLS", 0x6}, {"BCC", 0x3}, {"BHS", 0x3}, {"BCS", 0x2}, {"BLO", 0x2},
-+    {"BNE", 0x5}, {"BEQ", 0x4}, {"BVC", 0x1}, {"BVS", 0x0}, {"BPL", 0x9}, {"BMI", 0x8},
-+    {"BGE", 0xD}, {"BLT", 0xC}, {"BGT", 0xF}, {"BLE", 0xE},
-+};
-+
-+// Returns the x86 condition code for a Bcc mnemonic, or -1 if it isn't one.
-+static int bcc_x86_cc(const char *mnemonic) {
-+    for (size_t i = 0; i < sizeof k_bcc / sizeof k_bcc[0]; i++)
-+        if (strcmp(mnemonic, k_bcc[i].mnemonic) == 0) return k_bcc[i].x86_cc;
-+    return -1;
++void directive_print_list(FILE *out) {
++  fprintf(out, "Directives:\n");
++  fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
 +}
 +
-+static bool is_branch_mnemonic(const char *m) {
-+    return strcmp(m, "BRA") == 0 || strcmp(m, "BSR") == 0 || bcc_x86_cc(m) >= 0;
-+}
+ static int dc_error(size_t line_num, const char *fmt, const char *arg) {
+   fprintf(stderr, "Error at line %zu: ", line_num);
+diff --git a/src/directives.h b/src/directives.h
+index 2b6e69c..3816d88 100644
+--- a/src/directives.h
++++ b/src/directives.h
+@@ -4,4 +4,5 @@
+ #include <stddef.h>
+ #include <stdint.h>
++#include <stdio.h>
+ 
+ #include "codegen.h"
+@@ -18,3 +19,6 @@ int directive_assemble(const char *code, size_t line_num, int pass,
+                        OutputBuffer *buf, uint32_t code_base);
+ 
++// Prints the directives mini-asm understands (for -l/--list).
++void directive_print_list(FILE *out);
 +
-+// BRA / BSR / Bcc with the target already turned into an absolute address:
-+//   BRA.b      EB cb        jmp rel8    (2 bytes, target within -128..+127)
-+//   BRA.w/.l   E9 cd        jmp rel32   (5 bytes)
-+//   BSR.any    E8 cd        call rel32  (5 bytes)
-+//   Bcc.b      7x cb        jcc rel8    (2 bytes, target within -128..+127)
-+//   Bcc.w/.l   0F 8x cd     jcc rel32   (6 bytes)
- // rel = target - address of the *next* x86 instruction. x86 has no short
- // call, so BSR.b is as long as BSR.w. On the 68K the suffix is the
- // displacement size; here only .b changes the encoding (a 16-bit x86 branch
- // would truncate EIP). CALL pushes the return address and RTS (ret) pops it,
--// the same stack protocol as BSR/RTS; jmp and call change no flags, like
--// BRA and BSR. The x86 distance differs from what the 68K encoding would
--// need, so 68K's own .b/.w range limits are not enforced -- only the real
--// x86 limit of the short form is.
-+// the same stack protocol as BSR/RTS; jmp, jcc and call change no flags, like
-+// BRA, Bcc and BSR. The x86 distance differs from what the 68K encoding
-+// would need, so 68K's own .b/.w range limits are not enforced -- only the
-+// real x86 limit of the short form is.
- static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
-                             OpSize size, OutputBuffer *out) {
-     if (operands[0].type != OPERAND_IMMEDIATE) return false;  // resolved label
-     bool is_bsr = strcmp(entry->mnemonic, "BSR") == 0;
-+    int cc = bcc_x86_cc(entry->mnemonic);                      // -1 for BRA/BSR
-     if (size == SIZE_UNSPEC) size = BRANCH_DEFAULT_SIZE;
-     bool is_short = !is_bsr && size == SIZE_B;
--    uint32_t len = is_short ? 2 : 5;
-+    uint32_t len = is_short ? 2 : (cc >= 0 ? 6 : 5);
+ #endif // DIRECTIVE_H
+\ No newline at end of file
+diff --git a/src/main.c b/src/main.c
+index 693e4ad..19f080d 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -18,5 +18,6 @@
+ static void print_usage(const char *prog)
+ {
+-  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n\n", prog);
++  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n", prog);
++  fprintf(stderr, "       %s [-t target] -l\n\n", prog);
+   fprintf(
+       stderr,
+@@ -25,4 +26,7 @@ static void print_usage(const char *prog)
+   fprintf(stderr,
+           "  -o, --output <file>   override the assembled file's name\n");
++  fprintf(stderr,
++          "  -l, --list            list the instructions and directives available\n"
++          "                        for the target (no source file needed)\n");
+   fprintf(stderr, "  -h, --help            show this help\n\n");
+   fprintf(stderr, "Available targets:\n");
+@@ -189,4 +193,5 @@ int main(int argc, char *argv[])
+   const char *output_override = NULL;
+   const char *source_path = NULL;
++  int list_only = 0;
  
-     int32_t rel = 0;  // pass 1 only reserves space
-     if (g_final_pass)
-@@ -171,9 +199,13 @@ static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
- 
-     if (is_short) {
-         if (g_final_pass && (rel < -128 || rel > 127))
--            return fail("branch target is too far for BRA.B on this target (the x86 code between is more than 127 bytes); use BRA.W");
--        buffer_write(out, 0xEB);
-+            return fail("branch target is too far for a .B branch on this target (the x86 code between is more than 127 bytes); use .W");
-+        buffer_write(out, cc >= 0 ? (uint8_t)(0x70 + cc) : 0xEB);
-         write_le(out, (uint32_t)rel, 1);
-+    } else if (cc >= 0) {
-+        buffer_write(out, 0x0F);
-+        buffer_write(out, (uint8_t)(0x80 + cc));
-+        write_le(out, (uint32_t)rel, 4);
-     } else {
-         buffer_write(out, is_bsr ? 0xE8 : 0xE9);
-         write_le(out, (uint32_t)rel, 4);
-@@ -571,7 +603,7 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
-             return emit_x86_cmp(operands, size, CMP_IMM, out) ? 0 : -1;
+   for (int i = 1; i < argc; i++)
+@@ -217,4 +222,8 @@ int main(int argc, char *argv[])
+       output_override = argv[++i];
      }
-     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
--        (strcmp(entry->mnemonic, "BRA") == 0 || strcmp(entry->mnemonic, "BSR") == 0))
-+        is_branch_mnemonic(entry->mnemonic))
-         return emit_x86_branch(entry, operands, size, out) ? 0 : -1;
++    else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0)
++    {
++      list_only = 1;
++    }
+     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
+     {
+@@ -234,5 +243,5 @@ int main(int argc, char *argv[])
+   }
  
-     for (size_t i = entry->size; i > 0; i--) {
+-  if (!source_path)
++  if (!source_path && !list_only)
+   {
+     print_usage(argv[0]);
+@@ -253,4 +262,13 @@ int main(int argc, char *argv[])
+   }
+ 
++  if (list_only)
++  {
++    opcodes_print_table(stdout);
++    printf("\n");
++    directive_print_list(stdout);
++    printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
++    return 0;
++  }
++
+   FILE *src = fopen(source_path, "r");
+   if (!src)
 diff --git a/src/opcodes.c b/src/opcodes.c
-index e598aee..a6dc89d 100644
+index a6dc89d..7c6db28 100644
 --- a/src/opcodes.c
 +++ b/src/opcodes.c
-@@ -43,6 +43,25 @@ static const OpcodeEntry x86_opcode_table[] = {
-     {"CMP",  0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
-     {"CMPA", 0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-     {"CMPI", 0x39, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
-+    // Conditional branches (Bcc): opcode bytes are placeholders; codegen.c
-+    // emits the matching x86 Jcc. BHS = BCC and BLO = BCS (usual aliases).
-+    // DBcc and Scc aren't supported yet.
-+    {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BCC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BHS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BCS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BLO", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BNE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BEQ", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BVC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BVS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BPL", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BMI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BGE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BLT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BGT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-+    {"BLE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
- };
+@@ -152,2 +152,42 @@ const OpcodeEntry *lookup_opcode(const char *mnemonic)
+     return NULL; // not found
+ }
++
++static const char *operand_kind_name(OperandType t)
++{
++    switch (t)
++    {
++    case OPERAND_REGISTER:   return "reg";
++    case OPERAND_IMMEDIATE:  return "#imm";
++    case OPERAND_LABEL:      return "label";
++    case OPERAND_REG_OR_IMM: return "reg|#imm";
++    default:                 return "";
++    }
++}
++
++void opcodes_print_table(FILE *out)
++{
++    if (!g_active_table)
++        return;
++
++    fprintf(out, "Instructions for target CPU '%s':\n", g_active_arch_name);
++    fprintf(out, "  %-6s %-8s %s\n", "MNEM", "SIZES", "OPERANDS");
++    for (size_t i = 0; i < g_active_count; i++)
++    {
++        const OpcodeEntry *e = &g_active_table[i];
++
++        char sizes[8] = "";
++        if (e->size_mask & SIZES_B) strcat(sizes, "b");
++        if (e->size_mask & SIZES_W) strcat(sizes, "w");
++        if (e->size_mask & SIZES_L) strcat(sizes, "l");
++        if (!sizes[0]) strcpy(sizes, "-");
++
++        char ops[40] = "";
++        for (size_t k = 0; k < e->operand_count && k < 2; k++)
++        {
++            if (k) strcat(ops, ", ");
++            strcat(ops, operand_kind_name(e->operand_types[k]));
++        }
++
++        fprintf(out, "  %-6s %-8s %s\n", e->mnemonic, sizes, ops);
++    }
++}
+diff --git a/src/opcodes.h b/src/opcodes.h
+index f22eed2..1a24cc4 100644
+--- a/src/opcodes.h
++++ b/src/opcodes.h
+@@ -4,4 +4,5 @@
  
- static const OpcodeEntry arm_opcode_table[] = {
-    
+ #include <stddef.h>
++#include <stdio.h>
+ #include <stdint.h>
+ #include <stdbool.h>
+@@ -69,3 +70,8 @@ const OpcodeEntry* lookup_opcode(const char *mnemonic);
+ const char *opcodes_active_arch_name(void);
+ 
++// Prints the currently selected architecture's opcode table to `out`: one
++// line per mnemonic with its accepted size suffixes and operand forms.
++// Backs the -l/--list switch. Does nothing if no arch has been selected.
++void opcodes_print_table(FILE *out);
++
+ #endif // OPCODES_H
+ 

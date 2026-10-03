@@ -29,6 +29,11 @@ static size_t dc_unit(const char *token) {
 
 int directive_is(const char *token) { return dc_unit(token) != 0; }
 
+void directive_print_list(FILE *out) {
+  fprintf(out, "Directives:\n");
+  fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
+}
+
 static int dc_error(size_t line_num, const char *fmt, const char *arg) {
   fprintf(stderr, "Error at line %zu: ", line_num);
   fprintf(stderr, fmt, arg);

@@ -151,3 +151,43 @@ const OpcodeEntry *lookup_opcode(const char *mnemonic)
     }
     return NULL; // not found
 }
+
+static const char *operand_kind_name(OperandType t)
+{
+    switch (t)
+    {
+    case OPERAND_REGISTER:   return "reg";
+    case OPERAND_IMMEDIATE:  return "#imm";
+    case OPERAND_LABEL:      return "label";
+    case OPERAND_REG_OR_IMM: return "reg|#imm";
+    default:                 return "";
+    }
+}
+
+void opcodes_print_table(FILE *out)
+{
+    if (!g_active_table)
+        return;
+
+    fprintf(out, "Instructions for target CPU '%s':\n", g_active_arch_name);
+    fprintf(out, "  %-6s %-8s %s\n", "MNEM", "SIZES", "OPERANDS");
+    for (size_t i = 0; i < g_active_count; i++)
+    {
+        const OpcodeEntry *e = &g_active_table[i];
+
+        char sizes[8] = "";
+        if (e->size_mask & SIZES_B) strcat(sizes, "b");
+        if (e->size_mask & SIZES_W) strcat(sizes, "w");
+        if (e->size_mask & SIZES_L) strcat(sizes, "l");
+        if (!sizes[0]) strcpy(sizes, "-");
+
+        char ops[40] = "";
+        for (size_t k = 0; k < e->operand_count && k < 2; k++)
+        {
+            if (k) strcat(ops, ", ");
+            strcat(ops, operand_kind_name(e->operand_types[k]));
+        }
+
+        fprintf(out, "  %-6s %-8s %s\n", e->mnemonic, sizes, ops);
+    }
+}

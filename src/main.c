@@ -17,13 +17,17 @@
 
 static void print_usage(const char *prog)
 {
-  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n\n", prog);
+  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n", prog);
+  fprintf(stderr, "       %s [-t target] -l\n\n", prog);
   fprintf(
       stderr,
       "  -t, --target <name>   output format to assemble to (default: %s)\n",
       platform_default()->name);
   fprintf(stderr,
           "  -o, --output <file>   override the assembled file's name\n");
+  fprintf(stderr,
+          "  -l, --list            list the instructions and directives available\n"
+          "                        for the target (no source file needed)\n");
   fprintf(stderr, "  -h, --help            show this help\n\n");
   fprintf(stderr, "Available targets:\n");
   platform_print_targets(stderr);
@@ -188,6 +192,7 @@ int main(int argc, char *argv[])
   const PlatformTarget *target = NULL;
   const char *output_override = NULL;
   const char *source_path = NULL;
+  int list_only = 0;
 
   for (int i = 1; i < argc; i++)
   {
@@ -216,6 +221,10 @@ int main(int argc, char *argv[])
       }
       output_override = argv[++i];
     }
+    else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0)
+    {
+      list_only = 1;
+    }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
     {
       print_usage(argv[0]);
@@ -233,7 +242,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  if (!source_path)
+  if (!source_path && !list_only)
   {
     print_usage(argv[0]);
     return 1;
@@ -252,6 +261,15 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  if (list_only)
+  {
+    opcodes_print_table(stdout);
+    printf("\n");
+    directive_print_list(stdout);
+    printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
+    return 0;
+  }
+
   FILE *src = fopen(source_path, "r");
   if (!src)
   {
@@ -268,6 +286,17 @@ int main(int argc, char *argv[])
 
   if (errors == 0)
   {
+    if (target->has_regfile)
+    {
+      // Code size is final after pass 1 (pass 2 emits the same number of
+      // bytes), so this is where the writer's REGFILE_SIZE bytes will sit.
+      // code_base is 4-byte aligned, so rounding the absolute address up
+      // matches the writers' round-up of the code-relative offset.
+      uint32_t regfile = REGFILE_ALIGN_UP(target->code_base + (uint32_t)buf.size +
+                                          target->code_tail);
+      codegen_set_regfile(regfile);
+      printf("Register block at 0x%08X (%d bytes)\n", regfile, REGFILE_SIZE);
+    }
     rewind(src);
     buf.size = 0; /* discard pass-1 output */
     errors = assemble_pass(src, 2, &buf, target->code_base);

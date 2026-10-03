@@ -30,6 +30,8 @@ static const PlatformTarget k_targets[] = {
         .default_ext    = ".exe",
         .needs_exec_bit = false,
         .code_base = 0x00401000,
+        .has_regfile    = true,
+        .code_tail      = 0,
         .write          = write_pe,
     },
     {
@@ -39,6 +41,8 @@ static const PlatformTarget k_targets[] = {
         .default_ext    = "",
         .needs_exec_bit = true,
         .code_base = 0x00008000,
+        .has_regfile    = false,   // ARM register mapping not done yet
+        .code_tail      = 0,
         .write          = write_arm_elf,
     },
     {
@@ -48,6 +52,8 @@ static const PlatformTarget k_targets[] = {
         .default_ext    = "",
         .needs_exec_bit = true,
         .code_base      = 0x08049000,
+        .has_regfile    = true,
+        .code_tail      = ELF_EPILOGUE_SIZE,   // epilogue follows the code
         .write          = write_elf,
     },
 };

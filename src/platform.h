@@ -20,6 +20,8 @@ typedef struct {
     const char       *default_ext;    // appended to the derived output name, e.g. ".exe" or "" for none
     bool              needs_exec_bit; // true if the output should get chmod +x on POSIX hosts
     uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
+    bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
+    uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
     platform_write_fn write;          // emits the final executable from the assembled buffer
 } PlatformTarget;
 
