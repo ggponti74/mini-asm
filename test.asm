@@ -1,5 +1,5 @@
-start:  lea     string, a0
-        lea     string, a1
+start:  lea     a, a0
+        lea     b, a1
         move    (a0), d0
         move    (a1), d1
         cmp     d0, d1

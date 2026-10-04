@@ -1,18 +1,12 @@
-#include <stdlib.h>
 #include <string.h>
 
 #include "codegen.h"
 
 // Write a single byte into buffer
 void buffer_write(OutputBuffer *out, uint8_t byte) {
-    if (out->size == out->capacity) {
-        size_t new_cap = out->capacity ? out->capacity * 2 : 1024;
-        uint8_t *grown = realloc(out->data, new_cap);
-        if (!grown) return;           // out of memory: drop the byte
-        out->data = grown;
-        out->capacity = new_cap;
+    if (out->size < out->capacity) {
+        out->data[out->size++] = byte;
     }
-    out->data[out->size++] = byte;
 }
 
 // Encode one operand (simplified)
@@ -232,11 +226,16 @@ static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
 // encodings (0..7 = EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI). D0-D7 keep
 // the same-numbered x86 register. A0 maps to ESI, which means it shares
 // a register with D6 -- x86-32 only has 8 general registers, so D0-D7
-// and A0-A7 can't all be distinct. Returns -1 for registers with no
-// mapping yet.
+// and A0-A7 can't all be distinct. A1-A7 have no x86 register at all: they
+// live in the emulated-register block (see "A1-A7" below), and only get one
+// while emit_x86_two_operand() has a scratch register standing in for them
+// (g_subst holds that register's code + 1, 0 = none). Otherwise -1.
+static int g_subst[16];
+
 static int x86_reg_code(int reg) {
     if (reg >= 0 && reg <= 7) return reg;
     if (reg == 8) return 6;  // A0 -> ESI
+    if (reg >= 9 && reg <= 15) return g_subst[reg] - 1;
     return -1;
 }
 
@@ -282,7 +281,8 @@ static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize siz
 
 // ---- MOVE with address-register memory operands ---------------------------
 // Modes: (An), (An)+ (post-increment), -(An) (pre-decrement). The pointer is
-// A0, which lives in ESI on this target (A1-A7 have no register yet). The
+// A0, which lives in ESI on this target, or A1-A7, which are copied into a
+// scratch register around the instruction (see "A1-A7" below). The
 // increment/decrement is the operand size: 1, 2 or 4 bytes.
 //
 //   load   MOVE.s <mem>, Dn   : 8A /r | 66 8B /r | 8B /r      (mov d,[esi])
@@ -302,7 +302,7 @@ static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize siz
 // MOVE.W (A0)+,(A0)+ copies a word to the next word. "MOVEA.s (A0)+,A0"
 // ends up with the loaded value, because the register write comes after the
 // increment, so the increment is skipped.
-#define ERR_MEM_PTR "memory operands only work through A0 on this target for now (A1-A7 have no register yet)"
+#define ERR_MEM_PTR "this address register can't be used as a memory pointer on this target"
 #define ERR_MEM_ALIAS "D6 shares a register with A0 on this target, so it can't be used with an A0 memory operand yet"
 #define ERR_MEM_SAMEREG "MOVE An,(An)+ and MOVE An,-(An) with the same register aren't supported (what gets stored isn't something I could confirm, and it may differ between 68K models)"
 
@@ -752,6 +752,144 @@ static bool emit_x86_div(const Operand *operands, OpSize size, bool is_signed,
     return true;
 }
 
+// ---- A1-A7: address registers kept in the emulated-register block ---------
+// D0-D7 already use all eight x86 registers (A0 shares ESI with D6), so
+// A1-A7 live in memory: register number r (Dn = 0..7, An = 8..15) has the
+// 4-byte slot at regfile_base + 4*r, i.e. A1 = base+36 ... A7 = base+60.
+// The slot is addressed with an absolute 32-bit displacement, so the
+// instruction length never depends on the base address (which is only
+// known after pass 1).
+//
+// The per-instruction encoders above only know x86 registers, so an
+// instruction that names A1-A7 (as a register, or as the pointer of
+// (An), (An)+ or -(An)) is wrapped, with a scratch register T standing in
+// for each such An (T is one of EAX, ECX, EDX, EBX that the instruction
+// doesn't use itself):
+//
+//   push T ; mov T,[slot]          save T, load An (skipped when the
+//                                  instruction only writes An)
+//   <the instruction, with T as An>
+//   mov [slot],T ; pop T           store An back if it changed, restore T
+//
+// push, pop and mov change no flags, so the flags the instruction sets are
+// the ones the program sees. An changes when it is a written destination
+// (MOVE/MOVEA/LEA) or the pointer of a pre-decrement/post-increment mode;
+// the encoders already update the scratch copy in those cases. Up to two
+// different A1-A7 can appear in one instruction (e.g. MOVE.B (A1)+,(A2)+).
+//
+// D4 is ESP on this target and the wrapper uses the stack, so D4 can't be
+// combined with A1-A7 yet.
+#define ERR_SPILL_ESP "D4 maps to ESP on this target, so it can't be combined with A1-A7 yet"
+
+static bool is_reg_operand(const Operand *op) {
+    return op->type == OPERAND_REGISTER || operand_is_memory(op->type);
+}
+
+static bool is_spilled(const Operand *op) {
+    return is_reg_operand(op) && op->value.reg >= 9 && op->value.reg <= 15;
+}
+
+static bool is_move_or_lea(const char *m) {
+    return strcmp(m, "MOVE") == 0 || strcmp(m, "LEA") == 0;
+}
+
+static bool spill_capable(const char *m) {
+    return is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
+           strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0;
+}
+
+// mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
+static void write_slot_access(OutputBuffer *out, uint8_t opcode, int t, int reg) {
+    buffer_write(out, opcode);
+    buffer_write(out, (uint8_t)((t << 3) | 0x05));
+    write_le(out, g_regfile_base + 4u * (uint32_t)reg, 4);
+}
+
+// Runs the encoder for a two-operand x86 mnemonic: 1 = encoded, 0 = failed,
+// -1 = not one of the mnemonics handled here.
+static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize size,
+                         OutputBuffer *out) {
+    const char *m = entry->mnemonic;
+    if (strcmp(m, "MOVE") == 0) return emit_x86_move_imm(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "LEA") == 0)  return emit_x86_lea(operands, out) ? 1 : 0;
+    if (strcmp(m, "ADD") == 0)  return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUB") == 0)  return emit_x86_addsub(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "MULU") == 0) return emit_x86_mul(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "MULS") == 0) return emit_x86_mul(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "DIVU") == 0) return emit_x86_div(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "DIVS") == 0) return emit_x86_div(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "CMP") == 0)  return emit_x86_cmp(operands, size, CMP_PLAIN, out) ? 1 : 0;
+    if (strcmp(m, "CMPA") == 0) return emit_x86_cmp(operands, size, CMP_ADDR, out) ? 1 : 0;
+    if (strcmp(m, "CMPI") == 0) return emit_x86_cmp(operands, size, CMP_IMM, out) ? 1 : 0;
+    return -1;
+}
+
+// Same return values as x86_dispatch2, plus the A1-A7 wrapper described above.
+static int emit_x86_two_operand(const OpcodeEntry *entry, Operand *operands, OpSize size,
+                                OutputBuffer *out) {
+    int regs[2], n = 0;
+    if (spill_capable(entry->mnemonic)) {
+        for (int i = 0; i < 2; i++) {
+            if (!is_spilled(&operands[i])) continue;
+            if (n == 1 && regs[0] == operands[i].value.reg) continue;   // same An twice
+            regs[n++] = operands[i].value.reg;
+        }
+    }
+    if (n == 0) return x86_dispatch2(entry, operands, size, out);
+
+    // Scratch registers must not collide with the x86 registers the
+    // instruction uses directly (D0-D7, A0).
+    bool used[8] = { false };
+    for (int i = 0; i < 2; i++) {
+        if (!is_reg_operand(&operands[i]) || is_spilled(&operands[i])) continue;
+        int c = x86_reg_code(operands[i].value.reg);
+        if (c == X86_ESP) { fail(ERR_SPILL_ESP); return 0; }
+        if (c >= 0) used[c] = true;
+    }
+    int scratch[2];
+    for (int k = 0; k < n; k++) {
+        int t = 0;
+        while (t < 4 && used[t]) t++;
+        if (t == 4) { fail("no free scratch register for A1-A7 in this instruction"); return 0; }
+        used[t] = true;
+        scratch[k] = t;
+    }
+
+    // Per register: is the old value needed, and does the instruction change it?
+    bool load[2], store[2];
+    bool dst_write = is_move_or_lea(entry->mnemonic) && operands[1].type == OPERAND_REGISTER;
+    for (int k = 0; k < n; k++) {
+        int r = regs[k];
+        bool in_src = is_reg_operand(&operands[0]) && operands[0].value.reg == r;
+        bool in_dst = is_reg_operand(&operands[1]) && operands[1].value.reg == r;
+        store[k] = (dst_write && in_dst && operands[1].type == OPERAND_REGISTER) ||
+                   (in_src && (operands[0].type == OPERAND_POSTINC || operands[0].type == OPERAND_PREDEC)) ||
+                   (in_dst && (operands[1].type == OPERAND_POSTINC || operands[1].type == OPERAND_PREDEC));
+        load[k] = !(dst_write && in_dst && operands[1].type == OPERAND_REGISTER && !in_src);
+    }
+
+    size_t start = out->size;
+    for (int k = 0; k < n; k++) {
+        buffer_write(out, (uint8_t)(0x50 + scratch[k]));                // push T
+        g_subst[regs[k]] = scratch[k] + 1;
+    }
+    for (int k = 0; k < n; k++)
+        if (load[k]) write_slot_access(out, 0x8B, scratch[k], regs[k]); // mov T,[slot]
+
+    int r = x86_dispatch2(entry, operands, size, out);
+
+    for (int k = 0; k < n; k++) g_subst[regs[k]] = 0;
+    if (r != 1) {
+        out->size = start;                 // drop the partial sequence
+        return 0;
+    }
+    for (int k = 0; k < n; k++)
+        if (store[k]) write_slot_access(out, 0x89, scratch[k], regs[k]); // mov [slot],T
+    for (int k = n - 1; k >= 0; k--)
+        buffer_write(out, (uint8_t)(0x58 + scratch[k]));                // pop T
+    return 1;
+}
+
 // Emit full instruction
 int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
               OutputBuffer *out) {
@@ -760,28 +898,8 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
 
     const char *arch = opcodes_active_arch_name();
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 2) {
-        if (strcmp(entry->mnemonic, "MOVE") == 0)
-            return emit_x86_move_imm(operands, size, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "LEA") == 0)
-            return emit_x86_lea(operands, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "ADD") == 0)
-            return emit_x86_addsub(operands, size, false, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "SUB") == 0)
-            return emit_x86_addsub(operands, size, true, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "MULU") == 0)
-            return emit_x86_mul(operands, size, false, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "MULS") == 0)
-            return emit_x86_mul(operands, size, true, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "DIVU") == 0)
-            return emit_x86_div(operands, size, false, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "DIVS") == 0)
-            return emit_x86_div(operands, size, true, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "CMP") == 0)
-            return emit_x86_cmp(operands, size, CMP_PLAIN, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "CMPA") == 0)
-            return emit_x86_cmp(operands, size, CMP_ADDR, out) ? 0 : -1;
-        if (strcmp(entry->mnemonic, "CMPI") == 0)
-            return emit_x86_cmp(operands, size, CMP_IMM, out) ? 0 : -1;
+        int r = emit_x86_two_operand(entry, operands, size, out);
+        if (r >= 0) return r ? 0 : -1;
     }
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
         is_branch_mnemonic(entry->mnemonic))
