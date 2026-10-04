@@ -18,6 +18,10 @@
       elf    Linux ELF32 executable (x86)
 
     Example: mini-asm -t arm -l
+
+    Constants can be declared with `NAME EQU value` and used as immediate
+    operands (`MOVE #NAME,D0`) or `dc` values. Values may be decimal, `$`-hex,
+    or `0x`-hex literals.
   
   ### Feedback
 

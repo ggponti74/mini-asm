@@ -1,6 +1,7 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
-#include <stdlib.h> // for atoi
+#include <stdlib.h>
 #include <string.h>
 
 #include "directives.h"
@@ -16,6 +17,49 @@ static char *copy_string(const char *s) {
   if (p)
     memcpy(p, s, n);
   return p;
+}
+
+static int parse_immediate(const char *token, int32_t *value,
+                           const char **symbol) {
+  const char *p = token;
+  int negative = 0;
+  *symbol = NULL;
+  if (*p == '-' || *p == '+') {
+    negative = *p == '-';
+    p++;
+  }
+
+  int base = 10;
+  if (*p == '$') {
+    base = 16;
+    p++;
+  } else if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    base = 16;
+    p += 2;
+  }
+  if (!*p) return 0;
+
+  int numeric = 1;
+  for (const char *q = p; *q; q++)
+    if (base == 16 ? !isxdigit((unsigned char)*q) : !isdigit((unsigned char)*q))
+      numeric = 0;
+  if (!numeric) {
+    if (negative || !(isalpha((unsigned char)token[0]) || token[0] == '_'))
+      return 0;
+    for (const char *q = token + 1; *q; q++)
+      if (!(isalnum((unsigned char)*q) || *q == '_'))
+        return 0;
+    *symbol = copy_string(token);
+    return *symbol != NULL;
+  }
+
+  errno = 0;
+  long long parsed = strtoll(p, NULL, base);
+  if (errno == ERANGE) return 0;
+  if (negative) parsed = -parsed;
+  if (parsed < INT32_MIN || parsed > INT32_MAX) return 0;
+  *value = (int32_t)parsed;
+  return 1;
 }
 
 // Recognizes the address-register memory modes:  (An)  (An)+  -(An)
@@ -192,6 +236,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     if (len == 0)
       break;
 
+    ops[count].symbol = NULL;
+
     // classify operand
     int reg;
     OperandType mem_type;
@@ -207,7 +253,12 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       ops[count].value.reg = reg;
     } else if (token[0] == '#') {
       ops[count].type = OPERAND_IMMEDIATE;
-      ops[count].value.imm = atoi(&token[1]);
+        ops[count].value.imm = 0;
+        if (!parse_immediate(token + 1, &ops[count].value.imm,
+                           &ops[count].symbol)) {
+        ops[count].type = OPERAND_BAD;
+        ops[count].value.label = copy_string(token);
+      }
     } else {
       ops[count].type = OPERAND_LABEL;
       ops[count].value.label = copy_string(token);

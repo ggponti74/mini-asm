@@ -82,7 +82,11 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       continue;
     }
 
-    if (label[0] && pass == 1) {
+    char first_token[16] = "";
+    sscanf(code, "%15s", first_token);
+    int equ_line = directive_is_equ(first_token);
+
+    if (label[0] && pass == 1 && !equ_line) {
       size_t prev;
       if (symtab_define(label, buf->size, line_num, &prev) != 0) {
         fprintf(stderr,
@@ -97,7 +101,7 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
       continue;
     }
 
-    int derr = directive_assemble(code, line_num, pass, buf, code_base);
+    int derr = directive_assemble(code, label, line_num, pass, buf, code_base);
     if (derr >= 0) {
       errors += derr;
       line_num++;
@@ -148,6 +152,19 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
     /* Label operands become absolute addresses. In pass 1 the label may
        not be defined yet, so a placeholder of the same size is used. */
     for (size_t i = 0; ok && i < entry->operand_count; i++) {
+      if (ops[i].type == OPERAND_IMMEDIATE && ops[i].symbol) {
+        if (pass == 2) {
+          int32_t value;
+          if (!symtab_find_equ(ops[i].symbol, &value)) {
+            fprintf(stderr, "Error at line %zu: undefined EQU constant '%s'\n",
+                    line_num, ops[i].symbol);
+            ok = 0;
+            break;
+          }
+          ops[i].value.imm = value;
+        }
+        continue;
+      }
       if (ops[i].type != OPERAND_LABEL) continue;
       int32_t addr = 0;
       if (pass == 2) {

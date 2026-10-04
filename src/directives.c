@@ -7,6 +7,16 @@
 #include "directives.h"
 #include "symtab.h"
 
+static int ci_equal(const char *a, const char *b) {
+  while (*a && *b) {
+    if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+      return 0;
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
 // Size in bytes of one dc.x value: 1, 2 or 4. Returns 0 if `token` is
 // not a dc directive.
 static size_t dc_unit(const char *token) {
@@ -27,10 +37,15 @@ static size_t dc_unit(const char *token) {
   }
 }
 
-int directive_is(const char *token) { return dc_unit(token) != 0; }
+int directive_is_equ(const char *token) { return ci_equal(token, "EQU"); }
+
+int directive_is(const char *token) {
+  return directive_is_equ(token) || dc_unit(token) != 0;
+}
 
 void directive_print_list(FILE *out) {
   fprintf(out, "Directives:\n");
+  fprintf(out, "  EQU              define an absolute constant: NAME EQU value\n");
   fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
   fprintf(out, "                   dc.b also takes strings: dc.b \"Hello\",13,10,0  ('...' works too;\n"
                "                   a doubled quote inside is one quote; no backslash escapes)\n");
@@ -40,6 +55,11 @@ static int dc_error(size_t line_num, const char *fmt, const char *arg) {
   fprintf(stderr, "Error at line %zu: ", line_num);
   fprintf(stderr, fmt, arg);
   fputc('\n', stderr);
+  return 1;
+}
+
+static int equ_error(size_t line_num, const char *message) {
+  fprintf(stderr, "Error at line %zu: EQU %s\n", line_num, message);
   return 1;
 }
 
@@ -137,8 +157,8 @@ static int emit_string(const char **pp, OutputBuffer *buf, const char *name,
   return 1;
 }
 
-int directive_assemble(const char *code, size_t line_num, int pass,
-                       OutputBuffer *buf, uint32_t code_base) {
+int directive_assemble(const char *code, const char *label, size_t line_num,
+                       int pass, OutputBuffer *buf, uint32_t code_base) {
   const char *p = code;
   while (*p && isspace((unsigned char)*p))
     p++;
@@ -152,6 +172,51 @@ int directive_assemble(const char *code, size_t line_num, int pass,
     return -1;
   memcpy(name, name_start, name_len);
   name[name_len] = '\0';
+
+  if (directive_is_equ(name)) {
+    while (*p && isspace((unsigned char)*p))
+      p++;
+    if (!label || !*label)
+      return equ_error(line_num, "requires a label");
+    if (!*p)
+      return equ_error(line_num, "requires a numeric value");
+
+    char value_token[64];
+    size_t value_len = 0;
+    while (*p && !isspace((unsigned char)*p) && *p != ',') {
+      if (value_len < sizeof value_token - 1)
+        value_token[value_len++] = *p;
+      p++;
+    }
+    value_token[value_len] = '\0';
+    while (*p && isspace((unsigned char)*p))
+      p++;
+    if (*p)
+      return equ_error(line_num, "takes exactly one numeric value");
+
+    const char *number_token = value_token[0] == '#' ? value_token + 1 : value_token;
+    long long value;
+    if (!parse_number(number_token, &value)) {
+      if (!is_identifier(number_token))
+        return dc_error(line_num, "invalid EQU value '%s'", value_token);
+      int32_t prior_value;
+      if (!symtab_find_equ(number_token, &prior_value))
+        return dc_error(line_num, "undefined EQU value '%s'", number_token);
+      value = prior_value;
+    }
+    if (value < INT32_MIN || value > INT32_MAX)
+      return equ_error(line_num, "value is outside the signed 32-bit range");
+    if (pass == 1) {
+      size_t prev;
+      if (symtab_define_equ(label, (int32_t)value, line_num, &prev) != 0) {
+        fprintf(stderr,
+                "Error at line %zu: symbol '%s' already defined at line %zu\n",
+                line_num, label, prev);
+        return 1;
+      }
+    }
+    return 0;
+  }
 
   size_t unit = dc_unit(name);
   if (unit == 0)
@@ -193,10 +258,15 @@ int directive_assemble(const char *code, size_t line_num, int pass,
         /* literal */
       } else if (is_identifier(tok)) {
         if (pass == 2) {
-          size_t off;
-          if (!symtab_find(tok, &off))
-            return dc_error(line_num, "undefined label '%s'", tok);
-          value = (long long)code_base + (long long)off;
+          int32_t equ_value;
+          if (symtab_find_equ(tok, &equ_value)) {
+            value = equ_value;
+          } else {
+            size_t off;
+            if (!symtab_find(tok, &off))
+              return dc_error(line_num, "undefined label '%s'", tok);
+            value = (long long)code_base + (long long)off;
+          }
         }
       } else {
         return dc_error(line_num, "invalid value '%s'", tok);
