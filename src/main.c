@@ -132,7 +132,13 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
     /* Each operand must be the kind the opcode table asks for. */
     int ok = 1;
     for (size_t i = 0; i < entry->operand_count; i++) {
-      if (!operand_matches(entry->operand_types[i], ops[i].type)) {
+      if (ops[i].type == OPERAND_BAD) {
+        fprintf(stderr,
+                "Error at line %zu: operand %zu '%s' is malformed (address "
+                "register modes are (An), (An)+ and -(An), no spaces inside)\n",
+                line_num, i + 1, ops[i].value.label);
+        ok = 0;
+      } else if (!operand_matches(entry->operand_types[i], ops[i].type)) {
         fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
                 line_num, i + 1, entry->mnemonic);
         ok = 0;
@@ -267,6 +273,8 @@ int main(int argc, char *argv[])
     printf("\n");
     directive_print_list(stdout);
     printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
+    printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
+           "                 only MOVE takes them so far.\n");
     return 0;
   }
 

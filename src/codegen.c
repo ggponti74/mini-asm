@@ -274,6 +274,170 @@ static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize siz
     return true;
 }
 
+// ---- MOVE with address-register memory operands ---------------------------
+// Modes: (An), (An)+ (post-increment), -(An) (pre-decrement). The pointer is
+// A0, which lives in ESI on this target (A1-A7 have no register yet). The
+// increment/decrement is the operand size: 1, 2 or 4 bytes.
+//
+//   load   MOVE.s <mem>, Dn   : 8A /r | 66 8B /r | 8B /r      (mov d,[esi])
+//          MOVEA.s <mem>, An  : 0F BF /r (.w, sign-extends) | 8B /r (.l)
+//   store  MOVE.s Dn, <mem>   : 88 /r | 66 89 /r | 89 /r      (mov [esi],s)
+//          MOVE.s #i, <mem>   : C6 /0 ib | 66 C7 /0 iw | C7 /0 id
+//   mem to mem goes through a scratch register (EAX..EBX, saved with
+//   push/pop), since x86 has no memory-to-memory mov.
+// ModRM is 00 reg 110 ([esi]). The pointer update is "lea esi,[esi+-n]"
+// (8D /r, disp8), which changes no flags. Flags are the 68K MOVE flags (N,Z
+// from the data, V=C=0, X untouched), as for register MOVE: "test r,r" of the
+// value moved, or, for an immediate, "cmp [mem],0" (CF=OF=0, SF/ZF from the
+// stored value). MOVEA sets no flags.
+//
+// The 68K evaluates the source operand (with its increment/decrement) before
+// the destination's, and the sequence below does the same, so e.g.
+// MOVE.W (A0)+,(A0)+ copies a word to the next word. "MOVEA.s (A0)+,A0"
+// ends up with the loaded value, because the register write comes after the
+// increment, so the increment is skipped.
+#define ERR_MEM_PTR "memory operands only work through A0 on this target for now (A1-A7 have no register yet)"
+#define ERR_MEM_ALIAS "D6 shares a register with A0 on this target, so it can't be used with an A0 memory operand yet"
+#define ERR_MEM_SAMEREG "MOVE An,(An)+ and MOVE An,-(An) with the same register aren't supported (what gets stored isn't something I could confirm, and it may differ between 68K models)"
+
+static int op_bytes(OpSize s) { return s == SIZE_B ? 1 : s == SIZE_W ? 2 : 4; }
+
+// Pointer registers whose [reg] encoding needs no SIB byte or displacement.
+static bool plain_base(int base) { return base >= 0 && base != 4 && base != 5; }
+
+static void write_modrm_mem(OutputBuffer *out, int reg_field, int base) {
+    buffer_write(out, (uint8_t)((reg_field << 3) | base));       // mod = 00
+}
+
+// lea base,[base+delta]
+static void write_ptr_adjust(OutputBuffer *out, int base, int delta) {
+    buffer_write(out, 0x8D);
+    buffer_write(out, (uint8_t)(0x40 | (base << 3) | base));
+    buffer_write(out, (uint8_t)(int8_t)delta);
+}
+
+static void mem_pre(OutputBuffer *out, OperandType mode, int base, int n) {
+    if (mode == OPERAND_PREDEC) write_ptr_adjust(out, base, -n);
+}
+
+static void mem_post(OutputBuffer *out, OperandType mode, int base, int n) {
+    if (mode == OPERAND_POSTINC) write_ptr_adjust(out, base, n);
+}
+
+// test r,r at the operation size (sets SF/ZF, clears CF/OF)
+static void write_test(OutputBuffer *out, int r, OpSize size) {
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x84 : 0x85);
+    buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
+}
+
+// mov r,[base] (load) at the operation size
+static void write_load(OutputBuffer *out, int r, int base, OpSize size) {
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x8A : 0x8B);
+    write_modrm_mem(out, r, base);
+}
+
+// mov [base],r (store) at the operation size
+static void write_store(OutputBuffer *out, int r, int base, OpSize size) {
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x88 : 0x89);
+    write_modrm_mem(out, r, base);
+}
+
+static bool emit_x86_move_mem(const Operand *operands, OpSize size, OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    bool src_mem = operand_is_memory(src->type);
+    bool dst_mem = operand_is_memory(dst->type);
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    int n = op_bytes(size);
+
+    int sbase = -1, dbase = -1;
+    if (src_mem) {
+        sbase = x86_reg_code(src->value.reg);
+        if (!plain_base(sbase)) return fail(ERR_MEM_PTR);
+    }
+    if (dst_mem) {
+        dbase = x86_reg_code(dst->value.reg);
+        if (!plain_base(dbase)) return fail(ERR_MEM_PTR);
+    }
+
+    // memory -> register
+    if (src_mem && !dst_mem) {
+        if (dst->type != OPERAND_REGISTER) return false;
+        bool to_addr = dst->value.reg >= 8;
+        int d = x86_reg_code(dst->value.reg);
+        if (d < 0) return false;
+        if (to_addr && size == SIZE_B)
+            return fail("MOVE to an address register can't be byte-sized (MOVEA has no .b)");
+        if (!to_addr && d == sbase) return fail(ERR_MEM_ALIAS);
+        if (!to_addr && size == SIZE_B && d > 3) return fail(ERR_BYTE_REG);
+
+        mem_pre(out, src->type, sbase, n);
+        if (to_addr && size == SIZE_W) {                 // MOVEA.W: sign-extend
+            buffer_write(out, 0x0F); buffer_write(out, 0xBF);
+            write_modrm_mem(out, d, sbase);
+        } else {
+            write_load(out, d, sbase, to_addr ? SIZE_L : size);
+        }
+        if (!to_addr) write_test(out, d, size);
+        // Writing the register after the increment makes the increment moot.
+        if (!(to_addr && d == sbase)) mem_post(out, src->type, sbase, n);
+        return true;
+    }
+
+    // register / immediate -> memory
+    if (!src_mem && dst_mem) {
+        if (src->type == OPERAND_IMMEDIATE) {
+            if (!imm_fits(src->value.imm, size))
+                return fail("immediate value doesn't fit the operation size");
+            uint32_t v = (uint32_t)src->value.imm;
+            mem_pre(out, dst->type, dbase, n);
+            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+            buffer_write(out, size == SIZE_B ? 0xC6 : 0xC7);
+            write_modrm_mem(out, 0, dbase);
+            write_le(out, v, n);
+            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);   // cmp [mem],0
+            buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
+            write_modrm_mem(out, 7, dbase);
+            buffer_write(out, 0x00);
+            mem_post(out, dst->type, dbase, n);
+            return true;
+        }
+        if (src->type != OPERAND_REGISTER) return false;
+        bool from_addr = src->value.reg >= 8;
+        int s = x86_reg_code(src->value.reg);
+        if (s < 0) return false;
+        if (from_addr && size == SIZE_B)
+            return fail("byte-sized MOVE can't use an address register as the source");
+        if (from_addr && s == dbase && dst->type != OPERAND_IND)
+            return fail(ERR_MEM_SAMEREG);
+        if (!from_addr && s == dbase) return fail(ERR_MEM_ALIAS);
+        if (size == SIZE_B && s > 3) return fail(ERR_BYTE_REG);
+
+        mem_pre(out, dst->type, dbase, n);
+        write_store(out, s, dbase, size);
+        write_test(out, s, size);
+        mem_post(out, dst->type, dbase, n);
+        return true;
+    }
+
+    // memory -> memory, through a scratch register
+    if (!src_mem || !dst_mem) return false;
+    int t = 0;
+    while (t == sbase || t == dbase) t++;                // EAX, ECX, EDX or EBX
+    buffer_write(out, (uint8_t)(0x50 + t));              // push t
+    mem_pre(out, src->type, sbase, n);
+    write_load(out, t, sbase, size);
+    mem_post(out, src->type, sbase, n);
+    mem_pre(out, dst->type, dbase, n);
+    write_store(out, t, dbase, size);
+    write_test(out, t, size);
+    mem_post(out, dst->type, dbase, n);
+    buffer_write(out, (uint8_t)(0x58 + t));              // pop t (flags untouched)
+    return true;
+}
+
 // x86 MOVE #imm, reg at the requested size:
 //   .b  B0+r ib              (writes only the low byte: AL/CL/DL/BL)
 //   .w  66 B8+r iw           (writes only the low 16 bits)
@@ -285,6 +449,8 @@ static bool emit_x86_move_reg(const Operand *src, const Operand *dst, OpSize siz
 // "test r,r" of the same size follows (84 /r, 66 85 /r or 85 /r): it sets
 // SF/ZF, clears CF/OF, and leaves the register alone.
 static bool emit_x86_move_imm(const Operand *operands, OpSize size, OutputBuffer *out) {
+    if (operand_is_memory(operands[0].type) || operand_is_memory(operands[1].type))
+        return emit_x86_move_mem(operands, size, out);
     if (operands[0].type == OPERAND_REGISTER && operands[1].type == OPERAND_REGISTER)
         return emit_x86_move_reg(&operands[0], &operands[1], size, out);
     const Operand *imm = NULL, *reg = NULL;

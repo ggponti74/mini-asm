@@ -13,8 +13,17 @@ typedef enum {
     OPERAND_REGISTER,  // register (Dn, An)
     OPERAND_IMMEDIATE, // immediate value (#123)
     OPERAND_LABEL,     // symbolic label
-    OPERAND_REG_OR_IMM // table-only: accepts a register OR an immediate
+    OPERAND_REG_OR_IMM, // table-only: accepts a register OR an immediate
+    OPERAND_IND,       // address register indirect:  (An)
+    OPERAND_POSTINC,   // post-increment:             (An)+
+    OPERAND_PREDEC,    // pre-decrement:              -(An)
+    OPERAND_EA_SRC,    // table-only: register, immediate or memory operand
+    OPERAND_REG_OR_MEM,// table-only: register or memory operand
+    OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
 } OperandType;
+
+// True for the three address-register memory modes: (An), (An)+, -(An).
+bool operand_is_memory(OperandType t);
 
 // Operation size from a .b/.w/.l suffix. SIZE_UNSPEC means the mnemonic had
 // no suffix; codegen resolves it to DEFAULT_OPSIZE.
@@ -45,8 +54,9 @@ typedef struct {
 } OpcodeEntry;
 
 // True if an operand of kind `actual` satisfies the table slot `expected`.
-// OPERAND_REG_OR_IMM accepts a register or an immediate; every other
-// slot kind must match exactly.
+// OPERAND_REG_OR_IMM accepts a register or an immediate, OPERAND_EA_SRC a
+// register, an immediate or a memory operand, OPERAND_REG_OR_MEM a register
+// or a memory operand; every other slot kind must match exactly.
 bool operand_matches(OperandType expected, OperandType actual);
 
 // Selects which CPU architecture's opcode table lookup_opcode() searches.

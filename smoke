@@ -1,4 +1,7 @@
+set -e
 make clean && make
+rm -f test
 ./mini-asm -t elf -o test test.asm
 file test
+set +e
 ./test; echo "exit: $?"

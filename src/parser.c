@@ -9,6 +9,51 @@
 
 static int parse_register(const char *s, int *reg);
 
+// malloc-based copy (strdup isn't standard C).
+static char *copy_string(const char *s) {
+  size_t n = strlen(s) + 1;
+  char *p = malloc(n);
+  if (p)
+    memcpy(p, s, n);
+  return p;
+}
+
+// Recognizes the address-register memory modes:  (An)  (An)+  -(An)
+// Returns 0 if `tok` isn't an attempt at one (it doesn't start with '(' or
+// "-("), 1 and sets *type / *reg (An = 8..15) if it is valid, or -1 if it
+// looks like one but is malformed. Spaces inside the token aren't allowed
+// (the tokenizer splits on them), and data registers can't be used.
+static int parse_indirect(const char *tok, OperandType *type, int *reg) {
+  const char *p = tok;
+  int pre = 0;
+  if (p[0] == '-' && p[1] == '(') {
+    pre = 1;
+    p++;
+  }
+  if (p[0] != '(')
+    return 0;
+
+  char name[3] = {p[1], p[1] ? p[2] : '\0', '\0'};
+  int r;
+  if (!parse_register(name, &r) || r < 8 || p[3] != ')')
+    return -1;
+
+  const char *tail = p + 4;
+  if (pre) {
+    if (*tail != '\0')
+      return -1;
+    *type = OPERAND_PREDEC;
+  } else if (*tail == '\0') {
+    *type = OPERAND_IND;
+  } else if (tail[0] == '+' && tail[1] == '\0') {
+    *type = OPERAND_POSTINC;
+  } else {
+    return -1;
+  }
+  *reg = r;
+  return 1;
+}
+
 // Simple error reporting
 static void report_error(size_t line, size_t col, const char *msg) {
   fprintf(stderr, "Error at line %zu, column %zu: %s\n", line, col, msg);
@@ -137,7 +182,15 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
 
     // classify operand
     int reg;
-    if (parse_register(token, &reg)) {
+    OperandType mem_type;
+    int ind = parse_indirect(token, &mem_type, &reg);
+    if (ind == 1) {
+      ops[count].type = mem_type;
+      ops[count].value.reg = reg;
+    } else if (ind == -1) {
+      ops[count].type = OPERAND_BAD;
+      ops[count].value.label = copy_string(token);
+    } else if (parse_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
     } else if (token[0] == '#') {
@@ -145,7 +198,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       ops[count].value.imm = atoi(&token[1]);
     } else {
       ops[count].type = OPERAND_LABEL;
-      ops[count].value.label = strdup(token);
+      ops[count].value.label = copy_string(token);
     }
 
     count++;

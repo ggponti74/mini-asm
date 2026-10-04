@@ -15,7 +15,8 @@ static const OpcodeEntry x86_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
     {"RTS", 0xC3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "RET"
     {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "NOP"
-    {"MOVE", 0x89, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL}, // x86 "MOV"
+    // MOVE also takes memory operands through an address register: (An), (An)+, -(An)
+    {"MOVE", 0x89, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REG_OR_MEM}, SIZES_BWL}, // x86 "MOV"
     {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},   // x86 "LEA r32, [disp32]"
     // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
     // or 01 /r (reg) depending on the source operand kind.
@@ -72,10 +73,20 @@ static const OpcodeEntry arm_opcode_table[] = {
    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, 0},   // x86 "LEA r32, [disp32]"
 };
 
+bool operand_is_memory(OperandType t)
+{
+    return t == OPERAND_IND || t == OPERAND_POSTINC || t == OPERAND_PREDEC;
+}
+
 bool operand_matches(OperandType expected, OperandType actual)
 {
     if (expected == OPERAND_REG_OR_IMM)
         return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE;
+    if (expected == OPERAND_EA_SRC)
+        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE ||
+               operand_is_memory(actual);
+    if (expected == OPERAND_REG_OR_MEM)
+        return actual == OPERAND_REGISTER || operand_is_memory(actual);
     return expected == actual;
 }
 
@@ -160,6 +171,8 @@ static const char *operand_kind_name(OperandType t)
     case OPERAND_IMMEDIATE:  return "#imm";
     case OPERAND_LABEL:      return "label";
     case OPERAND_REG_OR_IMM: return "reg|#imm";
+    case OPERAND_EA_SRC:     return "reg|#imm|mem";
+    case OPERAND_REG_OR_MEM: return "reg|mem";
     default:                 return "";
     }
 }
