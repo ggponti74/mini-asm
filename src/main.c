@@ -63,7 +63,7 @@ static void derive_base_name(const char *source_path, char *out,
 
 static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
                          uint32_t code_base) {
-  char line[256];
+  char line[1024];
   size_t line_num = 1;
   int errors = 0;
 

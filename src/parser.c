@@ -60,9 +60,21 @@ static void report_error(size_t line, size_t col, const char *msg) {
 }
 
 void strip_comment(char *line) {
-  char *semi = strchr(line, ';');
-  if (semi)
-    *semi = '\0';
+  // A ';' starts a comment unless it sits inside a '...' or "..." string
+  // (dc.b "a;b"). A doubled delimiter inside a string just closes and
+  // reopens it, so plain toggling handles that too.
+  char quote = '\0';
+  for (char *p = line; *p; p++) {
+    if (quote) {
+      if (*p == quote)
+        quote = '\0';
+    } else if (*p == '"' || *p == '\'') {
+      quote = *p;
+    } else if (*p == ';') {
+      *p = '\0';
+      break;
+    }
+  }
 
   // Trim trailing whitespace, including the newline fgets() leaves in.
   size_t len = strlen(line);

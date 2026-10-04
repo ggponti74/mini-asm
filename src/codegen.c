@@ -1,12 +1,18 @@
+#include <stdlib.h>
 #include <string.h>
 
 #include "codegen.h"
 
 // Write a single byte into buffer
 void buffer_write(OutputBuffer *out, uint8_t byte) {
-    if (out->size < out->capacity) {
-        out->data[out->size++] = byte;
+    if (out->size == out->capacity) {
+        size_t new_cap = out->capacity ? out->capacity * 2 : 1024;
+        uint8_t *grown = realloc(out->data, new_cap);
+        if (!grown) return;           // out of memory: drop the byte
+        out->data = grown;
+        out->capacity = new_cap;
     }
+    out->data[out->size++] = byte;
 }
 
 // Encode one operand (simplified)

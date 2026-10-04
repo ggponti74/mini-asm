@@ -32,6 +32,8 @@ int directive_is(const char *token) { return dc_unit(token) != 0; }
 void directive_print_list(FILE *out) {
   fprintf(out, "Directives:\n");
   fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
+  fprintf(out, "                   dc.b also takes strings: dc.b \"Hello\",13,10,0  ('...' works too;\n"
+               "                   a doubled quote inside is one quote; no backslash escapes)\n");
 }
 
 static int dc_error(size_t line_num, const char *fmt, const char *arg) {
@@ -105,6 +107,36 @@ static int in_range(long long v, size_t unit) {
   }
 }
 
+// Copies the quoted string at *pp into the output, one byte per character,
+// and leaves *pp just past the closing quote. Either ' or " opens a string,
+// and the same character closes it; a doubled delimiter inside the string is
+// one literal delimiter ('It''s' or "It's"). There are no backslash escapes:
+// non-printing bytes such as CR/LF go in as separate numeric values
+// (dc.b "Hi",13,10,0). Returns 1 on success, 0 after reporting an error.
+static int emit_string(const char **pp, OutputBuffer *buf, const char *name,
+                       size_t line_num) {
+  const char *p = *pp;
+  char delim = *p++;
+  for (;;) {
+    if (*p == '\0') {
+      dc_error(line_num, "%s: unterminated string (missing closing quote)", name);
+      return 0;
+    }
+    if (*p == delim) {
+      if (p[1] == delim) { // doubled delimiter = one literal quote
+        buffer_write(buf, (uint8_t)delim);
+        p += 2;
+        continue;
+      }
+      p++; // closing quote
+      break;
+    }
+    buffer_write(buf, (uint8_t)*p++);
+  }
+  *pp = p;
+  return 1;
+}
+
 int directive_assemble(const char *code, size_t line_num, int pass,
                        OutputBuffer *buf, uint32_t code_base) {
   const char *p = code;
@@ -135,39 +167,47 @@ int directive_assemble(const char *code, size_t line_num, int pass,
       return dc_error(line_num, "%s: expected a value after ','", name);
     }
 
-    // One value: everything up to a comma, whitespace or end of line.
-    char tok[64];
-    size_t len = 0;
-    while (*p && *p != ',' && !isspace((unsigned char)*p)) {
-      if (len < sizeof tok - 1)
-        tok[len++] = *p;
-      p++;
-    }
-    tok[len] = '\0';
-    if (len == 0)
-      return dc_error(line_num, "%s: expected a value", name);
-
-    long long value = 0;
-    if (tok[0] == '#') {
-      return dc_error(line_num, "%s values don't take '#'", name);
-    } else if (parse_number(tok, &value)) {
-      /* literal */
-    } else if (is_identifier(tok)) {
-      if (pass == 2) {
-        size_t off;
-        if (!symtab_find(tok, &off))
-          return dc_error(line_num, "undefined label '%s'", tok);
-        value = (long long)code_base + (long long)off;
-      }
+    if (*p == '"' || *p == '\'') {
+      // A string: one byte per character, dc.b only.
+      if (unit != 1)
+        return dc_error(line_num, "%s: strings are only allowed in dc.b", name);
+      if (!emit_string(&p, buf, name, line_num))
+        return 1;
     } else {
-      return dc_error(line_num, "invalid value '%s'", tok);
+      // One value: everything up to a comma, whitespace or end of line.
+      char tok[64];
+      size_t len = 0;
+      while (*p && *p != ',' && !isspace((unsigned char)*p)) {
+        if (len < sizeof tok - 1)
+          tok[len++] = *p;
+        p++;
+      }
+      tok[len] = '\0';
+      if (len == 0)
+        return dc_error(line_num, "%s: expected a value", name);
+
+      long long value = 0;
+      if (tok[0] == '#') {
+        return dc_error(line_num, "%s values don't take '#'", name);
+      } else if (parse_number(tok, &value)) {
+        /* literal */
+      } else if (is_identifier(tok)) {
+        if (pass == 2) {
+          size_t off;
+          if (!symtab_find(tok, &off))
+            return dc_error(line_num, "undefined label '%s'", tok);
+          value = (long long)code_base + (long long)off;
+        }
+      } else {
+        return dc_error(line_num, "invalid value '%s'", tok);
+      }
+
+      if (!in_range(value, unit))
+        return dc_error(line_num, "value '%s' is out of range for this size",
+                        tok);
+
+      emit_value(buf, value, unit);
     }
-
-    if (!in_range(value, unit))
-      return dc_error(line_num, "value '%s' is out of range for this size",
-                      tok);
-
-    emit_value(buf, value, unit);
     count++;
 
     while (*p && isspace((unsigned char)*p))
