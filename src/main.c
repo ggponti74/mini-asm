@@ -291,7 +291,7 @@ int main(int argc, char *argv[])
     directive_print_list(stdout);
     printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
     printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
-           "                 only MOVE takes them so far.\n");
+           "                 see each instruction's operand forms above.\n");
     return 0;
   }
 

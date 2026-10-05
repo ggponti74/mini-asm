@@ -41,8 +41,8 @@ static const PlatformTarget k_targets[] = {
         .default_ext    = "",
         .needs_exec_bit = true,
         .code_base = 0x00008000,
-        .has_regfile    = false,   // ARM register mapping not done yet
-        .code_tail      = 0,
+        .has_regfile    = true,
+        .code_tail      = EPILOGUE_SIZE,
         .write          = write_arm_elf,
     },
     {

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #include "opcodes.h"
 #include "codegen.h"
@@ -44,9 +45,20 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"CMP",  0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
     {"CMPA", 0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W | SIZES_L},
     {"CMPI", 0x39, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+    {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
+    {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
+    {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+    {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+    {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"SUBQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"DBRA", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_LABEL}, 0},
     // Conditional branches (Bcc): opcode bytes are placeholders; codegen.c
     // emits the matching x86 Jcc. BHS = BCC and BLO = BCS (usual aliases).
-    // DBcc and Scc aren't supported yet.
+    // DBRA is supported; the other DBcc and Scc forms aren't implemented yet.
     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BCC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
@@ -69,8 +81,19 @@ static const OpcodeEntry arm_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
     {"RTS", 0x1EFF2FE1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // ARM32 "BX LR"
     {"NOP", 0x0000A0E1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // ARM32 "MOV r0, r0"
-    {"MOVE", 0xE0D1F002, 4, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0}, // ARM32 "SBCS R15, Rn, Rm"
-   {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, 0},   // x86 "LEA r32, [disp32]"
+    {"MOVE", 0xE0D1F002, 4, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, 0},
+    {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
+    {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
+    {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+    {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+    {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"SUBQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"DBRA", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_LABEL}, 0},
 };
 
 bool operand_is_memory(OperandType t)
@@ -87,6 +110,10 @@ bool operand_matches(OperandType expected, OperandType actual)
                operand_is_memory(actual);
     if (expected == OPERAND_REG_OR_MEM)
         return actual == OPERAND_REGISTER || operand_is_memory(actual);
+    if (expected == OPERAND_EA_ALT)
+        return actual == OPERAND_REGISTER || operand_is_memory(actual);
+    if (expected == OPERAND_CONTROL)
+        return actual == OPERAND_LABEL || actual == OPERAND_IND;
     return expected == actual;
 }
 
@@ -173,8 +200,41 @@ static const char *operand_kind_name(OperandType t)
     case OPERAND_REG_OR_IMM: return "reg|#imm";
     case OPERAND_EA_SRC:     return "reg|#imm|mem";
     case OPERAND_REG_OR_MEM: return "reg|mem";
+    case OPERAND_EA_ALT:     return "reg|mem";
+    case OPERAND_CONTROL:    return "label|(An)";
     default:                 return "";
     }
+}
+
+static int compare_opcode_entries(const void *a, const void *b)
+{
+    const OpcodeEntry *const *ea = a;
+    const OpcodeEntry *const *eb = b;
+    return strcmp((*ea)->mnemonic, (*eb)->mnemonic);
+}
+
+static void format_opcode_entry(const OpcodeEntry *e, char *cell, size_t size)
+{
+    char sizes[8] = "";
+    if (e->size_mask & SIZES_B) strcat(sizes, "b");
+    if (e->size_mask & SIZES_W) strcat(sizes, "w");
+    if (e->size_mask & SIZES_L) strcat(sizes, "l");
+
+    char operands[40] = "";
+    for (size_t k = 0; k < e->operand_count && k < 2; k++)
+    {
+        if (k) strcat(operands, ", ");
+        strcat(operands, operand_kind_name(e->operand_types[k]));
+    }
+
+    if (sizes[0] && operands[0])
+        snprintf(cell, size, "%s.%s %s", e->mnemonic, sizes, operands);
+    else if (sizes[0])
+        snprintf(cell, size, "%s.%s", e->mnemonic, sizes);
+    else if (operands[0])
+        snprintf(cell, size, "%s %s", e->mnemonic, operands);
+    else
+        snprintf(cell, size, "%s", e->mnemonic);
 }
 
 void opcodes_print_table(FILE *out)
@@ -182,25 +242,27 @@ void opcodes_print_table(FILE *out)
     if (!g_active_table)
         return;
 
-    fprintf(out, "Instructions for target CPU '%s':\n", g_active_arch_name);
-    fprintf(out, "  %-6s %-8s %s\n", "MNEM", "SIZES", "OPERANDS");
-    for (size_t i = 0; i < g_active_count; i++)
+    const OpcodeEntry **sorted = malloc(g_active_count * sizeof *sorted);
+    if (!sorted)
     {
-        const OpcodeEntry *e = &g_active_table[i];
-
-        char sizes[8] = "";
-        if (e->size_mask & SIZES_B) strcat(sizes, "b");
-        if (e->size_mask & SIZES_W) strcat(sizes, "w");
-        if (e->size_mask & SIZES_L) strcat(sizes, "l");
-        if (!sizes[0]) strcpy(sizes, "-");
-
-        char ops[40] = "";
-        for (size_t k = 0; k < e->operand_count && k < 2; k++)
-        {
-            if (k) strcat(ops, ", ");
-            strcat(ops, operand_kind_name(e->operand_types[k]));
-        }
-
-        fprintf(out, "  %-6s %-8s %s\n", e->mnemonic, sizes, ops);
+        fprintf(stderr, "Unable to allocate memory to list instructions\n");
+        return;
     }
+    for (size_t i = 0; i < g_active_count; i++)
+        sorted[i] = &g_active_table[i];
+    qsort(sorted, g_active_count, sizeof *sorted, compare_opcode_entries);
+
+    fprintf(out, "Instructions for target CPU '%s':\n", g_active_arch_name);
+    for (size_t i = 0; i < g_active_count; i += 4)
+    {
+        fprintf(out, "  ");
+        for (size_t j = i; j < i + 4 && j < g_active_count; j++)
+        {
+            char cell[64];
+            format_opcode_entry(sorted[j], cell, sizeof cell);
+            fprintf(out, "%-34s", cell);
+        }
+        fputc('\n', out);
+    }
+    free(sorted);
 }

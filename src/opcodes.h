@@ -19,6 +19,8 @@ typedef enum {
     OPERAND_PREDEC,    // pre-decrement:              -(An)
     OPERAND_EA_SRC,    // table-only: register, immediate or memory operand
     OPERAND_REG_OR_MEM,// table-only: register or memory operand
+    OPERAND_EA_ALT,    // table-only: register or memory destination
+    OPERAND_CONTROL,   // table-only: label or address-register indirect
     OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
 } OperandType;
 

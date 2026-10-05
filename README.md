@@ -22,6 +22,11 @@
     Constants can be declared with `NAME EQU value` and used as immediate
     operands (`MOVE #NAME,D0`) or `dc` values. Values may be decimal, `$`-hex,
     or `0x`-hex literals.
+
+    The instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
+    ADDQ, SUBQ, and DBRA. Use `-l` for the complete target-specific listing.
+    Supported effective-address forms are listed per instruction; current
+    memory operands are `(An)`, `(An)+`, and `-(An)`.
   
   ### Feedback
 

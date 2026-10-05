@@ -11,6 +11,7 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   const uint32_t epilogue_addr = code_addr + (uint32_t)buf->size;
   const uint32_t entry_addr = epilogue_addr;
   const uint32_t total_size = (uint32_t)buf->size + EPILOGUE_SIZE;
+  const uint32_t regfile_addr = REGFILE_ALIGN_UP(code_addr + total_size);
 
   FILE *f = fopen(filename, "wb");
   if (!f)
@@ -41,9 +42,9 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   phdr.p_offset = 0x8000;     // file offset where code starts
   phdr.p_vaddr = 0x8000;      // virtual address
   phdr.p_paddr = 0x8000;      // physical address (match vaddr)
-  phdr.p_filesz = total_size; // actual assembled code size
-  phdr.p_memsz = total_size;
-  phdr.p_flags = PF_X | PF_R;
+  phdr.p_filesz = total_size;
+  phdr.p_memsz = REGFILE_ALIGN_UP(total_size) + REGFILE_SIZE;
+  phdr.p_flags = PF_X | PF_R | PF_W;
   phdr.p_align = 0x1000;
 
   // write ELF headers
@@ -59,14 +60,17 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   // write the assembled instruction bytes produced by emit_code()
   fwrite(buf->data, 1, buf->size, f);
 
-  // --- epilogue: BL user_code_start ; mov r7, #1 ; svc 0 ---
+  // --- epilogue: BL user_code_start ; load D0 ; exit(D0) ---
   int32_t imm24 = ((int32_t)code_addr - (int32_t)(epilogue_addr + 8)) >> 2;
   uint32_t bl_instr = 0xEB000000u | ((uint32_t)imm24 & 0x00FFFFFFu);
+  uint32_t load_address = 0xE59FC008u; // ldr r12, [pc, #8] -> literal below
+  uint32_t load_d0 = 0xE59C0000u;      // ldr r0, [r12]
   uint32_t mov_instr = 0xE3A07001u; // mov r7, #1
   uint32_t svc_instr = 0xEF000000u; // svc 0
 
-  uint32_t epilogue[3] = {bl_instr, mov_instr, svc_instr};
-  for (int i = 0; i < 3; i++) {
+  uint32_t epilogue[6] = {bl_instr, load_address, load_d0, mov_instr,
+                          svc_instr, regfile_addr};
+  for (int i = 0; i < 6; i++) {
     uint8_t bytes[4] = {
         (uint8_t)(epilogue[i] & 0xFF),
         (uint8_t)((epilogue[i] >> 8) & 0xFF),

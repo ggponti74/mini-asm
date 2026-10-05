@@ -1,12 +1,18 @@
 #include <string.h>
+#include <stdlib.h>
 
 #include "codegen.h"
 
 // Write a single byte into buffer
 void buffer_write(OutputBuffer *out, uint8_t byte) {
-    if (out->size < out->capacity) {
-        out->data[out->size++] = byte;
+    if (out->size == out->capacity) {
+        size_t new_capacity = out->capacity ? out->capacity * 2 : 1024;
+        uint8_t *grown = realloc(out->data, new_capacity);
+        if (!grown) abort();
+        out->data = grown;
+        out->capacity = new_capacity;
     }
+    out->data[out->size++] = byte;
 }
 
 // Encode one operand (simplified)
@@ -176,7 +182,9 @@ static int bcc_x86_cc(const char *mnemonic) {
 }
 
 static bool is_branch_mnemonic(const char *m) {
-    return strcmp(m, "BRA") == 0 || strcmp(m, "BSR") == 0 || bcc_x86_cc(m) >= 0;
+    return strcmp(m, "BRA") == 0 || strcmp(m, "BSR") == 0 ||
+           strcmp(m, "JMP") == 0 || strcmp(m, "JSR") == 0 ||
+           bcc_x86_cc(m) >= 0;
 }
 
 // BRA / BSR / Bcc with the target already turned into an absolute address:
@@ -574,6 +582,193 @@ static bool emit_x86_addsub(const Operand *operands, OpSize size, bool is_sub,
     return false;
 }
 
+static int x86_logic_opcode(const char *mnemonic, bool byte, bool memory_to_reg) {
+    int base;
+    if (strcmp(mnemonic, "AND") == 0) base = 0x20;
+    else if (strcmp(mnemonic, "OR") == 0) base = 0x08;
+    else base = 0x30;
+    return base + (byte ? 0 : 1) + (memory_to_reg ? 2 : 0);
+}
+
+static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
+                           OpSize size, OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (src->type == OPERAND_REGISTER && dst->type == OPERAND_REGISTER) {
+        if (src->value.reg >= 8 || dst->value.reg >= 8)
+            return fail("AND/OR/EOR register operations need data registers");
+        int s = x86_reg_code(src->value.reg), d = x86_reg_code(dst->value.reg);
+        if (size == SIZE_B && (s > 3 || d > 3)) return fail(ERR_BYTE_REG);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, size == SIZE_B, false));
+        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        return true;
+    }
+
+    bool src_mem = operand_is_memory(src->type);
+    bool dst_mem = operand_is_memory(dst->type);
+    if (src_mem == dst_mem) return false;
+    const Operand *regop = src_mem ? dst : src;
+    if (regop->type != OPERAND_REGISTER || regop->value.reg >= 8)
+        return fail("AND/OR/EOR memory operations need a data register");
+    int r = x86_reg_code(regop->value.reg);
+    if (size == SIZE_B && r > 3) return fail(ERR_BYTE_REG);
+    const Operand *mem = src_mem ? src : dst;
+    int base = x86_reg_code(mem->value.reg);
+    if (!plain_base(base)) return fail(ERR_MEM_PTR);
+    mem_pre(out, mem->type, base, op_bytes(size));
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, size == SIZE_B, src_mem));
+    write_modrm_mem(out, r, base);
+    mem_post(out, mem->type, base, op_bytes(size));
+    return true;
+}
+
+static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
+                            OpSize size, OutputBuffer *out) {
+    bool is_clr = strcmp(mnemonic, "CLR") == 0;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (operand->type == OPERAND_REGISTER) {
+        if (operand->value.reg >= 8)
+            return fail(is_clr ? "CLR needs a data register or memory destination"
+                               : "TST needs a data register or memory operand");
+        int r = x86_reg_code(operand->value.reg);
+        if (size == SIZE_B && r > 3) return fail(ERR_BYTE_REG);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        if (is_clr) {
+            buffer_write(out, size == SIZE_B ? 0x30 : 0x31);
+            buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
+        } else {
+            buffer_write(out, size == SIZE_B ? 0x84 : 0x85);
+            buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
+        }
+        return true;
+    }
+    if (!operand_is_memory(operand->type)) return false;
+    int base = x86_reg_code(operand->value.reg);
+    if (!plain_base(base)) return fail(ERR_MEM_PTR);
+    int n = op_bytes(size);
+    mem_pre(out, operand->type, base, n);
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    if (is_clr) {
+        buffer_write(out, size == SIZE_B ? 0xC6 : 0xC7);
+        write_modrm_mem(out, 0, base);
+        write_le(out, 0, n);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
+        write_modrm_mem(out, 7, base);
+        buffer_write(out, 0);
+    } else {
+        buffer_write(out, size == SIZE_B ? 0xF6 : 0xF7);
+        write_modrm_mem(out, 0, base);
+        write_le(out, 0, n);
+    }
+    mem_post(out, operand->type, base, n);
+    return true;
+}
+
+static bool emit_x86_quick(const Operand *operands, OpSize size, bool is_sub,
+                           OutputBuffer *out) {
+    const Operand *imm = &operands[0], *dst = &operands[1];
+    int q = imm->value.imm;
+    if (q < 1 || q > 8)
+        return fail("ADDQ/SUBQ immediate must be in the range 1..8");
+    OpSize requested = size;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (dst->type == OPERAND_REGISTER && dst->value.reg >= 8) {
+        if (requested == SIZE_B)
+            return fail("ADDQ/SUBQ to an address register can't be byte-sized");
+        int r = x86_reg_code(dst->value.reg);
+        if (r < 0) return false;
+        buffer_write(out, 0x8D);
+        buffer_write(out, (uint8_t)(0x40 | (r << 3) | r));
+        buffer_write(out, (uint8_t)(is_sub ? -q : q));
+        return true;
+    }
+    if (operand_is_memory(dst->type)) {
+        int base = x86_reg_code(dst->value.reg);
+        if (!plain_base(base)) return fail(ERR_MEM_PTR);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        mem_pre(out, dst->type, base, op_bytes(size));
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
+        write_modrm_mem(out, is_sub ? 5 : 0, base);
+        buffer_write(out, (uint8_t)q);
+        mem_post(out, dst->type, base, op_bytes(size));
+        return true;
+    }
+    Operand adjusted[2] = { *imm, *dst };
+    adjusted[0].value.imm = q;
+    return emit_x86_addsub(adjusted, size, is_sub, out);
+}
+
+static bool emit_x86_moveq(const Operand *operands, OutputBuffer *out) {
+    const Operand *imm = &operands[0], *dst = &operands[1];
+    if (imm->type != OPERAND_IMMEDIATE || dst->type != OPERAND_REGISTER ||
+        dst->value.reg >= 8)
+        return fail("MOVEQ requires an immediate and a data register");
+    if (imm->value.imm < -128 || imm->value.imm > 127)
+        return fail("MOVEQ immediate must fit in a signed byte");
+    int d = x86_reg_code(dst->value.reg);
+    if (d < 0) return false;
+    buffer_write(out, (uint8_t)(0xB8 + d));
+    write_le(out, (uint32_t)(int32_t)(int8_t)imm->value.imm, 4);
+    write_test(out, d, SIZE_L);
+    return true;
+}
+
+static bool emit_x86_jump(const char *mnemonic, const Operand *operand,
+                          OutputBuffer *out) {
+    bool call = strcmp(mnemonic, "JSR") == 0;
+    if (operand->type == OPERAND_IMMEDIATE) {
+        int32_t rel = g_final_pass
+            ? (int32_t)((uint32_t)operand->value.imm - (g_pc + 5))
+            : 0;
+        buffer_write(out, call ? 0xE8 : 0xE9);
+        write_le(out, (uint32_t)rel, 4);
+        return true;
+    }
+    if (operand->type != OPERAND_IND)
+        return fail("JMP/JSR support labels and (An) indirect targets");
+    if (operand->value.reg >= 9 && operand->value.reg <= 15) {
+        buffer_write(out, 0xFF);
+        buffer_write(out, call ? 0x15 : 0x25); // indirect through absolute slot
+        write_le(out, g_regfile_base + 4u * (uint32_t)operand->value.reg, 4);
+        return true;
+    }
+    int r = x86_reg_code(operand->value.reg);
+    if (!plain_base(r)) return fail(ERR_MEM_PTR);
+    buffer_write(out, 0xFF);
+    write_modrm_mem(out, call ? 2 : 4, r);
+    return true;
+}
+
+static bool emit_x86_dbra(const Operand *operands, OutputBuffer *out) {
+    const Operand *reg = &operands[0], *target = &operands[1];
+    if (reg->type != OPERAND_REGISTER || reg->value.reg >= 8 ||
+        target->type != OPERAND_IMMEDIATE)
+        return fail("DBRA requires a data register and a label");
+    int r = x86_reg_code(reg->value.reg);
+    if (r == 4)
+        return fail("DBRA can't use D4 on this target");
+    int32_t rel = g_final_pass
+        ? (int32_t)((uint32_t)target->value.imm - (g_pc + 15))
+        : 0;
+    buffer_write(out, 0x9C);                                  // pushfd
+    buffer_write(out, 0x66);
+    buffer_write(out, (uint8_t)(0x48 + r));                   // dec Dn.w
+    buffer_write(out, 0x66);
+    buffer_write(out, 0x83);
+    buffer_write(out, (uint8_t)(0xF8 | r));
+    buffer_write(out, 0xFF);                                  // cmp Dn.w,-1
+    buffer_write(out, 0x74);
+    buffer_write(out, 0x06);                                  // skip popfd+jmp at -1
+    buffer_write(out, 0x9D);                                  // popfd
+    buffer_write(out, 0xE9);
+    write_le(out, (uint32_t)rel, 4);
+    buffer_write(out, 0x9D);                                  // popfd, no branch
+    return true;
+}
+
 // ---- MULU/MULS/DIVU/DIVS ---------------------------------------------------
 // The 68000 forms are word-sized only:
 //   MULU.W / MULS.W  <ea>,Dn : Dn(32) = Dn.w * <ea>.w   (unsigned / signed)
@@ -793,9 +988,21 @@ static bool is_move_or_lea(const char *m) {
     return strcmp(m, "MOVE") == 0 || strcmp(m, "LEA") == 0;
 }
 
+static bool x86_writes_destination(const char *m) {
+    return is_move_or_lea(m) || strcmp(m, "ADD") == 0 ||
+           strcmp(m, "SUB") == 0 || strcmp(m, "CLR") == 0 ||
+           strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
+           strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
+           strcmp(m, "SUBQ") == 0;
+}
+
 static bool spill_capable(const char *m) {
     return is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
-           strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0;
+           strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0 ||
+           strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
+           strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
+           strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
+           strcmp(m, "SUBQ") == 0;
 }
 
 // mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
@@ -811,6 +1018,7 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
                          OutputBuffer *out) {
     const char *m = entry->mnemonic;
     if (strcmp(m, "MOVE") == 0) return emit_x86_move_imm(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "MOVEQ") == 0) return emit_x86_moveq(operands, out) ? 1 : 0;
     if (strcmp(m, "LEA") == 0)  return emit_x86_lea(operands, out) ? 1 : 0;
     if (strcmp(m, "ADD") == 0)  return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUB") == 0)  return emit_x86_addsub(operands, size, true, out) ? 1 : 0;
@@ -821,6 +1029,22 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
     if (strcmp(m, "CMP") == 0)  return emit_x86_cmp(operands, size, CMP_PLAIN, out) ? 1 : 0;
     if (strcmp(m, "CMPA") == 0) return emit_x86_cmp(operands, size, CMP_ADDR, out) ? 1 : 0;
     if (strcmp(m, "CMPI") == 0) return emit_x86_cmp(operands, size, CMP_IMM, out) ? 1 : 0;
+    if (strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 || strcmp(m, "EOR") == 0)
+        return emit_x86_logic(entry, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "ADDQ") == 0)
+        return emit_x86_quick(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUBQ") == 0)
+        return emit_x86_quick(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "DBRA") == 0) return emit_x86_dbra(operands, out) ? 1 : 0;
+    return -1;
+}
+
+static int x86_dispatch1(const OpcodeEntry *entry, Operand *operand, OpSize size,
+                         OutputBuffer *out) {
+    if (strcmp(entry->mnemonic, "CLR") == 0 || strcmp(entry->mnemonic, "TST") == 0)
+        return emit_x86_clrtst(entry->mnemonic, operand, size, out) ? 1 : 0;
+    if (strcmp(entry->mnemonic, "JMP") == 0 || strcmp(entry->mnemonic, "JSR") == 0)
+        return emit_x86_jump(entry->mnemonic, operand, out) ? 1 : 0;
     return -1;
 }
 
@@ -857,7 +1081,8 @@ static int emit_x86_two_operand(const OpcodeEntry *entry, Operand *operands, OpS
 
     // Per register: is the old value needed, and does the instruction change it?
     bool load[2], store[2];
-    bool dst_write = is_move_or_lea(entry->mnemonic) && operands[1].type == OPERAND_REGISTER;
+    bool dst_write = x86_writes_destination(entry->mnemonic) &&
+                     operands[1].type == OPERAND_REGISTER;
     for (int k = 0; k < n; k++) {
         int r = regs[k];
         bool in_src = is_reg_operand(&operands[0]) && operands[0].value.reg == r;
@@ -890,6 +1115,491 @@ static int emit_x86_two_operand(const OpcodeEntry *entry, Operand *operands, OpS
     return 1;
 }
 
+static int emit_x86_one_operand(const OpcodeEntry *entry, Operand *operand,
+                                OpSize size, OutputBuffer *out) {
+    if (!spill_capable(entry->mnemonic) || !is_spilled(operand))
+        return x86_dispatch1(entry, operand, size, out);
+    int reg = operand->value.reg;
+    int scratch = 0;
+    size_t start = out->size;
+    buffer_write(out, (uint8_t)(0x50 + scratch));
+    g_subst[reg] = scratch + 1;
+    write_slot_access(out, 0x8B, scratch, reg);
+    int r = x86_dispatch1(entry, operand, size, out);
+    g_subst[reg] = 0;
+    if (r != 1) {
+        out->size = start;
+        return 0;
+    }
+    write_slot_access(out, 0x89, scratch, reg);
+    buffer_write(out, (uint8_t)(0x58 + scratch));
+    return 1;
+}
+
+static void arm_write_word(OutputBuffer *out, uint32_t word) {
+    buffer_write(out, (uint8_t)word);
+    buffer_write(out, (uint8_t)(word >> 8));
+    buffer_write(out, (uint8_t)(word >> 16));
+    buffer_write(out, (uint8_t)(word >> 24));
+}
+
+static bool arm_encode_imm(uint32_t value, uint32_t *operand2) {
+    for (uint32_t rotate = 0; rotate < 16; rotate++) {
+        uint32_t amount = rotate * 2;
+        uint32_t rotated = amount == 0 ? value
+            : (value << amount) | (value >> (32 - amount));
+        if ((rotated & ~0xFFu) == 0) {
+            *operand2 = (rotate << 8) | rotated;
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t arm_dp_reg_word(unsigned opcode, bool set_flags, unsigned rd,
+                                unsigned rn, unsigned rm) {
+    return 0xE0000000u | (opcode << 21) | (set_flags ? 1u << 20 : 0) |
+           (rn << 16) | (rd << 12) | rm;
+}
+
+static bool arm_dp_imm(OutputBuffer *out, unsigned opcode, bool set_flags,
+                      unsigned rd, unsigned rn, uint32_t immediate) {
+    uint32_t operand2;
+    if (!arm_encode_imm(immediate, &operand2))
+        return false;
+    arm_write_word(out, 0xE2000000u | (opcode << 21) |
+                   (set_flags ? 1u << 20 : 0) | (rn << 16) |
+                   (rd << 12) | (1u << 25) | operand2);
+    return true;
+}
+
+static bool arm_update_flags(OutputBuffer *out, unsigned opcode,
+                             uint32_t mask) {
+    arm_write_word(out, 0xE10FC000u); // mrs r12,cpsr
+    if (!arm_dp_imm(out, opcode, false, 12, 12, mask))
+        return fail("internal ARM error: flag mask is not encodable");
+    arm_write_word(out, 0xE128F00Cu); // msr cpsr_f,r12
+    return true;
+}
+
+static bool arm_clear_cv_flags(OutputBuffer *out) {
+    return arm_update_flags(out, 14, 0x30000000u); // bic C and V
+}
+
+static bool arm_invert_carry_flag(OutputBuffer *out) {
+    return arm_update_flags(out, 1, 0x20000000u); // eor C
+}
+
+static void arm_slot_access(OutputBuffer *out, bool load, unsigned physical,
+                            unsigned virtual_reg) {
+    uint32_t address = codegen_regfile_base() + 4u * virtual_reg;
+    arm_write_word(out, 0xE59FC004u); // ldr r12, [pc, #4]
+    arm_write_word(out, (load ? 0xE59C0000u : 0xE58C0000u) |
+                   (physical << 12));
+    arm_write_word(out, 0xEA000000u); // skip the literal
+    arm_write_word(out, address);
+}
+
+static void arm_load_vreg(OutputBuffer *out, unsigned physical,
+                          unsigned virtual_reg) {
+    arm_slot_access(out, true, physical, virtual_reg);
+}
+
+static void arm_store_vreg(OutputBuffer *out, unsigned physical,
+                           unsigned virtual_reg) {
+    arm_slot_access(out, false, physical, virtual_reg);
+}
+
+static void arm_load_literal(OutputBuffer *out, unsigned physical,
+                             uint32_t value) {
+    arm_write_word(out, 0xE59F0000u | (physical << 12));
+    arm_write_word(out, 0xEA000000u);
+    arm_write_word(out, value);
+}
+
+static int arm_bytes(OpSize size) {
+    if (size == SIZE_B) return 1;
+    if (size == SIZE_W) return 2;
+    return 4;
+}
+
+static bool arm_pointer_load(OutputBuffer *out, const Operand *memory,
+                             unsigned physical) {
+    if (!operand_is_memory(memory->type))
+        return false;
+    arm_load_vreg(out, physical, (unsigned)memory->value.reg);
+    return true;
+}
+
+static void arm_pointer_adjust(OutputBuffer *out, unsigned base, int bytes) {
+    unsigned opcode = bytes < 0 ? 2 : 4;
+    uint32_t amount = (uint32_t)(bytes < 0 ? -bytes : bytes);
+    if (!arm_dp_imm(out, opcode, false, base, base, amount))
+        fail("internal ARM error: pointer adjustment is not encodable");
+}
+
+static void arm_mem_transfer(OutputBuffer *out, bool load, unsigned data,
+                             unsigned base, OpSize size) {
+    if (size == SIZE_W) {
+        arm_write_word(out, (load ? 0xE1D000B0u : 0xE1C000B0u) |
+                       (base << 16) | (data << 12));
+    } else {
+        uint32_t opcode = size == SIZE_B
+            ? (load ? 0xE5D00000u : 0xE5C00000u)
+            : (load ? 0xE5900000u : 0xE5800000u);
+        arm_write_word(out, opcode | (base << 16) | (data << 12));
+    }
+}
+
+static void arm_mem_begin(OutputBuffer *out, const Operand *memory,
+                          unsigned base, OpSize size) {
+    arm_pointer_load(out, memory, base);
+    if (memory->type == OPERAND_PREDEC)
+        arm_pointer_adjust(out, base, -arm_bytes(size));
+}
+
+static void arm_mem_finish(OutputBuffer *out, const Operand *memory,
+                           unsigned base, OpSize size) {
+    if (memory->type == OPERAND_POSTINC)
+        arm_pointer_adjust(out, base, arm_bytes(size));
+    if (memory->type == OPERAND_PREDEC || memory->type == OPERAND_POSTINC)
+        arm_store_vreg(out, base, (unsigned)memory->value.reg);
+}
+
+static void arm_test_value(OutputBuffer *out, unsigned value, OpSize size) {
+    if (size == SIZE_L) {
+        arm_write_word(out, arm_dp_reg_word(8, true, 0, value, value));
+        return;
+    }
+    unsigned shift = size == SIZE_B ? 24 : 16;
+    arm_write_word(out, 0xE1A00000u | (12u << 12) | (value << 0) |
+                   (shift << 7) | (1u << 20));        // movs r12,value,lsl #shift
+}
+
+static void arm_mov_shift(OutputBuffer *out, unsigned rd, unsigned rm,
+                          bool right, unsigned amount) {
+    uint32_t shift_type = right ? 1u : 0u;
+    uint32_t encoded_amount = amount == 32 ? 0 : amount;
+    arm_write_word(out, 0xE1A00000u | (rd << 12) | (encoded_amount << 7) |
+                   (shift_type << 5) | rm);
+}
+
+static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
+                                   unsigned rhs, unsigned result,
+                                   unsigned opcode, OpSize size) {
+    if (size == SIZE_L) {
+        arm_write_word(out, arm_dp_reg_word(opcode, true, original, original, rhs));
+        if (opcode == 2)
+            return arm_invert_carry_flag(out);
+        if (opcode == 0 || opcode == 1 || opcode == 12)
+            return arm_clear_cv_flags(out);
+        return true;
+    }
+    unsigned shift = size == SIZE_B ? 24 : 16;
+    arm_mov_shift(out, result, original, false, shift);
+    if (opcode == 2 || opcode == 4) {
+        arm_mov_shift(out, 12, rhs, false, shift);
+        arm_write_word(out, arm_dp_reg_word(opcode, true, result, result, 12));
+        arm_write_word(out, 0xE10FC000u); // save arithmetic flags
+        arm_mov_shift(out, result, result, true, shift);
+        arm_mov_shift(out, original, original, true, 32 - shift);
+        arm_mov_shift(out, original, original, false, shift);
+        arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
+        if (opcode == 2 &&
+            !arm_dp_imm(out, 1, false, 12, 12, 0x20000000u))
+            return fail("internal ARM error: carry mask is not encodable");
+        arm_write_word(out, 0xE128F00Cu); // restore operation flags
+        return true;
+    }
+    arm_mov_shift(out, result, result, true, 32 - shift);
+    arm_mov_shift(out, 12, rhs, false, shift);
+    arm_mov_shift(out, 12, 12, true, 32 - shift);
+    arm_write_word(out, arm_dp_reg_word(opcode, false, result, result, 12));
+    arm_mov_shift(out, result, result, false, shift);
+    arm_mov_shift(out, result, result, true, 32 - shift);
+    arm_mov_shift(out, original, original, true, 32 - shift);
+    arm_mov_shift(out, original, original, false, shift);
+    arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
+    arm_test_value(out, result, size);
+    return arm_clear_cv_flags(out);
+}
+
+static bool arm_emit_quick(const Operand *operands, OpSize size, bool is_sub,
+                           OutputBuffer *out) {
+    const Operand *immediate = &operands[0], *dst = &operands[1];
+    int amount = immediate->value.imm;
+    if (amount < 1 || amount > 8)
+        return fail("ADDQ/SUBQ immediate must be in the range 1..8");
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (dst->type == OPERAND_REGISTER) {
+        unsigned reg = (unsigned)dst->value.reg;
+        if (reg >= 16) return false;
+        if (reg >= 8) {
+            if (size != SIZE_W && size != SIZE_L)
+                return fail("ADDQ/SUBQ to an address register only supports .w or .l");
+            arm_load_vreg(out, 0, reg);
+            if (!arm_dp_imm(out, is_sub ? 2 : 4, false, 0, 0, (uint32_t)amount))
+                return false;
+            arm_store_vreg(out, 0, reg);
+            return true;
+        }
+        arm_load_vreg(out, 0, reg);
+        if (size == SIZE_L) {
+            if (!arm_dp_imm(out, is_sub ? 2 : 4, true, 0, 0, (uint32_t)amount))
+                return false;
+        } else {
+            if (!arm_dp_imm(out, 13, false, 1, 0, (uint32_t)amount))
+                return false;
+            arm_write_sized_result(out, 0, 1, 2, is_sub ? 2 : 4, size);
+        }
+        arm_store_vreg(out, 0, reg);
+        return true;
+    }
+    if (!operand_is_memory(dst->type)) return false;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    arm_mem_begin(out, dst, 1, size);
+    arm_mem_transfer(out, true, 0, 1, size);
+    if (!arm_dp_imm(out, 13, false, 2, 0, (uint32_t)amount))
+        return false;
+    arm_write_sized_result(out, 0, 2, 3, is_sub ? 2 : 4, size);
+    arm_mem_transfer(out, false, 0, 1, size);
+    arm_mem_finish(out, dst, 1, size);
+    return true;
+}
+
+static bool arm_emit_clrtst(const char *mnemonic, const Operand *operand,
+                            OpSize size, OutputBuffer *out) {
+    bool clear = strcmp(mnemonic, "CLR") == 0;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (operand->type == OPERAND_REGISTER) {
+        unsigned reg = (unsigned)operand->value.reg;
+        if (reg >= 8)
+            return fail("CLR/TST accept data registers or address-register memory operands");
+        arm_load_vreg(out, 0, reg);
+        if (clear) {
+            if (size == SIZE_L) {
+                arm_write_word(out, 0xE3B00000u); // movs r0,#0
+            } else {
+                unsigned shift = size == SIZE_B ? 24 : 16;
+                arm_mov_shift(out, 0, 0, true, 32 - shift);
+                arm_mov_shift(out, 0, 0, false, shift);
+                arm_test_value(out, 0, size);
+            }
+            if (!arm_clear_cv_flags(out)) return false;
+            arm_store_vreg(out, 0, reg);
+        } else {
+            if (size == SIZE_L)
+                arm_write_word(out, arm_dp_reg_word(8, true, 0, 0, 0));
+            else
+                arm_test_value(out, 0, size);
+            if (!arm_clear_cv_flags(out)) return false;
+        }
+        return true;
+    }
+    if (!operand_is_memory(operand->type)) return false;
+    arm_mem_begin(out, operand, 1, size);
+    if (clear) {
+        arm_write_word(out, 0xE3A00000u);
+        arm_mem_transfer(out, false, 0, 1, size);
+        arm_test_value(out, 0, size);
+    } else {
+        arm_mem_transfer(out, true, 0, 1, size);
+        arm_test_value(out, 0, size);
+    }
+    if (!arm_clear_cv_flags(out)) return false;
+    arm_mem_finish(out, operand, 1, size);
+    return true;
+}
+
+static bool arm_emit_logic(const OpcodeEntry *entry, const Operand *operands,
+                           OpSize size, OutputBuffer *out) {
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    unsigned op = strcmp(entry->mnemonic, "AND") == 0 ? 0
+        : strcmp(entry->mnemonic, "EOR") == 0 ? 1 : 12;
+    const Operand *src = &operands[0], *dst = &operands[1];
+    bool src_mem = operand_is_memory(src->type);
+    bool dst_mem = operand_is_memory(dst->type);
+    if (src_mem && dst_mem) return false;
+    unsigned destination = 0;
+    if (!dst_mem) {
+        if (dst->type != OPERAND_REGISTER || dst->value.reg >= 8)
+            return fail("ARM logical operations require a data-register destination");
+        destination = (unsigned)dst->value.reg;
+    }
+    unsigned source = 1;
+    if (src_mem) {
+        arm_mem_begin(out, src, 2, size);
+        arm_mem_transfer(out, true, source, 2, size);
+        arm_mem_finish(out, src, 2, size);
+    } else if (src->type == OPERAND_REGISTER && src->value.reg < 8) {
+        arm_load_vreg(out, source, (unsigned)src->value.reg);
+    } else {
+        return fail("ARM logical operations require data-register operands");
+    }
+    if (dst_mem) {
+        arm_mem_begin(out, dst, 2, size);
+        arm_mem_transfer(out, true, 0, 2, size);
+        arm_write_sized_result(out, 0, source, 3, op, size);
+        arm_mem_transfer(out, false, 0, 2, size);
+        arm_mem_finish(out, dst, 2, size);
+    } else {
+        arm_load_vreg(out, 0, destination);
+        arm_write_sized_result(out, 0, source, 3, op, size);
+        arm_store_vreg(out, 0, destination);
+    }
+    return true;
+}
+
+static bool arm_emit_moveq(const Operand *operands, OutputBuffer *out) {
+    int32_t value = operands[0].value.imm;
+    unsigned reg = (unsigned)operands[1].value.reg;
+    if (operands[0].type != OPERAND_IMMEDIATE ||
+        operands[1].type != OPERAND_REGISTER || reg >= 8)
+        return fail("MOVEQ requires an immediate and a data register");
+    if (value < -128 || value > 127)
+        return fail("MOVEQ immediate must fit in a signed byte");
+    uint32_t extended = (uint32_t)value;
+    arm_load_literal(out, 0, extended);
+    arm_test_value(out, 0, SIZE_L);
+    if (!arm_clear_cv_flags(out)) return false;
+    arm_store_vreg(out, 0, reg);
+    return true;
+}
+
+static bool arm_emit_move(const Operand *operands, OpSize size,
+                          OutputBuffer *out) {
+    if (operands[0].type != OPERAND_IMMEDIATE ||
+        operands[1].type != OPERAND_REGISTER)
+        return fail("ARM MOVE currently requires an immediate and a register");
+    unsigned reg = (unsigned)operands[1].value.reg;
+    if (reg >= 16) return false;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (reg >= 8) {
+        if (size == SIZE_B)
+            return fail("MOVE to an address register can't be byte-sized");
+        int32_t value = operands[0].value.imm;
+        if (size == SIZE_W) {
+            if (!imm_fits(value, SIZE_W))
+                return fail("immediate value doesn't fit the operation size");
+            value = (int32_t)(int16_t)value;
+        }
+        arm_load_literal(out, 0, (uint32_t)value);
+        arm_store_vreg(out, 0, reg);
+        return true;
+    }
+    if (!imm_fits(operands[0].value.imm, size))
+        return fail("immediate value doesn't fit the operation size");
+    uint32_t value = (uint32_t)operands[0].value.imm;
+    if (size == SIZE_L) {
+        arm_load_literal(out, 0, value);
+        arm_test_value(out, 0, SIZE_L);
+    } else {
+        unsigned shift = size == SIZE_B ? 24 : 16;
+        uint32_t mask = size == SIZE_B ? 0xFFu : 0xFFFFu;
+        arm_load_vreg(out, 0, reg);
+        arm_load_literal(out, 1, value & mask);
+        arm_mov_shift(out, 0, 0, true, 32 - shift);
+        arm_mov_shift(out, 0, 0, false, shift);
+        arm_mov_shift(out, 1, 1, false, shift);
+        arm_mov_shift(out, 1, 1, true, 32 - shift);
+        arm_write_word(out, arm_dp_reg_word(12, false, 0, 0, 1));
+        arm_test_value(out, 1, size);
+    }
+    if (!arm_clear_cv_flags(out)) return false;
+    arm_store_vreg(out, 0, reg);
+    return true;
+}
+
+static bool arm_emit_lea(const Operand *operands, OutputBuffer *out) {
+    if (operands[0].type != OPERAND_IMMEDIATE ||
+        operands[1].type != OPERAND_REGISTER || operands[1].value.reg < 8)
+        return fail("LEA requires a label and an address register");
+    arm_load_literal(out, 0, (uint32_t)operands[0].value.imm);
+    arm_store_vreg(out, 0, (unsigned)operands[1].value.reg);
+    return true;
+}
+
+static bool arm_emit_jump(const char *mnemonic, const Operand *operand,
+                          OutputBuffer *out) {
+    bool call = strcmp(mnemonic, "JSR") == 0;
+    if (operand->type == OPERAND_IMMEDIATE) {
+        if (call) arm_write_word(out, 0xE92D4000u); // push {lr}
+        int64_t delta = g_final_pass
+            ? (int64_t)(uint32_t)operand->value.imm -
+                  (int64_t)(g_pc + (call ? 12 : 8))
+            : 0;
+        if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
+            return fail("ARM branch target is outside the encodable range");
+        uint32_t imm24 = (uint32_t)(delta >> 2) & 0x00FFFFFFu;
+        arm_write_word(out, (call ? 0xEB000000u : 0xEA000000u) | imm24);
+        if (call) arm_write_word(out, 0xE8BD4000u); // pop {lr}
+        return true;
+    }
+    if (operand->type != OPERAND_IND)
+        return fail("ARM JMP/JSR support labels and (An) indirect targets");
+    arm_load_vreg(out, 0, (unsigned)operand->value.reg);
+    if (call) {
+        arm_write_word(out, 0xE92D4000u); // push {lr}
+        arm_write_word(out, 0xE12FFF30u); // blx r0
+        arm_write_word(out, 0xE8BD4000u); // pop {lr}
+    } else {
+        arm_write_word(out, 0xE1A0F000u); // mov pc,r0
+    }
+    return true;
+}
+
+static bool arm_emit_dbra(const Operand *operands, OutputBuffer *out) {
+    size_t start = out->size;
+    unsigned reg = (unsigned)operands[0].value.reg;
+    if (operands[0].type != OPERAND_REGISTER || reg >= 8 ||
+        operands[1].type != OPERAND_IMMEDIATE)
+        return fail("DBRA requires a data register and a label");
+    arm_load_vreg(out, 0, reg);
+    arm_write_word(out, 0xE10F3000u);             // mrs r3,cpsr
+    arm_write_word(out, 0xE1A01820u);             // mov r1,r0,lsr #16
+    arm_write_word(out, 0xE2400001u);             // sub r0,r0,#1
+    arm_write_word(out, 0xE1A00800u);             // mov r0,r0,lsl #16
+    arm_write_word(out, 0xE1A00820u);             // mov r0,r0,lsr #16
+    arm_write_word(out, 0xE1800801u);             // orr r0,r0,r1,lsl #16
+    arm_store_vreg(out, 0, reg);
+    arm_write_word(out, 0xE1A02800u);             // mov r2,r0,lsl #16
+    if (!arm_dp_imm(out, 11, true, 0, 2, 0x10000u))
+        return false;                             // cmn r2,#0x10000
+    arm_write_word(out, 0x0A000001u);             // beq over restore+branch
+    arm_write_word(out, 0xE128F003u);             // msr cpsr_f,r3
+    int64_t delta = g_final_pass
+        ? (int64_t)(uint32_t)operands[1].value.imm -
+              (int64_t)(g_pc + (uint32_t)(out->size - start) + 8)
+        : 0;
+    if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
+        return fail("ARM DBRA target is outside the encodable range");
+    arm_write_word(out, 0xEA000000u |
+                   ((uint32_t)(delta >> 2) & 0x00FFFFFFu));
+    arm_write_word(out, 0xE128F003u);             // restore original flags
+    return true;
+}
+
+static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
+                                OpSize size, OutputBuffer *out) {
+    const char *m = entry->mnemonic;
+    if (strcmp(m, "MOVE") == 0) return arm_emit_move(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "LEA") == 0) return arm_emit_lea(operands, out) ? 1 : 0;
+    if (strcmp(m, "MOVEQ") == 0) return arm_emit_moveq(operands, out) ? 1 : 0;
+    if (strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0)
+        return arm_emit_clrtst(m, &operands[0], size, out) ? 1 : 0;
+    if (strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
+        strcmp(m, "EOR") == 0)
+        return arm_emit_logic(entry, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "ADDQ") == 0)
+        return arm_emit_quick(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUBQ") == 0)
+        return arm_emit_quick(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "JMP") == 0 || strcmp(m, "JSR") == 0)
+        return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
+    if (strcmp(m, "DBRA") == 0) return arm_emit_dbra(operands, out) ? 1 : 0;
+    return -1;
+}
+
 // Emit full instruction
 int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
               OutputBuffer *out) {
@@ -897,13 +1607,25 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
     g_emit_error = NULL;
 
     const char *arch = opcodes_active_arch_name();
+    if (arch && strcmp(arch, "arm") == 0) {
+        int r = emit_arm_instruction(entry, operands, size, out);
+        if (r >= 0) return r ? 0 : -1;
+    }
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 2) {
         int r = emit_x86_two_operand(entry, operands, size, out);
         if (r >= 0) return r ? 0 : -1;
     }
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1 &&
         is_branch_mnemonic(entry->mnemonic))
-        return emit_x86_branch(entry, operands, size, out) ? 0 : -1;
+        return (strcmp(entry->mnemonic, "JMP") == 0 ||
+                strcmp(entry->mnemonic, "JSR") == 0
+                    ? emit_x86_one_operand(entry, &operands[0], size, out) == 1
+                    : emit_x86_branch(entry, operands, size, out))
+                   ? 0 : -1;
+    if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 1) {
+        int r = emit_x86_one_operand(entry, &operands[0], size, out);
+        if (r >= 0) return r ? 0 : -1;
+    }
 
     for (size_t i = entry->size; i > 0; i--) {
         buffer_write(out, (uint8_t)(entry->opcode >> ((i - 1) * 8)));

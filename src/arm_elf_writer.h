@@ -5,7 +5,7 @@
 
 #include "codegen.h"
 
-#define EPILOGUE_SIZE 12   // BL (4) + mov r7,#1 (4) + svc 0 (4)
+#define EPILOGUE_SIZE 24   // BL, load D0, exit syscall, and D0 slot address
 
 void write_arm_elf(const char *filename, const OutputBuffer *buf);
 
