@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "srcloc.h"
 #include "symtab.h"
 
 typedef enum {
@@ -12,6 +13,7 @@ typedef struct {
   char  *name;
   size_t offset;
   size_t line;
+  char  *file;
   int32_t equ_value;
   SymbolKind kind;
 } Symbol;
@@ -42,10 +44,12 @@ int symtab_find_equ(const char *name, int32_t *value) {
   return 0;
 }
 
-static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line) {
+static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line,
+                          const char **prev_file) {
   for (size_t i = 0; i < g_count; i++) {
     if (strcmp(g_syms[i].name, name) == 0) {
       if (prev_line) *prev_line = g_syms[i].line;
+      if (prev_file) *prev_file = g_syms[i].file;
       return NULL;
     }
   }
@@ -63,13 +67,20 @@ static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line) {
   if (!copy) abort();
   memcpy(copy, name, n);
 
+  size_t fn = strlen(g_src_file) + 1;
+  char *file_copy = malloc(fn);
+  if (!file_copy) abort();
+  memcpy(file_copy, g_src_file, fn);
+
   g_syms[g_count].name   = copy;
   g_syms[g_count].line   = line;
+  g_syms[g_count].file   = file_copy;
   return &g_syms[g_count++];
 }
 
-int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line) {
-  Symbol *symbol = new_symbol(name, line, prev_line);
+int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line,
+                  const char **prev_file) {
+  Symbol *symbol = new_symbol(name, line, prev_line, prev_file);
   if (!symbol)
     return -1;
   symbol->kind = SYMBOL_LABEL;
@@ -78,8 +89,8 @@ int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_lin
 }
 
 int symtab_define_equ(const char *name, int32_t value, size_t line,
-                      size_t *prev_line) {
-  Symbol *symbol = new_symbol(name, line, prev_line);
+                      size_t *prev_line, const char **prev_file) {
+  Symbol *symbol = new_symbol(name, line, prev_line, prev_file);
   if (!symbol)
     return -1;
   symbol->kind = SYMBOL_EQU;
@@ -88,7 +99,10 @@ int symtab_define_equ(const char *name, int32_t value, size_t line,
 }
 
 void symtab_free(void) {
-  for (size_t i = 0; i < g_count; i++) free(g_syms[i].name);
+  for (size_t i = 0; i < g_count; i++) {
+    free(g_syms[i].name);
+    free(g_syms[i].file);
+  }
   free(g_syms);
   g_syms  = NULL;
   g_count = g_cap = 0;

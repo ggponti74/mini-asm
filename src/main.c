@@ -7,6 +7,7 @@
 #include "opcodes.h"
 #include "parser.h"
 #include "platform.h"
+#include "srcloc.h"
 #include "symtab.h"
 #include "directives.h"
 
@@ -136,6 +137,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
   char line[1024];
   size_t line_num = 1;
   int errors = 0;
+  const char *outer_file = g_src_file;   // restored when an INCLUDE returns
+  g_src_file = source_path;
 
   while (fgets(line, sizeof(line), src)) {
     strip_comment(line);
@@ -158,10 +161,11 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 
     if (label[0] && pass == 1 && !equ_line) {
       size_t prev;
-      if (symtab_define(label, buf->size, line_num, &prev) != 0) {
+      const char *prev_file;
+      if (symtab_define(label, buf->size, line_num, &prev, &prev_file) != 0) {
         fprintf(stderr,
-                "Error at line %zu: label '%s' already defined at line %zu\n",
-                line_num, label, prev);
+                "Error in %s at line %zu: label '%s' already defined in %s at line %zu\n",
+                g_src_file, line_num, label, prev_file, prev);
         errors++;
       }
     }
@@ -173,13 +177,13 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       if (!parse_include_path(line, code, &include_arg, &include_len,
               &column)) {
         fprintf(stderr,
-                "Error at line %zu, column %zu: INCLUDE requires one path\n",
+                "Error in %s at line %zu, column %zu: INCLUDE requires one path\n", g_src_file,
                 line_num, column);
         errors++;
       } else {
         char *include_name = malloc(include_len + 1);
         if (!include_name) {
-          fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
+          fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
                   line_num, column);
           errors++;
         } else {
@@ -188,12 +192,12 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
           char *resolved_path = resolve_include_path(source_path, include_name);
           free(include_name);
           if (!resolved_path) {
-            fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
+            fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
                     line_num, column);
             errors++;
           } else if (depth >= MAX_INCLUDE_DEPTH) {
             fprintf(stderr,
-                    "Error at line %zu, column %zu: INCLUDE nesting exceeds %d\n",
+                    "Error in %s at line %zu, column %zu: INCLUDE nesting exceeds %d\n", g_src_file,
                     line_num, column, MAX_INCLUDE_DEPTH);
             errors++;
             free(resolved_path);
@@ -207,7 +211,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
             }
             if (cycle) {
               fprintf(stderr,
-                      "Error at line %zu, column %zu: recursive INCLUDE '%s'\n",
+                      "Error in %s at line %zu, column %zu: recursive INCLUDE '%s'\n", g_src_file,
                       line_num, column, resolved_path);
               errors++;
               free(resolved_path);
@@ -215,7 +219,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
               FILE *included = fopen(resolved_path, "r");
               if (!included) {
                 fprintf(stderr,
-                        "Error at line %zu, column %zu: cannot open INCLUDE '%s'\n",
+                        "Error in %s at line %zu, column %zu: cannot open INCLUDE '%s'\n", g_src_file,
                         line_num, column, resolved_path);
                 errors++;
                 free(resolved_path);
@@ -264,7 +268,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     size_t op_count = extract_operands(code, ops, entry->operand_count);
 
     if (op_count != entry->operand_count) {
-      fprintf(stderr, "Error at line %zu: expected %zu operands, got %zu\n",
+      fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
               line_num, entry->operand_count, op_count);
       errors++;
       line_num++;
@@ -276,12 +280,12 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     for (size_t i = 0; i < entry->operand_count; i++) {
       if (ops[i].type == OPERAND_BAD) {
         fprintf(stderr,
-                "Error at line %zu: operand %zu '%s' is malformed (address "
-                "register modes are (An), (An)+ and -(An), no spaces inside)\n",
+                "Error in %s at line %zu: operand %zu '%s' is malformed (address "
+                "register modes are (An), (An)+ and -(An), no spaces inside)\n", g_src_file,
                 line_num, i + 1, ops[i].value.label);
         ok = 0;
       } else if (!operand_matches(entry->operand_types[i], ops[i].type)) {
-        fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
+        fprintf(stderr, "Error in %s at line %zu: operand %zu has the wrong type for %s\n", g_src_file,
                 line_num, i + 1, entry->mnemonic);
         ok = 0;
       }
@@ -294,7 +298,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
         if (pass == 2) {
           int32_t value;
           if (!symtab_find_equ(ops[i].symbol, &value)) {
-            fprintf(stderr, "Error at line %zu: undefined EQU constant '%s'\n",
+            fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
                     line_num, ops[i].symbol);
             ok = 0;
             break;
@@ -308,7 +312,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       if (pass == 2) {
         size_t off;
         if (!symtab_find(ops[i].value.label, &off)) {
-          fprintf(stderr, "Error at line %zu: undefined label '%s'\n",
+          fprintf(stderr, "Error in %s at line %zu: undefined label '%s'\n", g_src_file,
                   line_num, ops[i].value.label);
           ok = 0;
           break;
@@ -329,14 +333,14 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     if (emit_code(entry, ops, size, buf) != 0) {
       const char *why = codegen_error();
       if (why) {
-        fprintf(stderr, "Error at line %zu: %s\n", line_num, why);
+        fprintf(stderr, "Error in %s at line %zu: %s\n", g_src_file, line_num, why);
         errors++;
         line_num++;
         continue;
       }
       fprintf(stderr,
-              "Error at line %zu: can't encode %s with these operands on this "
-              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n",
+              "Error in %s at line %zu: can't encode %s with these operands on this "
+              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n", g_src_file,
               line_num, entry->mnemonic);
       errors++;
     }
@@ -344,6 +348,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     line_num++;
   }
 
+  g_src_file = outer_file;
   return errors;
 }
 
@@ -513,7 +518,7 @@ int main(int argc, char *argv[])
   //   // Validate operand count
   //   if (op_count != entry->operand_count)
   //   {
-  //     fprintf(stderr, "Error at line %zu: expected %zu operands, got %zu\n",
+  //     fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
   //             line_num, entry->operand_count, op_count);
   //     errors++;
   //     line_num++;

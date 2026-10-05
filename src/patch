@@ -1,27 +1,355 @@
-diff --git a/src/codegen.c b/src/codegen.c
-index 94ad144..c91f895 100644
---- a/src/codegen.c
-+++ b/src/codegen.c
-@@ -661,5 +661,7 @@ static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
-     } else {
--        buffer_write(out, size == SIZE_B ? 0xF6 : 0xF7);
--        write_modrm_mem(out, 0, base);
--        write_le(out, 0, n);
-+        // CMP [mem],0 (80/83 /7 ib): sets N,Z like 68K TST. TEST [mem],0
-+        // would always yield Z=1.
-+        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
-+        write_modrm_mem(out, 7, base);
-+        buffer_write(out, 0);
+diff --git a/src/directives.c b/src/directives.c
+index ee039ac..34716e7 100644
+--- a/src/directives.c
++++ b/src/directives.c
+@@ -5,6 +5,7 @@
+ #include <string.h>
+ 
+ #include "directives.h"
++#include "srcloc.h"
+ #include "symtab.h"
+ 
+ static int ci_equal(const char *a, const char *b) {
+@@ -56,14 +57,14 @@ void directive_print_list(FILE *out) {
+ }
+ 
+ static int dc_error(size_t line_num, const char *fmt, const char *arg) {
+-  fprintf(stderr, "Error at line %zu: ", line_num);
++  fprintf(stderr, "Error in %s at line %zu: ", g_src_file, line_num);
+   fprintf(stderr, fmt, arg);
+   fputc('\n', stderr);
+   return 1;
+ }
+ 
+ static int equ_error(size_t line_num, const char *message) {
+-  fprintf(stderr, "Error at line %zu: EQU %s\n", line_num, message);
++  fprintf(stderr, "Error in %s at line %zu: EQU %s\n", g_src_file, line_num, message);
+   return 1;
+ }
+ 
+@@ -212,10 +213,11 @@ int directive_assemble(const char *code, const char *label, size_t line_num,
+       return equ_error(line_num, "value is outside the signed 32-bit range");
+     if (pass == 1) {
+       size_t prev;
+-      if (symtab_define_equ(label, (int32_t)value, line_num, &prev) != 0) {
++      const char *prev_file;
++      if (symtab_define_equ(label, (int32_t)value, line_num, &prev, &prev_file) != 0) {
+         fprintf(stderr,
+-                "Error at line %zu: symbol '%s' already defined at line %zu\n",
+-                line_num, label, prev);
++                "Error in %s at line %zu: symbol '%s' already defined in %s at line %zu\n",
++                g_src_file, line_num, label, prev_file, prev);
+         return 1;
+       }
      }
+diff --git a/src/main.c b/src/main.c
+index 33b71de..062d927 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -7,6 +7,7 @@
+ #include "opcodes.h"
+ #include "parser.h"
+ #include "platform.h"
++#include "srcloc.h"
+ #include "symtab.h"
+ #include "directives.h"
+ 
+@@ -136,6 +137,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+   char line[1024];
+   size_t line_num = 1;
+   int errors = 0;
++  const char *outer_file = g_src_file;   // restored when an INCLUDE returns
++  g_src_file = source_path;
+ 
+   while (fgets(line, sizeof(line), src)) {
+     strip_comment(line);
+@@ -158,10 +161,11 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+ 
+     if (label[0] && pass == 1 && !equ_line) {
+       size_t prev;
+-      if (symtab_define(label, buf->size, line_num, &prev) != 0) {
++      const char *prev_file;
++      if (symtab_define(label, buf->size, line_num, &prev, &prev_file) != 0) {
+         fprintf(stderr,
+-                "Error at line %zu: label '%s' already defined at line %zu\n",
+-                line_num, label, prev);
++                "Error in %s at line %zu: label '%s' already defined in %s at line %zu\n",
++                g_src_file, line_num, label, prev_file, prev);
+         errors++;
+       }
+     }
+@@ -173,13 +177,13 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+       if (!parse_include_path(line, code, &include_arg, &include_len,
+               &column)) {
+         fprintf(stderr,
+-                "Error at line %zu, column %zu: INCLUDE requires one path\n",
++                "Error in %s at line %zu, column %zu: INCLUDE requires one path\n", g_src_file,
+                 line_num, column);
+         errors++;
+       } else {
+         char *include_name = malloc(include_len + 1);
+         if (!include_name) {
+-          fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
++          fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
+                   line_num, column);
+           errors++;
+         } else {
+@@ -188,12 +192,12 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+           char *resolved_path = resolve_include_path(source_path, include_name);
+           free(include_name);
+           if (!resolved_path) {
+-            fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
++            fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
+                     line_num, column);
+             errors++;
+           } else if (depth >= MAX_INCLUDE_DEPTH) {
+             fprintf(stderr,
+-                    "Error at line %zu, column %zu: INCLUDE nesting exceeds %d\n",
++                    "Error in %s at line %zu, column %zu: INCLUDE nesting exceeds %d\n", g_src_file,
+                     line_num, column, MAX_INCLUDE_DEPTH);
+             errors++;
+             free(resolved_path);
+@@ -207,7 +211,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+             }
+             if (cycle) {
+               fprintf(stderr,
+-                      "Error at line %zu, column %zu: recursive INCLUDE '%s'\n",
++                      "Error in %s at line %zu, column %zu: recursive INCLUDE '%s'\n", g_src_file,
+                       line_num, column, resolved_path);
+               errors++;
+               free(resolved_path);
+@@ -215,7 +219,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+               FILE *included = fopen(resolved_path, "r");
+               if (!included) {
+                 fprintf(stderr,
+-                        "Error at line %zu, column %zu: cannot open INCLUDE '%s'\n",
++                        "Error in %s at line %zu, column %zu: cannot open INCLUDE '%s'\n", g_src_file,
+                         line_num, column, resolved_path);
+                 errors++;
+                 free(resolved_path);
+@@ -264,7 +268,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+     size_t op_count = extract_operands(code, ops, entry->operand_count);
+ 
+     if (op_count != entry->operand_count) {
+-      fprintf(stderr, "Error at line %zu: expected %zu operands, got %zu\n",
++      fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
+               line_num, entry->operand_count, op_count);
+       errors++;
+       line_num++;
+@@ -276,12 +280,12 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+     for (size_t i = 0; i < entry->operand_count; i++) {
+       if (ops[i].type == OPERAND_BAD) {
+         fprintf(stderr,
+-                "Error at line %zu: operand %zu '%s' is malformed (address "
+-                "register modes are (An), (An)+ and -(An), no spaces inside)\n",
++                "Error in %s at line %zu: operand %zu '%s' is malformed (address "
++                "register modes are (An), (An)+ and -(An), no spaces inside)\n", g_src_file,
+                 line_num, i + 1, ops[i].value.label);
+         ok = 0;
+       } else if (!operand_matches(entry->operand_types[i], ops[i].type)) {
+-        fprintf(stderr, "Error at line %zu: operand %zu has the wrong type for %s\n",
++        fprintf(stderr, "Error in %s at line %zu: operand %zu has the wrong type for %s\n", g_src_file,
+                 line_num, i + 1, entry->mnemonic);
+         ok = 0;
+       }
+@@ -294,7 +298,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+         if (pass == 2) {
+           int32_t value;
+           if (!symtab_find_equ(ops[i].symbol, &value)) {
+-            fprintf(stderr, "Error at line %zu: undefined EQU constant '%s'\n",
++            fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
+                     line_num, ops[i].symbol);
+             ok = 0;
+             break;
+@@ -308,7 +312,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+       if (pass == 2) {
+         size_t off;
+         if (!symtab_find(ops[i].value.label, &off)) {
+-          fprintf(stderr, "Error at line %zu: undefined label '%s'\n",
++          fprintf(stderr, "Error in %s at line %zu: undefined label '%s'\n", g_src_file,
+                   line_num, ops[i].value.label);
+           ok = 0;
+           break;
+@@ -329,14 +333,14 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+     if (emit_code(entry, ops, size, buf) != 0) {
+       const char *why = codegen_error();
+       if (why) {
+-        fprintf(stderr, "Error at line %zu: %s\n", line_num, why);
++        fprintf(stderr, "Error in %s at line %zu: %s\n", g_src_file, line_num, why);
+         errors++;
+         line_num++;
+         continue;
+       }
+       fprintf(stderr,
+-              "Error at line %zu: can't encode %s with these operands on this "
+-              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n",
++              "Error in %s at line %zu: can't encode %s with these operands on this "
++              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n", g_src_file,
+               line_num, entry->mnemonic);
+       errors++;
+     }
+@@ -344,6 +348,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
+     line_num++;
+   }
+ 
++  g_src_file = outer_file;
+   return errors;
+ }
+ 
+@@ -513,7 +518,7 @@ int main(int argc, char *argv[])
+   //   // Validate operand count
+   //   if (op_count != entry->operand_count)
+   //   {
+-  //     fprintf(stderr, "Error at line %zu: expected %zu operands, got %zu\n",
++  //     fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
+   //             line_num, entry->operand_count, op_count);
+   //     errors++;
+   //     line_num++;
 diff --git a/src/parser.c b/src/parser.c
-index 8ecdf83..e860bd4 100644
+index e860bd4..957ccaa 100644
 --- a/src/parser.c
 +++ b/src/parser.c
-@@ -59,4 +59,4 @@ static int parse_immediate(const char *token, int32_t *value,
-   if (negative) parsed = -parsed;
--  if (parsed < INT32_MIN || parsed > INT32_MAX) return 0;
--  *value = (int32_t)parsed;
-+  if (parsed < INT32_MIN || parsed > (long long)UINT32_MAX) return 0;
-+  *value = (int32_t)(uint32_t)parsed;
-   return 1;
-   
+@@ -7,6 +7,7 @@
+ #include "directives.h"
+ #include "opcodes.h"
+ #include "parser.h"
++#include "srcloc.h"
+ 
+ static int parse_register(const char *s, int *reg);
+ 
+@@ -100,7 +101,7 @@ static int parse_indirect(const char *tok, OperandType *type, int *reg) {
+ 
+ // Simple error reporting
+ static void report_error(size_t line, size_t col, const char *msg) {
+-  fprintf(stderr, "Error at line %zu, column %zu: %s\n", line, col, msg);
++  fprintf(stderr, "Error in %s at line %zu, column %zu: %s\n", g_src_file, line, col, msg);
+ }
+ 
+ void strip_comment(char *line) {
+diff --git a/src/srcloc.c b/src/srcloc.c
+new file mode 100644
+index 0000000..72c1ccb
+--- /dev/null
++++ b/src/srcloc.c
+@@ -0,0 +1,3 @@
++#include "srcloc.h"
++
++const char *g_src_file = "<unknown>";
+diff --git a/src/srcloc.h b/src/srcloc.h
+new file mode 100644
+index 0000000..9b1e059
+--- /dev/null
++++ b/src/srcloc.h
+@@ -0,0 +1,9 @@
++#ifndef SRCLOC_H
++#define SRCLOC_H
++
++// Name of the source file currently being assembled (the top-level file or
++// the file of the innermost INCLUDE). Error messages print it so a line
++// number can be traced back to the right file.
++extern const char *g_src_file;
++
++#endif // SRCLOC_H
+diff --git a/src/symtab.c b/src/symtab.c
+index a1dd0c6..875178f 100644
+--- a/src/symtab.c
++++ b/src/symtab.c
+@@ -1,6 +1,7 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
++#include "srcloc.h"
+ #include "symtab.h"
+ 
+ typedef enum {
+@@ -12,6 +13,7 @@ typedef struct {
+   char  *name;
+   size_t offset;
+   size_t line;
++  char  *file;
+   int32_t equ_value;
+   SymbolKind kind;
+ } Symbol;
+@@ -42,10 +44,12 @@ int symtab_find_equ(const char *name, int32_t *value) {
+   return 0;
+ }
+ 
+-static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line) {
++static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line,
++                          const char **prev_file) {
+   for (size_t i = 0; i < g_count; i++) {
+     if (strcmp(g_syms[i].name, name) == 0) {
+       if (prev_line) *prev_line = g_syms[i].line;
++      if (prev_file) *prev_file = g_syms[i].file;
+       return NULL;
+     }
+   }
+@@ -63,13 +67,20 @@ static Symbol *new_symbol(const char *name, size_t line, size_t *prev_line) {
+   if (!copy) abort();
+   memcpy(copy, name, n);
+ 
++  size_t fn = strlen(g_src_file) + 1;
++  char *file_copy = malloc(fn);
++  if (!file_copy) abort();
++  memcpy(file_copy, g_src_file, fn);
++
+   g_syms[g_count].name   = copy;
+   g_syms[g_count].line   = line;
++  g_syms[g_count].file   = file_copy;
+   return &g_syms[g_count++];
+ }
+ 
+-int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line) {
+-  Symbol *symbol = new_symbol(name, line, prev_line);
++int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line,
++                  const char **prev_file) {
++  Symbol *symbol = new_symbol(name, line, prev_line, prev_file);
+   if (!symbol)
+     return -1;
+   symbol->kind = SYMBOL_LABEL;
+@@ -78,8 +89,8 @@ int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_lin
+ }
+ 
+ int symtab_define_equ(const char *name, int32_t value, size_t line,
+-                      size_t *prev_line) {
+-  Symbol *symbol = new_symbol(name, line, prev_line);
++                      size_t *prev_line, const char **prev_file) {
++  Symbol *symbol = new_symbol(name, line, prev_line, prev_file);
+   if (!symbol)
+     return -1;
+   symbol->kind = SYMBOL_EQU;
+@@ -88,7 +99,10 @@ int symtab_define_equ(const char *name, int32_t value, size_t line,
+ }
+ 
+ void symtab_free(void) {
+-  for (size_t i = 0; i < g_count; i++) free(g_syms[i].name);
++  for (size_t i = 0; i < g_count; i++) {
++    free(g_syms[i].name);
++    free(g_syms[i].file);
++  }
+   free(g_syms);
+   g_syms  = NULL;
+   g_count = g_cap = 0;
+diff --git a/src/symtab.h b/src/symtab.h
+index 3ba0cc4..d5bbbf0 100644
+--- a/src/symtab.h
++++ b/src/symtab.h
+@@ -5,12 +5,14 @@
+ #include <stdint.h>
+ 
+ // Defines a label. Returns 0 on success, or -1 if the name is already
+-// defined (the line of the earlier definition is stored in *prev_line).
+-int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line);
++// defined (the line and file of the earlier definition are stored in
++// *prev_line / *prev_file; prev_file stays valid until symtab_free()).
++int symtab_define(const char *name, size_t offset, size_t line, size_t *prev_line,
++                  const char **prev_file);
+ 
+ // Defines an absolute EQU constant. Shares the namespace with labels.
+ int symtab_define_equ(const char *name, int32_t value, size_t line,
+-                      size_t *prev_line);
++                      size_t *prev_line, const char **prev_file);
+ 
+ // Looks up a label. Returns 1 and sets *offset if found, otherwise 0.
+ int symtab_find(const char *name, size_t *offset);
+ 

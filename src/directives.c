@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "directives.h"
+#include "srcloc.h"
 #include "symtab.h"
 
 static int ci_equal(const char *a, const char *b) {
@@ -56,14 +57,14 @@ void directive_print_list(FILE *out) {
 }
 
 static int dc_error(size_t line_num, const char *fmt, const char *arg) {
-  fprintf(stderr, "Error at line %zu: ", line_num);
+  fprintf(stderr, "Error in %s at line %zu: ", g_src_file, line_num);
   fprintf(stderr, fmt, arg);
   fputc('\n', stderr);
   return 1;
 }
 
 static int equ_error(size_t line_num, const char *message) {
-  fprintf(stderr, "Error at line %zu: EQU %s\n", line_num, message);
+  fprintf(stderr, "Error in %s at line %zu: EQU %s\n", g_src_file, line_num, message);
   return 1;
 }
 
@@ -212,10 +213,11 @@ int directive_assemble(const char *code, const char *label, size_t line_num,
       return equ_error(line_num, "value is outside the signed 32-bit range");
     if (pass == 1) {
       size_t prev;
-      if (symtab_define_equ(label, (int32_t)value, line_num, &prev) != 0) {
+      const char *prev_file;
+      if (symtab_define_equ(label, (int32_t)value, line_num, &prev, &prev_file) != 0) {
         fprintf(stderr,
-                "Error at line %zu: symbol '%s' already defined at line %zu\n",
-                line_num, label, prev);
+                "Error in %s at line %zu: symbol '%s' already defined in %s at line %zu\n",
+                g_src_file, line_num, label, prev_file, prev);
         return 1;
       }
     }

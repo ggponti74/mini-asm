@@ -7,6 +7,7 @@
 #include "directives.h"
 #include "opcodes.h"
 #include "parser.h"
+#include "srcloc.h"
 
 static int parse_register(const char *s, int *reg);
 
@@ -100,7 +101,7 @@ static int parse_indirect(const char *tok, OperandType *type, int *reg) {
 
 // Simple error reporting
 static void report_error(size_t line, size_t col, const char *msg) {
-  fprintf(stderr, "Error at line %zu, column %zu: %s\n", line, col, msg);
+  fprintf(stderr, "Error in %s at line %zu, column %zu: %s\n", g_src_file, line, col, msg);
 }
 
 void strip_comment(char *line) {
