@@ -57,8 +57,8 @@ static int parse_immediate(const char *token, int32_t *value,
   long long parsed = strtoll(p, NULL, base);
   if (errno == ERANGE) return 0;
   if (negative) parsed = -parsed;
-  if (parsed < INT32_MIN || parsed > INT32_MAX) return 0;
-  *value = (int32_t)parsed;
+  if (parsed < INT32_MIN || parsed > (long long)UINT32_MAX) return 0;
+  *value = (int32_t)(uint32_t)parsed;
   return 1;
 }
 

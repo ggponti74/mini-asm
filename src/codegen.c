@@ -659,9 +659,11 @@ static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
         write_modrm_mem(out, 7, base);
         buffer_write(out, 0);
     } else {
-        buffer_write(out, size == SIZE_B ? 0xF6 : 0xF7);
-        write_modrm_mem(out, 0, base);
-        write_le(out, 0, n);
+        // CMP [mem],0 (80/83 /7 ib): sets N,Z like 68K TST. TEST [mem],0
+        // would always yield Z=1.
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
+        write_modrm_mem(out, 7, base);
+        buffer_write(out, 0);
     }
     mem_post(out, operand->type, base, n);
     return true;
