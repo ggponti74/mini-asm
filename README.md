@@ -23,6 +23,9 @@
     operands (`MOVE #NAME,D0`) or `dc` values. Values may be decimal, `$`-hex,
     or `0x`-hex literals.
 
+    Source files can include other files with `INCLUDE "path/to/file.asm"`.
+    Relative paths are resolved from the file containing the INCLUDE directive.
+
     The instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
     ADDQ, SUBQ, and DBRA. Use `-l` for the complete target-specific listing.
     Supported effective-address forms are listed per instruction; current

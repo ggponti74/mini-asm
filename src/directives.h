@@ -14,6 +14,9 @@ int directive_is(const char *token);
 // True if `token` is the EQU directive (case-insensitive).
 int directive_is_equ(const char *token);
 
+// True if `token` is the INCLUDE directive (case-insensitive).
+int directive_is_include(const char *token);
+
 // If `code` (a line with any label already removed) starts with a
 // directive, processes it and returns the number of errors (0 or 1).
 // `label` is the optional label from the line; EQU requires one. Returns -1

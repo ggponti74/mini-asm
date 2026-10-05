@@ -39,13 +39,17 @@ static size_t dc_unit(const char *token) {
 
 int directive_is_equ(const char *token) { return ci_equal(token, "EQU"); }
 
+int directive_is_include(const char *token) { return ci_equal(token, "INCLUDE"); }
+
 int directive_is(const char *token) {
-  return directive_is_equ(token) || dc_unit(token) != 0;
+  return directive_is_equ(token) || directive_is_include(token) ||
+         dc_unit(token) != 0;
 }
 
 void directive_print_list(FILE *out) {
   fprintf(out, "Directives:\n");
   fprintf(out, "  EQU              define an absolute constant: NAME EQU value\n");
+  fprintf(out, "  INCLUDE          assemble another source file at this location\n");
   fprintf(out, "  dc.b dc.w dc.l   define constant data (1, 2 or 4 bytes per value)\n");
   fprintf(out, "                   dc.b also takes strings: dc.b \"Hello\",13,10,0  ('...' works too;\n"
                "                   a doubled quote inside is one quote; no backslash escapes)\n");

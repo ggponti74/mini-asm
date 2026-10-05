@@ -206,6 +206,4 @@ fail:   move.l  d3, d0
 dbl:    add.l   d1, d1
         rts
 
-wdata   dc.w    $1234
-msg     dc.b    "Hello", 0
-buf     dc.b    0,0,0,0,0,0,0,0
+INCLUDE "test_data.asm"

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "codegen.h"
 #include "opcodes.h"
@@ -61,8 +62,77 @@ static void derive_base_name(const char *source_path, char *out,
   }
 }
 
-static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
-                         uint32_t code_base) {
+#define MAX_INCLUDE_DEPTH 32
+
+static int parse_include_path(const char *line, const char *code,
+                              const char **path_start,
+                              size_t *path_len, size_t *column) {
+  const char *p = code;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  while (*p && !isspace((unsigned char)*p))
+    p++;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+
+  *column = (size_t)(p - line) + 1;
+  if (*p == '\0')
+    return 0;
+
+  char quote = '\0';
+  if (*p == '"' || *p == '\'')
+    quote = *p++;
+  *path_start = p;
+  if (quote) {
+    while (*p && *p != quote)
+      p++;
+    if (*p != quote)
+      return 0;
+    *path_len = (size_t)(p - *path_start);
+    p++;
+  } else {
+    while (*p && !isspace((unsigned char)*p))
+      p++;
+    *path_len = (size_t)(p - *path_start);
+  }
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  return *path_len > 0 && *p == '\0';
+}
+
+static int path_is_absolute(const char *path) {
+  return path[0] == '/' || path[0] == '\\' ||
+         (isalpha((unsigned char)path[0]) && path[1] == ':');
+}
+
+static char *resolve_include_path(const char *source_path,
+                                  const char *include_path) {
+  if (path_is_absolute(include_path)) {
+    size_t len = strlen(include_path) + 1;
+    char *resolved = malloc(len);
+    if (resolved)
+      memcpy(resolved, include_path, len);
+    return resolved;
+  }
+
+  const char *slash = strrchr(source_path, '/');
+  const char *backslash = strrchr(source_path, '\\');
+  const char *separator = slash;
+  if (backslash && (!separator || backslash > separator))
+    separator = backslash;
+  size_t directory_len = separator ? (size_t)(separator - source_path + 1) : 0;
+  size_t include_len = strlen(include_path);
+  char *resolved = malloc(directory_len + include_len + 1);
+  if (!resolved)
+    return NULL;
+  memcpy(resolved, source_path, directory_len);
+  memcpy(resolved + directory_len, include_path, include_len + 1);
+  return resolved;
+}
+
+static int assemble_source(FILE *src, const char *source_path, int pass,
+                           OutputBuffer *buf, uint32_t code_base,
+                           size_t depth, const char **include_stack) {
   char line[1024];
   size_t line_num = 1;
   int errors = 0;
@@ -94,6 +164,74 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
                 line_num, label, prev);
         errors++;
       }
+    }
+
+    if (directive_is_include(first_token)) {
+      const char *include_arg;
+      size_t include_len;
+      size_t column;
+      if (!parse_include_path(line, code, &include_arg, &include_len,
+              &column)) {
+        fprintf(stderr,
+                "Error at line %zu, column %zu: INCLUDE requires one path\n",
+                line_num, column);
+        errors++;
+      } else {
+        char *include_name = malloc(include_len + 1);
+        if (!include_name) {
+          fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
+                  line_num, column);
+          errors++;
+        } else {
+          memcpy(include_name, include_arg, include_len);
+          include_name[include_len] = '\0';
+          char *resolved_path = resolve_include_path(source_path, include_name);
+          free(include_name);
+          if (!resolved_path) {
+            fprintf(stderr, "Error at line %zu, column %zu: out of memory\n",
+                    line_num, column);
+            errors++;
+          } else if (depth >= MAX_INCLUDE_DEPTH) {
+            fprintf(stderr,
+                    "Error at line %zu, column %zu: INCLUDE nesting exceeds %d\n",
+                    line_num, column, MAX_INCLUDE_DEPTH);
+            errors++;
+            free(resolved_path);
+          } else {
+            int cycle = 0;
+            for (size_t i = 0; i <= depth; i++) {
+              if (strcmp(include_stack[i], resolved_path) == 0) {
+                cycle = 1;
+                break;
+              }
+            }
+            if (cycle) {
+              fprintf(stderr,
+                      "Error at line %zu, column %zu: recursive INCLUDE '%s'\n",
+                      line_num, column, resolved_path);
+              errors++;
+              free(resolved_path);
+            } else {
+              FILE *included = fopen(resolved_path, "r");
+              if (!included) {
+                fprintf(stderr,
+                        "Error at line %zu, column %zu: cannot open INCLUDE '%s'\n",
+                        line_num, column, resolved_path);
+                errors++;
+                free(resolved_path);
+              } else {
+                include_stack[depth + 1] = resolved_path;
+                errors += assemble_source(included, resolved_path, pass, buf,
+                                          code_base, depth + 1, include_stack);
+                fclose(included);
+                free(resolved_path);
+              }
+            }
+          }
+        }
+      }
+      line_num++;
+      continue;
     }
 
     if (*code == '\0') { /* label-only line */
@@ -206,6 +344,15 @@ static int assemble_pass(FILE *src, int pass, OutputBuffer *buf,
     line_num++;
   }
 
+  return errors;
+}
+
+static int assemble_pass(FILE *src, const char *source_path, int pass,
+                         OutputBuffer *buf, uint32_t code_base) {
+  const char *include_stack[MAX_INCLUDE_DEPTH + 1];
+  include_stack[0] = source_path;
+  int errors = assemble_source(src, source_path, pass, buf, code_base, 0,
+                               include_stack);
   printf("Pass %d complete. %d error(s) found.\n", pass, errors);
   return errors;
 }
@@ -307,7 +454,7 @@ int main(int argc, char *argv[])
   buf.size = 0;
   buf.capacity = 1024;
 
-  int errors = assemble_pass(src, 1, &buf, target->code_base);
+  int errors = assemble_pass(src, source_path, 1, &buf, target->code_base);
 
   if (errors == 0)
   {
@@ -324,7 +471,7 @@ int main(int argc, char *argv[])
     }
     rewind(src);
     buf.size = 0; /* discard pass-1 output */
-    errors = assemble_pass(src, 2, &buf, target->code_base);
+    errors = assemble_pass(src, source_path, 2, &buf, target->code_base);
   }
 
   // char line[256];
