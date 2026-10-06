@@ -345,6 +345,70 @@ static void write_test(OutputBuffer *out, int r, OpSize size) {
     buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
 }
 
+// ---- byte order ------------------------------------------------------
+// 68K memory is big-endian but x86 is little-endian, so a word or long moving
+// between a register and memory is byte-swapped (bytes need nothing). That
+// keeps the bytes in memory, and in dc.w / dc.l data, laid out as on a real
+// 68K, while registers always hold the plain value.
+//
+// write_swap() is for a scratch register T = EAX..EBX and changes no flags
+// (bswap, or xchg of the low and high byte halves). write_swap_any() works
+// on any register but a word swap (rol) changes flags, so it is only for
+// places where a "test" follows. EBX/ECX/EDX/EAX are the only registers with
+// byte halves, which is why scratch registers come from that set.
+#define ERR_ESP_SWAP \
+    "D4 maps to ESP on this target, so it can't be the register operand of a word/long memory operation with AND/OR/EOR"
+
+static void write_swap(OutputBuffer *out, int t, OpSize size) {
+    if (size == SIZE_L) {
+        buffer_write(out, 0x0F); buffer_write(out, (uint8_t)(0xC8 + t));      // bswap t
+    } else if (size == SIZE_W) {
+        buffer_write(out, 0x86); buffer_write(out, (uint8_t)(0xC0 | (t << 3) | (t + 4)));  // xchg t8,t8h
+    }
+}
+
+static void write_swap_any(OutputBuffer *out, int r, OpSize size) {
+    if (size == SIZE_L) {
+        buffer_write(out, 0x0F); buffer_write(out, (uint8_t)(0xC8 + r));      // bswap r
+    } else if (size == SIZE_W) {
+        buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, 0xC1); buffer_write(out, (uint8_t)(0xC0 | r));      // rol r16,8
+        buffer_write(out, 0x08);
+    }
+}
+
+// A scratch register in EAX..EBX that isn't in `avoid` (a bit per x86
+// register number), or -1.
+static int pick_scratch(unsigned avoid) {
+    for (int t = 0; t < 4; t++)
+        if (!(avoid & (1u << t))) return t;
+    return -1;
+}
+#define ERR_NO_SCRATCH \
+    "no free scratch register for the byte swap of this memory operation"
+
+static void write_push(OutputBuffer *out, int t) { buffer_write(out, (uint8_t)(0x50 + t)); }
+static void write_pop(OutputBuffer *out, int t)  { buffer_write(out, (uint8_t)(0x58 + t)); }
+
+// mov t,s  (t is already pushed, so a source of ESP is read through lea)
+static void write_copy_reg(OutputBuffer *out, int t, int s) {
+    if (s == 4) {                                    // lea t,[esp+4]
+        buffer_write(out, 0x8D);
+        buffer_write(out, (uint8_t)(0x44 | (t << 3)));
+        buffer_write(out, 0x24); buffer_write(out, 0x04);
+    } else {
+        buffer_write(out, 0x89);
+        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | t));
+    }
+}
+
+// mov t,imm at the operation size (.w writes only the low 16 bits)
+static void write_mov_imm(OutputBuffer *out, int t, uint32_t v, OpSize size) {
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, (uint8_t)(0xB8 + t));
+    write_le(out, v, size == SIZE_W ? 2 : 4);
+}
+
 // mov r,[base] (load) at the operation size
 static void write_load(OutputBuffer *out, int r, int base, OpSize size) {
     if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
@@ -388,11 +452,19 @@ static bool emit_x86_move_mem(const Operand *operands, OpSize size, OutputBuffer
         if (!to_addr && size == SIZE_B && d > 3) return fail(ERR_BYTE_REG);
 
         mem_pre(out, src->type, sbase, n);
-        if (to_addr && size == SIZE_W) {                 // MOVEA.W: sign-extend
-            buffer_write(out, 0x0F); buffer_write(out, 0xBF);
-            write_modrm_mem(out, d, sbase);
+        if (to_addr && size == SIZE_W) {                 // MOVEA.W: swap, then sign-extend
+            int t = pick_scratch((1u << sbase) | (1u << d));
+            if (t < 0) return fail(ERR_NO_SCRATCH);
+            write_push(out, t);
+            write_load(out, t, sbase, SIZE_W);
+            write_swap(out, t, SIZE_W);                  // flags untouched, as MOVEA must
+            buffer_write(out, 0x0F); buffer_write(out, 0xBF);          // movsx d,t16
+            buffer_write(out, (uint8_t)(0xC0 | (d << 3) | t));
+            write_pop(out, t);
         } else {
-            write_load(out, d, sbase, to_addr ? SIZE_L : size);
+            OpSize load_size = to_addr ? SIZE_L : size;
+            write_load(out, d, sbase, load_size);
+            write_swap_any(out, d, load_size);           // a "test" (MOVE) or bswap (MOVEA) follows
         }
         if (!to_addr) write_test(out, d, size);
         // Writing the register after the increment makes the increment moot.
@@ -407,14 +479,25 @@ static bool emit_x86_move_mem(const Operand *operands, OpSize size, OutputBuffer
                 return fail("immediate value doesn't fit the operation size");
             uint32_t v = (uint32_t)src->value.imm;
             mem_pre(out, dst->type, dbase, n);
-            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-            buffer_write(out, size == SIZE_B ? 0xC6 : 0xC7);
-            write_modrm_mem(out, 0, dbase);
-            write_le(out, v, n);
-            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);   // cmp [mem],0
-            buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
-            write_modrm_mem(out, 7, dbase);
-            buffer_write(out, 0x00);
+            if (size == SIZE_B) {
+                buffer_write(out, 0xC6);
+                write_modrm_mem(out, 0, dbase);
+                write_le(out, v, n);
+                buffer_write(out, 0x80);                                // cmp [mem],0
+                write_modrm_mem(out, 7, dbase);
+                buffer_write(out, 0x00);
+            } else {
+                // Word/long: N and Z come from the plain value, then it is
+                // stored byte-swapped.
+                int t = pick_scratch(1u << dbase);
+                if (t < 0) return fail(ERR_NO_SCRATCH);
+                write_push(out, t);
+                write_mov_imm(out, t, v, size);
+                write_test(out, t, size);
+                write_swap(out, t, size);
+                write_store(out, t, dbase, size);
+                write_pop(out, t);
+            }
             mem_post(out, dst->type, dbase, n);
             return true;
         }
@@ -430,25 +513,38 @@ static bool emit_x86_move_mem(const Operand *operands, OpSize size, OutputBuffer
         if (size == SIZE_B && s > 3) return fail(ERR_BYTE_REG);
 
         mem_pre(out, dst->type, dbase, n);
-        write_store(out, s, dbase, size);
-        write_test(out, s, size);
+        if (size == SIZE_B) {
+            write_store(out, s, dbase, size);
+            write_test(out, s, size);
+        } else {
+            write_test(out, s, size);                    // N,Z of the plain value
+            int t = pick_scratch((1u << dbase) | (s <= 3 ? 1u << s : 0));
+            if (t < 0) return fail(ERR_NO_SCRATCH);
+            write_push(out, t);
+            write_copy_reg(out, t, s);
+            write_swap(out, t, size);
+            write_store(out, t, dbase, size);
+            write_pop(out, t);
+        }
         mem_post(out, dst->type, dbase, n);
         return true;
     }
 
     // memory -> memory, through a scratch register
     if (!src_mem || !dst_mem) return false;
-    int t = 0;
-    while (t == sbase || t == dbase) t++;                // EAX, ECX, EDX or EBX
-    buffer_write(out, (uint8_t)(0x50 + t));              // push t
+    int t = pick_scratch((1u << sbase) | (1u << dbase));  // EAX, ECX, EDX or EBX
+    if (t < 0) return fail(ERR_NO_SCRATCH);
+    write_push(out, t);
     mem_pre(out, src->type, sbase, n);
     write_load(out, t, sbase, size);
     mem_post(out, src->type, sbase, n);
+    write_swap(out, t, size);                            // plain value, for N and Z
+    write_test(out, t, size);
+    write_swap(out, t, size);                            // back to big-endian
     mem_pre(out, dst->type, dbase, n);
     write_store(out, t, dbase, size);
-    write_test(out, t, size);
     mem_post(out, dst->type, dbase, n);
-    buffer_write(out, (uint8_t)(0x58 + t));              // pop t (flags untouched)
+    write_pop(out, t);                                   // flags untouched
     return true;
 }
 
@@ -617,9 +713,30 @@ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
     int base = x86_reg_code(mem->value.reg);
     if (!plain_base(base)) return fail(ERR_MEM_PTR);
     mem_pre(out, mem->type, base, op_bytes(size));
-    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-    buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, size == SIZE_B, src_mem));
-    write_modrm_mem(out, r, base);
+    if (size == SIZE_B) {
+        buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, true, src_mem));
+        write_modrm_mem(out, r, base);
+    } else {
+        // Word/long: work on the plain value in a scratch register. The
+        // logic op comes last (or just before the swap back, which changes
+        // no flags), so N and Z are those of the result.
+        if (r == 4) return fail(ERR_ESP_SWAP);
+        int t = pick_scratch((1u << base) | (r <= 3 ? 1u << r : 0));
+        if (t < 0) return fail(ERR_NO_SCRATCH);
+        write_push(out, t);
+        write_load(out, t, base, size);
+        write_swap(out, t, size);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, false, false));
+        if (src_mem) {
+            buffer_write(out, (uint8_t)(0xC0 | (t << 3) | r));      // r = r op t
+        } else {
+            buffer_write(out, (uint8_t)(0xC0 | (r << 3) | t));      // t = t op r
+            write_swap(out, t, size);
+            write_store(out, t, base, size);
+        }
+        write_pop(out, t);
+    }
     mem_post(out, mem->type, base, op_bytes(size));
     return true;
 }
@@ -649,21 +766,31 @@ static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
     if (!plain_base(base)) return fail(ERR_MEM_PTR);
     int n = op_bytes(size);
     mem_pre(out, operand->type, base, n);
-    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
     if (is_clr) {
+        // All-zero bytes read the same in either byte order.
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
         buffer_write(out, size == SIZE_B ? 0xC6 : 0xC7);
         write_modrm_mem(out, 0, base);
         write_le(out, 0, n);
         if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
-        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);              // cmp [mem],0
+        write_modrm_mem(out, 7, base);
+        buffer_write(out, 0);
+    } else if (size == SIZE_B) {
+        // CMP [mem],0 sets N,Z like 68K TST. (TEST [mem],0 would always yield Z=1.)
+        buffer_write(out, 0x80);
         write_modrm_mem(out, 7, base);
         buffer_write(out, 0);
     } else {
-        // CMP [mem],0 (80/83 /7 ib): sets N,Z like 68K TST. TEST [mem],0
-        // would always yield Z=1.
-        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
-        write_modrm_mem(out, 7, base);
-        buffer_write(out, 0);
+        // Word/long: the sign bit is in the first byte in memory, so test the
+        // plain value in a scratch register.
+        int t = pick_scratch(1u << base);
+        if (t < 0) return fail(ERR_NO_SCRATCH);
+        write_push(out, t);
+        write_load(out, t, base, size);
+        write_swap_any(out, t, size);
+        write_test(out, t, size);
+        write_pop(out, t);
     }
     mem_post(out, operand->type, base, n);
     return true;
@@ -690,11 +817,27 @@ static bool emit_x86_quick(const Operand *operands, OpSize size, bool is_sub,
     if (operand_is_memory(dst->type)) {
         int base = x86_reg_code(dst->value.reg);
         if (!plain_base(base)) return fail(ERR_MEM_PTR);
-        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
         mem_pre(out, dst->type, base, op_bytes(size));
-        buffer_write(out, size == SIZE_B ? 0x80 : 0x83);
-        write_modrm_mem(out, is_sub ? 5 : 0, base);
-        buffer_write(out, (uint8_t)q);
+        if (size == SIZE_B) {
+            buffer_write(out, 0x80);
+            write_modrm_mem(out, is_sub ? 5 : 0, base);
+            buffer_write(out, (uint8_t)q);
+        } else {
+            // Word/long: add/sub on the plain value in a scratch register
+            // (the carry has to ripple the 68K way), then store it swapped.
+            int t = pick_scratch(1u << base);
+            if (t < 0) return fail(ERR_NO_SCRATCH);
+            write_push(out, t);
+            write_load(out, t, base, size);
+            write_swap(out, t, size);
+            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+            buffer_write(out, 0x83);
+            buffer_write(out, (uint8_t)((is_sub ? 0xE8 : 0xC0) | t));
+            buffer_write(out, (uint8_t)q);
+            write_swap(out, t, size);                    // flags untouched
+            write_store(out, t, base, size);
+            write_pop(out, t);
+        }
         mem_post(out, dst->type, base, op_bytes(size));
         return true;
     }
@@ -1092,7 +1235,9 @@ static int emit_x86_two_operand(const OpcodeEntry *entry, Operand *operands, OpS
         store[k] = (dst_write && in_dst && operands[1].type == OPERAND_REGISTER) ||
                    (in_src && (operands[0].type == OPERAND_POSTINC || operands[0].type == OPERAND_PREDEC)) ||
                    (in_dst && (operands[1].type == OPERAND_POSTINC || operands[1].type == OPERAND_PREDEC));
-        load[k] = !(dst_write && in_dst && operands[1].type == OPERAND_REGISTER && !in_src);
+        // Only MOVE/LEA overwrite the destination; ADDQ/SUBQ to An read it.
+        bool overwrites = is_move_or_lea(entry->mnemonic);
+        load[k] = !(overwrites && dst_write && in_dst && operands[1].type == OPERAND_REGISTER && !in_src);
     }
 
     size_t start = out->size;
@@ -1240,8 +1385,20 @@ static void arm_pointer_adjust(OutputBuffer *out, unsigned base, int bytes) {
         fail("internal ARM error: pointer adjustment is not encodable");
 }
 
+// rev / rev16 rd,rd (ARMv6+): the byte swaps between a register and 68K
+// (big-endian) memory. They change no flags.
+static void arm_swap(OutputBuffer *out, unsigned reg, OpSize size) {
+    if (size == SIZE_L)
+        arm_write_word(out, 0xE6BF0F30u | (reg << 12) | reg);      // rev
+    else if (size == SIZE_W)
+        arm_write_word(out, 0xE6BF0FB0u | (reg << 12) | reg);      // rev16
+}
+
+// Loads leave the plain value in `data`; stores leave `data` unchanged
+// (it is swapped for the store and swapped back).
 static void arm_mem_transfer(OutputBuffer *out, bool load, unsigned data,
                              unsigned base, OpSize size) {
+    if (!load) arm_swap(out, data, size);
     if (size == SIZE_W) {
         arm_write_word(out, (load ? 0xE1D000B0u : 0xE1C000B0u) |
                        (base << 16) | (data << 12));
@@ -1251,6 +1408,7 @@ static void arm_mem_transfer(OutputBuffer *out, bool load, unsigned data,
             : (load ? 0xE5900000u : 0xE5800000u);
         arm_write_word(out, opcode | (base << 16) | (data << 12));
     }
+    arm_swap(out, data, size);       // load: make it the plain value; store: restore
 }
 
 static void arm_mem_begin(OutputBuffer *out, const Operand *memory,

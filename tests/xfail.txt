@@ -1,0 +1,1 @@
+# Sections expected to fail for now (one name per line, as in tests/sections/NAME.asm).

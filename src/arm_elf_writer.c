@@ -8,9 +8,12 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
     return;
 
   const uint32_t code_addr = 0x8000;
-  const uint32_t epilogue_addr = code_addr + (uint32_t)buf->size;
+  // ARM instructions must be word-aligned: odd-sized data (dc.b, dc.w) at the
+  // end of the program would otherwise misalign the epilogue (Bus error).
+  const uint32_t padded_size = ((uint32_t)buf->size + 3u) & ~3u;
+  const uint32_t epilogue_addr = code_addr + padded_size;
   const uint32_t entry_addr = epilogue_addr;
-  const uint32_t total_size = (uint32_t)buf->size + EPILOGUE_SIZE;
+  const uint32_t total_size = padded_size + EPILOGUE_SIZE;
   const uint32_t regfile_addr = REGFILE_ALIGN_UP(code_addr + total_size);
 
   FILE *f = fopen(filename, "wb");
@@ -59,6 +62,8 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
 
   // write the assembled instruction bytes produced by emit_code()
   fwrite(buf->data, 1, buf->size, f);
+  for (size_t i = buf->size; i < padded_size; i++)
+    fputc(0, f);
 
   // --- epilogue: BL user_code_start ; load D0 ; exit(D0) ---
   int32_t imm24 = ((int32_t)code_addr - (int32_t)(epilogue_addr + 8)) >> 2;

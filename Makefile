@@ -23,4 +23,10 @@ $(OUT): $(SRC)
 
 clean:
 	rm -f $(OUT)*
+
+# Regression tests (Linux): see tests/run.sh
+test: $(OUT)
+	sh tests/run.sh ./$(OUT)
+
+.PHONY: all clean test
 	

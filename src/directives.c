@@ -113,12 +113,13 @@ static int is_identifier(const char *s) {
   return 1;
 }
 
-// Both current targets (x86 PE/ELF, ARM ELF) are little-endian, so
-// multi-byte values are emitted low byte first.
+// Data is laid out as on a real 68K: multi-byte values are emitted high byte
+// first (big-endian), whatever the target CPU. The code generators swap
+// words and longs on every memory access to match.
 static void emit_value(OutputBuffer *buf, long long v, size_t unit) {
   unsigned long long u = (unsigned long long)v;
-  for (size_t i = 0; i < unit; i++)
-    buffer_write(buf, (uint8_t)((u >> (8 * i)) & 0xFF));
+  for (size_t i = unit; i > 0; i--)
+    buffer_write(buf, (uint8_t)((u >> (8 * (i - 1))) & 0xFF));
 }
 
 static int in_range(long long v, size_t unit) {
