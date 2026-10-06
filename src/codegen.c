@@ -1626,48 +1626,166 @@ static bool arm_emit_moveq(const Operand *operands, OutputBuffer *out) {
     return true;
 }
 
-static bool arm_emit_move(const Operand *operands, OpSize size,
-                          OutputBuffer *out) {
-    if (operands[0].type != OPERAND_IMMEDIATE ||
-        operands[1].type != OPERAND_REGISTER)
-        return fail("ARM MOVE currently requires an immediate and a register");
-    unsigned reg = (unsigned)operands[1].value.reg;
-    if (reg >= 16) return false;
-    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
-    if (reg >= 8) {
-        if (size == SIZE_B)
-            return fail("MOVE to an address register can't be byte-sized");
-        int32_t value = operands[0].value.imm;
-        if (size == SIZE_W) {
-            if (!imm_fits(value, SIZE_W))
-                return fail("immediate value doesn't fit the operation size");
-            value = (int32_t)(int16_t)value;
-        }
-        arm_load_literal(out, 0, (uint32_t)value);
-        arm_store_vreg(out, 0, reg);
+// asr rd,rm,#amount (arm_mov_shift only knows lsl/lsr)
+static void arm_asr(OutputBuffer *out, unsigned rd, unsigned rm, unsigned amount) {
+    arm_write_word(out, 0xE1A00000u | (rd << 12) | (amount << 7) | (2u << 5) | rm);
+}
+
+// rd = low word of rm, sign-extended to 32 bits (the .w -> .l rule of MOVEA/CMPA)
+static void arm_sign_extend_word(OutputBuffer *out, unsigned rd, unsigned rm) {
+    arm_mov_shift(out, rd, rm, false, 16);
+    arm_asr(out, rd, rd, 16);
+}
+
+// dst = dst with its low byte/word replaced by the low byte/word of src
+// (the 68K .b/.w register write). Uses r12; src is left unchanged.
+static void arm_merge_low(OutputBuffer *out, unsigned dst, unsigned src,
+                          OpSize size) {
+    unsigned keep = size == SIZE_B ? 8 : 16;
+    arm_mov_shift(out, dst, dst, true, keep);          // clear the low part ...
+    arm_mov_shift(out, dst, dst, false, keep);
+    arm_mov_shift(out, 12, src, false, 32 - keep);     // r12 = zero-extended low part
+    arm_mov_shift(out, 12, 12, true, 32 - keep);
+    arm_write_word(out, arm_dp_reg_word(12, false, dst, dst, 12));   // orr
+}
+
+// Loads the value of a MOVE/ADD/SUB/CMP source operand into `phys` (a
+// register operand, an immediate, or memory through an address register
+// using `base` as the pointer register). Sized memory loads zero-extend.
+static bool arm_load_source(OutputBuffer *out, const Operand *src, OpSize size,
+                            unsigned phys, unsigned base) {
+    if (src->type == OPERAND_IMMEDIATE) {
+        arm_load_literal(out, phys, (uint32_t)src->value.imm);
         return true;
     }
-    if (!imm_fits(operands[0].value.imm, size))
-        return fail("immediate value doesn't fit the operation size");
-    uint32_t value = (uint32_t)operands[0].value.imm;
-    if (size == SIZE_L) {
-        arm_load_literal(out, 0, value);
-        arm_test_value(out, 0, SIZE_L);
-    } else {
-        unsigned shift = size == SIZE_B ? 24 : 16;
-        uint32_t mask = size == SIZE_B ? 0xFFu : 0xFFFFu;
-        arm_load_vreg(out, 0, reg);
-        arm_load_literal(out, 1, value & mask);
-        arm_mov_shift(out, 0, 0, true, 32 - shift);
-        arm_mov_shift(out, 0, 0, false, shift);
-        arm_mov_shift(out, 1, 1, false, shift);
-        arm_mov_shift(out, 1, 1, true, 32 - shift);
-        arm_write_word(out, arm_dp_reg_word(12, false, 0, 0, 1));
-        arm_test_value(out, 1, size);
+    if (src->type == OPERAND_REGISTER) {
+        if (src->value.reg < 0 || src->value.reg >= 16) return false;
+        arm_load_vreg(out, phys, (unsigned)src->value.reg);
+        return true;
     }
-    if (!arm_clear_cv_flags(out)) return false;
+    if (!operand_is_memory(src->type)) return false;
+    arm_mem_begin(out, src, base, size);
+    arm_mem_transfer(out, true, phys, base, size);
+    arm_mem_finish(out, src, base, size);
+    return true;
+}
+
+// MOVE <src>, <dst> for every source/destination the x86 target accepts:
+//   MOVE  Dn|An|#imm|(An)|(An)+|-(An) , Dn|(An)|(An)+|-(An)
+//   MOVEA <same sources>, An         (.w sign-extends, no .b, no flags)
+// .b/.w to Dn only replace the low byte/word. Every form except MOVEA sets
+// N,Z from the value moved and clears V,C (X is not modelled).
+static bool arm_emit_move(const Operand *operands, OpSize size,
+                          OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    bool dst_mem = operand_is_memory(dst->type);
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (dst->type != OPERAND_REGISTER && !dst_mem) return false;
+    bool dst_addr = dst->type == OPERAND_REGISTER && dst->value.reg >= 8;
+    if (dst->type == OPERAND_REGISTER && dst->value.reg >= 16) return false;
+    if (dst_addr && size == SIZE_B)
+        return fail("MOVE to an address register can't be byte-sized (MOVEA has no .b)");
+    if (src->type == OPERAND_REGISTER && src->value.reg >= 8 && size == SIZE_B)
+        return fail("byte-sized MOVE can't use an address register as the source");
+    if (src->type == OPERAND_IMMEDIATE && !imm_fits(src->value.imm, size))
+        return fail("immediate value doesn't fit the operation size");
+
+    if (!arm_load_source(out, src, size, 1, 2)) return false;   // value -> r1
+
+    if (dst_addr) {                                             // MOVEA
+        if (size == SIZE_W) arm_sign_extend_word(out, 1, 1);
+        arm_store_vreg(out, 1, (unsigned)dst->value.reg);
+        return true;
+    }
+    if (dst_mem) {
+        arm_mem_begin(out, dst, 3, size);
+        arm_mem_transfer(out, false, 1, 3, size);
+        arm_test_value(out, 1, size);
+        if (!arm_clear_cv_flags(out)) return false;
+        arm_mem_finish(out, dst, 3, size);
+        return true;
+    }
+    unsigned reg = (unsigned)dst->value.reg;
+    if (size == SIZE_L) {
+        arm_store_vreg(out, 1, reg);
+    } else {
+        arm_load_vreg(out, 0, reg);
+        arm_merge_low(out, 0, 1, size);
+        arm_store_vreg(out, 0, reg);
+    }
+    arm_test_value(out, 1, size);
+    return arm_clear_cv_flags(out);
+}
+
+// ADD/SUB <Dn|An|#imm>, Dn. Same rules as the x86 target: a data-register
+// destination, .b/.w/.l, no byte-sized address-register source. Flags are
+// kept in 68K form (C = carry for ADD, borrow for SUB), like ADDQ/SUBQ.
+static bool arm_emit_addsub(const Operand *operands, OpSize size, bool is_sub,
+                            OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER) return false;
+    if (dst->value.reg > 7)
+        return fail(is_sub ? "SUB needs a data register (D0-D7) destination"
+                           : "ADD needs a data register (D0-D7) destination");
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (src->type == OPERAND_IMMEDIATE) {
+        if (!imm_fits(src->value.imm, size))
+            return fail("immediate value doesn't fit the operation size");
+    } else if (src->type == OPERAND_REGISTER) {
+        if (size == SIZE_B && src->value.reg >= 8)
+            return fail(is_sub ? "byte-sized SUB can't use an address register as the source"
+                               : "byte-sized ADD can't use an address register as the source");
+    } else {
+        return false;
+    }
+    unsigned reg = (unsigned)dst->value.reg;
+    if (!arm_load_source(out, src, size, 1, 2)) return false;
+    arm_load_vreg(out, 0, reg);
+    if (!arm_write_sized_result(out, 0, 1, 2, is_sub ? 2 : 4, size))
+        return false;
     arm_store_vreg(out, 0, reg);
     return true;
+}
+
+// CMP / CMPA / CMPI: compute dst - src, keep only the flags (68K form: C is
+// the borrow, so ARM's carry is inverted). CMP #imm,Dn is CMPI and CMP src,An
+// is CMPA, as on the x86 target. CMPA.W sign-extends its source.
+static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
+                         OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER) return false;
+    bool addr_cmp = dst->value.reg >= 8;
+    if (dst->value.reg >= 16) return false;
+    if (kind == CMP_IMM && addr_cmp)
+        return fail("CMPI needs a data register (D0-D7) destination");
+    if (kind == CMP_ADDR && !addr_cmp)
+        return fail("CMPA needs an address register destination (use CMP for data registers)");
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (addr_cmp && size == SIZE_B)
+        return fail("comparing with an address register can't be byte-sized (CMPA has no .b)");
+    if (src->type == OPERAND_IMMEDIATE) {
+        if (!imm_fits(src->value.imm, size))
+            return fail("immediate value doesn't fit the operation size");
+    } else if (src->type == OPERAND_REGISTER) {
+        if (size == SIZE_B && src->value.reg >= 8)
+            return fail("byte-sized CMP can't use an address register as the source");
+    } else {
+        return false;
+    }
+    if (!arm_load_source(out, src, size, 1, 2)) return false;
+    arm_load_vreg(out, 0, (unsigned)dst->value.reg);
+    if (addr_cmp) {
+        if (size == SIZE_W) arm_sign_extend_word(out, 1, 1);
+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 0, 1));      // cmp r0,r1
+    } else if (size == SIZE_L) {
+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 0, 1));
+    } else {
+        unsigned shift = size == SIZE_B ? 24 : 16;
+        arm_mov_shift(out, 2, 0, false, shift);       // compare the top byte/word
+        arm_mov_shift(out, 3, 1, false, shift);       // so N,Z,C,V come out right
+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 2, 3));      // cmp r2,r3
+    }
+    return arm_invert_carry_flag(out);
 }
 
 static bool arm_emit_lea(const Operand *operands, OutputBuffer *out) {
@@ -1739,6 +1857,143 @@ static bool arm_emit_dbra(const Operand *operands, OutputBuffer *out) {
     return true;
 }
 
+// MULU/MULS/DIVU/DIVS (.w): fixed ARM sequences, assembled with GNU as
+// (ARMv6, no hardware divide so they also run on ARM11 cores) and kept as
+// words. The sequence expects the 16-bit source (register or immediate) in
+// r1 and Dn in r0; the word at *_ADDR_WORD is the register-block address of
+// Dn, patched in below. They use r0-r5, r7 and r12.
+//   MULU/MULS: 16x16 -> 32 multiply; N,Z from the result, V=C=0.
+//   DIVU/DIVS: 32/16 -> 16r:16q by shift-and-subtract; N,Z from the
+//     quotient, V=C=0. If the quotient doesn't fit 16 bits (unsigned >
+//     $FFFF, signed outside -32768..32767) Dn is left alone and the flags
+//     become N=1 Z=0 V=1 C=0 -- exactly what the x86 target produces.
+//     Division by zero raises SIGFPE (kill(getpid(), SIGFPE)), like x86 does.
+static const uint32_t arm_mulu_code[] = {
+    0xE1A00800, 0xE1A00820, 0xE1A01801, 0xE1A01821,
+    0xE0020190, 0xE1B0C002, 0xE10FC000, 0xE3CCC203,
+    0xE128F00C, 0xE59FC004, 0xE58C2000, 0xEA000000,
+    0xDEADBEEF
+};
+#define ARM_MULU_ADDR_WORD 12
+
+static const uint32_t arm_muls_code[] = {
+    0xE1A00800, 0xE1A00840, 0xE1A01801, 0xE1A01841,
+    0xE0020190, 0xE1B0C002, 0xE10FC000, 0xE3CCC203,
+    0xE128F00C, 0xE59FC004, 0xE58C2000, 0xEA000000,
+    0xDEADBEEF
+};
+#define ARM_MULS_ADDR_WORD 12
+
+static const uint32_t arm_divu_code[] = {
+    0xE1A01801, 0xE1A01821, 0xE3510000, 0x1A000004,
+    0xE3A07014, 0xEF000000, 0xE3A01008, 0xE3A07025,
+    0xEF000000, 0xE3A02000, 0xE3A03020, 0xE0900000,
+    0xE0A22002, 0xE1520001, 0x20422001, 0x23800001,
+    0xE2533001, 0x1AFFFFF8, 0xE1B03820, 0x1A00000A,
+    0xE1A03802, 0xE1833000, 0xE59FC004, 0xE58C3000,
+    0xEA000000, 0xDEADBEEF, 0xE1B0C800, 0xE10FC000,
+    0xE3CCC203, 0xE128F00C, 0xEA000003, 0xE10FC000,
+    0xE3CCC20F, 0xE38CC209, 0xE128F00C
+};
+#define ARM_DIVU_ADDR_WORD 25
+
+static const uint32_t arm_divs_code[] = {
+    0xE1A01801, 0xE1A01841, 0xE3510000, 0x1A000004,
+    0xE3A07014, 0xEF000000, 0xE3A01008, 0xE3A07025,
+    0xEF000000, 0xE1A04FC0, 0xE1A0CFC1, 0xE02C5004,
+    0xE021100C, 0xE041100C, 0xE0200004, 0xE0400004,
+    0xE3A02000, 0xE3A03020, 0xE0900000, 0xE0A22002,
+    0xE1520001, 0x20422001, 0x23800001, 0xE2533001,
+    0x1AFFFFF8, 0xE2053001, 0xE2833C7F, 0xE28330FF,
+    0xE1500003, 0x8A00000F, 0xE0200005, 0xE0400005,
+    0xE0222004, 0xE0422004, 0xE1A03802, 0xE1A0C800,
+    0xE183382C, 0xE59FC004, 0xE58C3000, 0xEA000000,
+    0xDEADBEEF, 0xE1B0C800, 0xE10FC000, 0xE3CCC203,
+    0xE128F00C, 0xEA000003, 0xE10FC000, 0xE3CCC20F,
+    0xE38CC209, 0xE128F00C
+};
+#define ARM_DIVS_ADDR_WORD 40
+
+static bool arm_emit_muldiv(const char *m, const Operand *operands,
+                            OpSize size, OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER || dst->value.reg > 7)
+        return fail("MULU/MULS/DIVU/DIVS need a data register (D0-D7) destination");
+    if (size != SIZE_UNSPEC && size != SIZE_W)
+        return fail("MULU/MULS/DIVU/DIVS only exist as .w");
+    if (src->type == OPERAND_IMMEDIATE) {
+        if (!imm_fits(src->value.imm, SIZE_W))
+            return fail("immediate value doesn't fit the operation size");
+    } else if (src->type == OPERAND_REGISTER) {
+        if (src->value.reg >= 8)
+            return fail("MULU/MULS/DIVU/DIVS can't take an address register as the source");
+    } else {
+        return false;
+    }
+    const uint32_t *code; size_t count; size_t addr_word;
+    if (strcmp(m, "MULU") == 0) {
+        code = arm_mulu_code; count = sizeof arm_mulu_code / 4; addr_word = ARM_MULU_ADDR_WORD;
+    } else if (strcmp(m, "MULS") == 0) {
+        code = arm_muls_code; count = sizeof arm_muls_code / 4; addr_word = ARM_MULS_ADDR_WORD;
+    } else if (strcmp(m, "DIVU") == 0) {
+        code = arm_divu_code; count = sizeof arm_divu_code / 4; addr_word = ARM_DIVU_ADDR_WORD;
+    } else {
+        code = arm_divs_code; count = sizeof arm_divs_code / 4; addr_word = ARM_DIVS_ADDR_WORD;
+    }
+    unsigned reg = (unsigned)dst->value.reg;
+    if (!arm_load_source(out, src, SIZE_W, 1, 2)) return false;
+    arm_load_vreg(out, 0, reg);
+    for (size_t i = 0; i < count; i++)
+        arm_write_word(out, i == addr_word ? codegen_regfile_base() + 4u * reg : code[i]);
+    return true;
+}
+
+// Bcc. The CPSR holds the 68K flags (see arm_emit_cmp), so most conditions
+// are the ARM condition of the same name; only HI and LS (which on the 68K
+// test the borrow-style C) need a second instruction.
+static const struct { const char *mnemonic; uint32_t cond; } k_arm_bcc[] = {
+    {"BCC", 0x3}, {"BHS", 0x3}, {"BCS", 0x2}, {"BLO", 0x2}, {"BNE", 0x1},
+    {"BEQ", 0x0}, {"BVC", 0x7}, {"BVS", 0x6}, {"BPL", 0x5}, {"BMI", 0x4},
+    {"BGE", 0xA}, {"BLT", 0xB}, {"BGT", 0xC}, {"BLE", 0xD},
+};
+
+static bool arm_is_bcc(const char *m) {
+    if (strcmp(m, "BHI") == 0 || strcmp(m, "BLS") == 0) return true;
+    for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
+        if (strcmp(m, k_arm_bcc[i].mnemonic) == 0) return true;
+    return false;
+}
+
+// Emits "b<cond> target" as the instruction at address g_pc + offset.
+static bool arm_branch_at(OutputBuffer *out, uint32_t cond, uint32_t offset,
+                          uint32_t target) {
+    int64_t delta = g_final_pass
+        ? (int64_t)target - (int64_t)(g_pc + offset + 8) : 0;
+    if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
+        return fail("ARM branch target is outside the encodable range");
+    arm_write_word(out, (cond << 28) | 0x0A000000u |
+                   ((uint32_t)(delta >> 2) & 0x00FFFFFFu));
+    return true;
+}
+
+static bool arm_emit_bcc(const char *m, const Operand *operand, OutputBuffer *out) {
+    if (operand->type != OPERAND_IMMEDIATE)
+        return fail("branch target must be a label");
+    uint32_t target = (uint32_t)operand->value.imm;
+    if (strcmp(m, "BHI") == 0) {          // C=0 and Z=0: skip when Z=1, then bcc
+        arm_write_word(out, 0x0A000000u);                    // beq +4 (skip next)
+        return arm_branch_at(out, 0x3, 4, target);           // bcc target
+    }
+    if (strcmp(m, "BLS") == 0) {          // C=1 or Z=1
+        return arm_branch_at(out, 0x0, 0, target) &&         // beq target
+               arm_branch_at(out, 0x2, 4, target);           // bcs target
+    }
+    for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
+        if (strcmp(m, k_arm_bcc[i].mnemonic) == 0)
+            return arm_branch_at(out, k_arm_bcc[i].cond, 0, target);
+    return false;
+}
+
 static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
                                 OpSize size, OutputBuffer *out) {
     const char *m = entry->mnemonic;
@@ -1757,6 +2012,17 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
     if (strcmp(m, "JMP") == 0 || strcmp(m, "JSR") == 0)
         return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
     if (strcmp(m, "DBRA") == 0) return arm_emit_dbra(operands, out) ? 1 : 0;
+    if (strcmp(m, "ADD") == 0) return arm_emit_addsub(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUB") == 0) return arm_emit_addsub(operands, size, true, out) ? 1 : 0;
+    if (strcmp(m, "CMP") == 0) return arm_emit_cmp(operands, size, CMP_PLAIN, out) ? 1 : 0;
+    if (strcmp(m, "CMPA") == 0) return arm_emit_cmp(operands, size, CMP_ADDR, out) ? 1 : 0;
+    if (strcmp(m, "CMPI") == 0) return arm_emit_cmp(operands, size, CMP_IMM, out) ? 1 : 0;
+    if (strcmp(m, "BRA") == 0) return arm_emit_jump("JMP", &operands[0], out) ? 1 : 0;
+    if (strcmp(m, "BSR") == 0) return arm_emit_jump("JSR", &operands[0], out) ? 1 : 0;
+    if (strcmp(m, "MULU") == 0 || strcmp(m, "MULS") == 0 ||
+        strcmp(m, "DIVU") == 0 || strcmp(m, "DIVS") == 0)
+        return arm_emit_muldiv(m, operands, size, out) ? 1 : 0;
+    if (arm_is_bcc(m)) return arm_emit_bcc(m, &operands[0], out) ? 1 : 0;
     return -1;
 }
 
