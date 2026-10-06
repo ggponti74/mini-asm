@@ -472,7 +472,7 @@ int main(int argc, char *argv[])
       uint32_t regfile = REGFILE_ALIGN_UP(target->code_base + (uint32_t)buf.size +
                                           target->code_tail);
       codegen_set_regfile(regfile);
-      printf("Register block at 0x%08X (%d bytes)\n", regfile, REGFILE_SIZE);
+      //printf("Register block at 0x%08X (%d bytes)\n", regfile, REGFILE_SIZE);
     }
     rewind(src);
     buf.size = 0; /* discard pass-1 output */
