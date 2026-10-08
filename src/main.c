@@ -463,6 +463,12 @@ int main(int argc, char *argv[])
 
   if (errors == 0)
   {
+    // The TRAP dispatcher follows the code (and the writer's epilogue); like
+    // the register block, its address is only known once pass 1 has sized
+    // the code. 0 tells codegen the target has none.
+    codegen_set_dispatcher(target->dispatcher_off
+                               ? target->code_base + (uint32_t)buf.size + target->dispatcher_off
+                               : 0);
     if (target->has_regfile)
     {
       // Code size is final after pass 1 (pass 2 emits the same number of

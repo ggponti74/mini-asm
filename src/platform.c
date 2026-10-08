@@ -5,6 +5,7 @@
 #include "pe_writer.h"
 #include "arm_elf_writer.h"
 #include "elf_writer.h"
+#include "core.h"
     
 // Small portable stand-in for strcasecmp()/_stricmp() so we don't have
 // to pull in platform-specific headers just to compare target names.
@@ -53,7 +54,8 @@ static const PlatformTarget k_targets[] = {
         .needs_exec_bit = true,
         .code_base      = 0x08049000,
         .has_regfile    = true,
-        .code_tail      = ELF_EPILOGUE_SIZE,   // epilogue follows the code
+        .code_tail      = ELF_EPILOGUE_SIZE + CORE_ELF_DISPATCHER_SIZE,  // epilogue, then the TRAP dispatcher
+        .dispatcher_off = ELF_EPILOGUE_SIZE,
         .write          = write_elf,
     },
 };

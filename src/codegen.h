@@ -39,6 +39,14 @@ void codegen_set_context(uint32_t pc, bool final_pass);
 void codegen_set_regfile(uint32_t base);
 uint32_t codegen_regfile_base(void);
 
+// TRAP #0 compiles to a CALL to the target's service dispatcher (core.c),
+// which the writer places in the output after the entry stub/epilogue. Its
+// address depends on the final code size, so main() sets it after pass 1,
+// like the register block. 0 (the default) means the target has no
+// dispatcher: TRAP is then an error in the final pass. In pass 1 TRAP only
+// reserves its 5 bytes.
+void codegen_set_dispatcher(uint32_t addr);
+
 // After emit_code() returns -1: a human-readable reason, or NULL if there
 // isn't a specific one.
 const char *codegen_error(void);

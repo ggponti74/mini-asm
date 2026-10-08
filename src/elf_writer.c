@@ -39,7 +39,8 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
 
     const uint32_t code_addr = base_addr + 0x1000;
     const uint32_t epilogue_addr = code_addr + (uint32_t)buf->size;
-    const uint32_t total_size = (uint32_t)buf->size + ELF_EPILOGUE_SIZE;
+    const uint32_t total_size = (uint32_t)buf->size + ELF_EPILOGUE_SIZE +
+                                CORE_ELF_DISPATCHER_SIZE;
 
     Elf32_Ehdr ehdr;
     memset(&ehdr, 0, sizeof(ehdr));
@@ -124,6 +125,15 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     };
     memcpy(&epilogue[27], &call_rel, sizeof(call_rel));
     fwrite(epilogue, 1, sizeof(epilogue), f);
+
+    // --- TRAP #0 dispatcher, right after the epilogue (codegen CALLs it) ---
+    uint8_t dispatcher[CORE_ELF_DISPATCHER_SIZE];
+    int dn = core_emit_dispatcher("elf", dispatcher, sizeof(dispatcher));
+    if (dn != CORE_ELF_DISPATCHER_SIZE) {
+        fclose(f);
+        return;
+    }
+    fwrite(dispatcher, 1, (size_t)dn, f);
 
     fclose(f);
 }

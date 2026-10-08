@@ -22,6 +22,8 @@ typedef struct {
     uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
     bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
     uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
+    uint32_t          dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
+                                      // (inside code_tail); 0 = this target has no dispatcher
     platform_write_fn write;          // emits the final executable from the assembled buffer
 } PlatformTarget;
 

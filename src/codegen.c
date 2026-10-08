@@ -71,6 +71,13 @@ uint32_t codegen_regfile_base(void) {
     return g_regfile_base;
 }
 
+// Address of the TRAP #0 dispatcher; 0 = the target has none.
+static uint32_t g_dispatcher = 0;
+
+void codegen_set_dispatcher(uint32_t addr) {
+    g_dispatcher = addr;
+}
+
 void codegen_set_context(uint32_t pc, bool final_pass) {
     g_pc = pc;
     g_final_pass = final_pass;
@@ -1957,6 +1964,28 @@ static const struct { const char *mnemonic; uint32_t cond; } k_arm_bcc[] = {
     {"BGE", 0xA}, {"BLT", 0xB}, {"BGT", 0xC}, {"BLE", 0xD},
 };
 
+// TRAP #0 -> E8 cd    call rel32 to the target's service dispatcher (core.c).
+// Same stack protocol as BSR: CALL pushes the return address, the dispatcher
+// ends with RET. The dispatcher preserves every register except D0 and sets
+// N/Z from D0, so the caller sees the 68K convention described in core.c.
+// Only vector 0 exists; the other vectors are left free for later.
+static bool emit_trap(const Operand *operands, OutputBuffer *out) {
+    if (operands[0].type != OPERAND_IMMEDIATE)
+        return fail("TRAP needs a vector number, e.g. TRAP #0");
+    if (operands[0].value.imm != 0)
+        return fail("only TRAP #0 is implemented (the mini-asm services)");
+    const char *arch = opcodes_active_arch_name();
+    if (!arch || strcmp(arch, "x86") != 0 || (g_final_pass && g_dispatcher == 0))
+        return fail("TRAP is not supported on this target yet");
+
+    int32_t rel = 0;  // pass 1 only reserves space
+    if (g_final_pass)
+        rel = (int32_t)(g_dispatcher - (g_pc + 5));
+    buffer_write(out, 0xE8);
+    write_le(out, (uint32_t)rel, 4);
+    return true;
+}
+
 static bool arm_is_bcc(const char *m) {
     if (strcmp(m, "BHI") == 0 || strcmp(m, "BLS") == 0) return true;
     for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
@@ -2031,6 +2060,9 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
               OutputBuffer *out) {
     if (!entry || !out) return -1;
     g_emit_error = NULL;
+
+    if (strcmp(entry->mnemonic, "TRAP") == 0)
+        return emit_trap(operands, out) ? 0 : -1;
 
     const char *arch = opcodes_active_arch_name();
     if (arch && strcmp(arch, "arm") == 0) {

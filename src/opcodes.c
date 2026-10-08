@@ -36,6 +36,9 @@ static const OpcodeEntry x86_opcode_table[] = {
     // E9 (jmp rel32) or E8 (call rel32).
     {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BSR", 0xE8, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    // TRAP #0: mini-asm service call. codegen.c emits CALL to the target's
+    // dispatcher (core.c); the opcode byte here is a placeholder.
+    {"TRAP", 0x00, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
     // Compares: opcode bytes are placeholders; codegen.c emits the x86 CMP.
     // CMP  <src>, Dn|An   (CMP #imm,Dn is CMPI and CMP src,An is CMPA, as in
     //                      the usual 68K assemblers)
@@ -96,6 +99,8 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"CMPI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
     {"BRA", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BSR", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    // TRAP is recognized so the user gets a clear message; no ARM dispatcher yet.
+    {"TRAP", 0x00, 4, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BCC", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},

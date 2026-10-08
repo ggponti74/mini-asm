@@ -4,6 +4,7 @@
 #include "elf32_min.h"   // provides Elf32_Ehdr, Elf32_Phdr, constants like ET_EXEC, EM_386
 
 #include "codegen.h"
+#include "core.h"
 
 // byte-swap the argv pointers in place (68K memory is big-endian) ; mov eax,[esp] ;
 // lea esi,[esp+4] ; call code_addr ; mov ebx,eax ; mov eax,1 ; int 0x80
@@ -11,6 +12,9 @@
 // Linux sys_exit(D0) once it RETs back here. See write_elf() for why the
 // CALL (not a fallthrough) is needed.
 #define ELF_EPILOGUE_SIZE 40
+
+// Layout of the loaded segment: code | epilogue (ELF_EPILOGUE_SIZE) |
+// TRAP dispatcher (CORE_ELF_DISPATCHER_SIZE, see core.c) | pad | register block.
 
 void write_elf(const char *filename, const OutputBuffer *buf);
 
