@@ -65,17 +65,41 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   for (size_t i = buf->size; i < padded_size; i++)
     fputc(0, f);
 
-  // --- epilogue: BL user_code_start ; load D0 ; exit(D0) ---
-  int32_t imm24 = ((int32_t)code_addr - (int32_t)(epilogue_addr + 8)) >> 2;
+  // --- entry stub + epilogue (the ELF entry point is the first word) ---
+  // Command line: the kernel starts the process with argc at [sp] and the
+  // argv pointer array right above it (argv[0] = the command, then the
+  // arguments, then a NULL). The stub gives the program D0 = argc and
+  // A0 = &argv[0], which the 68K registers keep in the register block.
+  // 68K memory is big-endian, so a program reading an argv entry with
+  // MOVE.L (An) must get the pointer, not its byte-swapped value: the stub
+  // therefore byte-swaps the pointers of the array in place (the NULL
+  // terminator stays 0). The strings themselves are plain bytes.
+  //    0 ldr   r12, [pc, #60]   ; r12 = register block
+  //    1 ldr   r0, [sp]         ; argc
+  //    2 str   r0, [r12]        ; D0 = argc
+  //    3 add   r1, sp, #4       ; &argv[0]
+  //    4 str   r1, [r12, #32]   ; A0 = &argv[0]
+  //    5 mov   r2, r1
+  //    6 ldr   r3, [r2]         ; loop: next argv entry
+  //    7 cmp   r3, #0
+  //    8 beq   12               ;   NULL: done
+  //    9 rev   r3, r3
+  //   10 str   r3, [r2], #4
+  //   11 b     6
+  //   12 bl    user_code
+  //   13 ldr   r12, [pc, #8]    ; user code returned: exit(D0)
+  //   14 ldr   r0, [r12]
+  //   15 mov   r7, #1
+  //   16 svc   0
+  //   17 .word register block
+  int32_t imm24 = ((int32_t)code_addr - (int32_t)(epilogue_addr + 12 * 4 + 8)) >> 2;
   uint32_t bl_instr = 0xEB000000u | ((uint32_t)imm24 & 0x00FFFFFFu);
-  uint32_t load_address = 0xE59FC008u; // ldr r12, [pc, #8] -> literal below
-  uint32_t load_d0 = 0xE59C0000u;      // ldr r0, [r12]
-  uint32_t mov_instr = 0xE3A07001u; // mov r7, #1
-  uint32_t svc_instr = 0xEF000000u; // svc 0
-
-  uint32_t epilogue[6] = {bl_instr, load_address, load_d0, mov_instr,
-                          svc_instr, regfile_addr};
-  for (int i = 0; i < 6; i++) {
+  uint32_t epilogue[EPILOGUE_SIZE / 4] = {
+      0xE59FC03Cu, 0xE59D0000u, 0xE58C0000u, 0xE28D1004u, 0xE58C1020u,
+      0xE1A02001u, 0xE5923000u, 0xE3530000u, 0x0A000002u, 0xE6BF3F33u,
+      0xE4823004u, 0xEAFFFFF9u, bl_instr,   0xE59FC008u, 0xE59C0000u,
+      0xE3A07001u, 0xEF000000u, regfile_addr};
+  for (int i = 0; i < EPILOGUE_SIZE / 4; i++) {
     uint8_t bytes[4] = {
         (uint8_t)(epilogue[i] & 0xFF),
         (uint8_t)((epilogue[i] >> 8) & 0xFF),

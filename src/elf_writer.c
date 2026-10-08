@@ -83,16 +83,38 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
     fwrite(buf->data, 1, buf->size, f);
 
     // --- entry stub + epilogue ---
-    //   mov eax,[esp]     ; D0 <- argc (counts the command itself)
-    //   lea esi,[esp+4]   ; A0 <- &argv[0]
-    //   call code_addr    ; pushes the address of the "mov ebx,eax" below
-    //   mov ebx,eax       ; exit status <- D0 (before EAX gets the syscall no.)
-    //   mov eax,1         ; sys_exit
-    //   int 0x80
-    // The first two instructions must run before the CALL: afterwards ESP
-    // has moved and the user's code is free to change EAX/ESI anyway.
-    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 7 + 5);
+    // 68K memory is big-endian, so a program reading an argv entry with
+    // MOVE.L (An) must get the pointer, not its byte-swapped value. The
+    // stub therefore byte-swaps the pointers of the kernel's argv array in
+    // place first (the NULL terminator stays 0; the strings are plain
+    // bytes). It only touches EAX/ESI, which the next two instructions
+    // overwrite, so D1-D7 keep their power-on value of 0.
+    //    0 lea   esi,[esp+4]     ; &argv[0]
+    //    4 mov   eax,[esi]       ; loop: next argv entry
+    //    6 test  eax,eax
+    //    8 jz    19              ;   NULL: done
+    //   10 bswap eax
+    //   12 mov   [esi],eax
+    //   14 add   esi,4
+    //   17 jmp   4
+    //   19 mov   eax,[esp]       ; D0 <- argc (counts the command itself)
+    //   22 lea   esi,[esp+4]     ; A0 <- &argv[0]
+    //   26 call  code_addr       ; pushes the address of the "mov ebx,eax" below
+    //   31 mov   ebx,eax         ; exit status <- D0 (before EAX gets the syscall no.)
+    //   33 mov   eax,1           ; sys_exit
+    //   38 int   0x80
+    // D0/A0 are loaded right before the CALL: afterwards ESP has moved and
+    // the user's code is free to change EAX/ESI anyway.
+    const int32_t call_rel = (int32_t)code_addr - (int32_t)(epilogue_addr + 26 + 5);
     uint8_t epilogue[ELF_EPILOGUE_SIZE] = {
+        0x8D, 0x74, 0x24, 0x04,         // lea esi, [esp+4]
+        0x8B, 0x06,                     // mov eax, [esi]
+        0x85, 0xC0,                     // test eax, eax
+        0x74, 0x09,                     // jz  +9
+        0x0F, 0xC8,                     // bswap eax
+        0x89, 0x06,                     // mov [esi], eax
+        0x83, 0xC6, 0x04,               // add esi, 4
+        0xEB, 0xF1,                     // jmp -15
         0x8B, 0x04, 0x24,               // mov eax, [esp]
         0x8D, 0x74, 0x24, 0x04,         // lea esi, [esp+4]
         0xE8, 0x00, 0x00, 0x00, 0x00,   // call code_addr (rel32 patched below)
@@ -100,7 +122,7 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
         0xB8, 0x01, 0x00, 0x00, 0x00,   // mov eax, 1     (sys_exit)
         0xCD, 0x80                      // int 0x80
     };
-    memcpy(&epilogue[8], &call_rel, sizeof(call_rel));
+    memcpy(&epilogue[27], &call_rel, sizeof(call_rel));
     fwrite(epilogue, 1, sizeof(epilogue), f);
 
     fclose(f);
