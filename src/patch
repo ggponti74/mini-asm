@@ -1,292 +1,34 @@
-diff --git a/src/elf_writer.c b/src/elf_writer.c
-index 959704c..b587b93 100644
---- a/src/elf_writer.c
-+++ b/src/elf_writer.c
-@@ -39,7 +39,8 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
- 
-     const uint32_t code_addr = base_addr + 0x1000;
-     const uint32_t epilogue_addr = code_addr + (uint32_t)buf->size;
--    const uint32_t total_size = (uint32_t)buf->size + ELF_EPILOGUE_SIZE;
-+    const uint32_t total_size = (uint32_t)buf->size + ELF_EPILOGUE_SIZE +
-+                                CORE_ELF_DISPATCHER_SIZE;
- 
-     Elf32_Ehdr ehdr;
-     memset(&ehdr, 0, sizeof(ehdr));
-@@ -125,5 +126,14 @@ void write_elf(const char *filename, const OutputBuffer *buf) {
-     memcpy(&epilogue[27], &call_rel, sizeof(call_rel));
-     fwrite(epilogue, 1, sizeof(epilogue), f);
- 
-+    // --- TRAP #0 dispatcher, right after the epilogue (codegen CALLs it) ---
-+    uint8_t dispatcher[CORE_ELF_DISPATCHER_SIZE];
-+    int dn = core_emit_dispatcher("elf", dispatcher, sizeof(dispatcher));
-+    if (dn != CORE_ELF_DISPATCHER_SIZE) {
-+        fclose(f);
-+        return;
-+    }
-+    fwrite(dispatcher, 1, (size_t)dn, f);
-+
-     fclose(f);
- }
-diff --git a/src/elf_writer.h b/src/elf_writer.h
-index a8d168c..fb58ec5 100644
---- a/src/elf_writer.h
-+++ b/src/elf_writer.h
-@@ -4,6 +4,7 @@
- #include "elf32_min.h"   // provides Elf32_Ehdr, Elf32_Phdr, constants like ET_EXEC, EM_386
- 
- #include "codegen.h"
-+#include "core.h"
- 
- // byte-swap the argv pointers in place (68K memory is big-endian) ; mov eax,[esp] ;
- // lea esi,[esp+4] ; call code_addr ; mov ebx,eax ; mov eax,1 ; int 0x80
-@@ -12,6 +13,9 @@
- // CALL (not a fallthrough) is needed.
- #define ELF_EPILOGUE_SIZE 40
- 
-+// Layout of the loaded segment: code | epilogue (ELF_EPILOGUE_SIZE) |
-+// TRAP dispatcher (CORE_ELF_DISPATCHER_SIZE, see core.c) | pad | register block.
-+
- void write_elf(const char *filename, const OutputBuffer *buf);
- 
- #endif
-diff --git a/src/main.c b/src/main.c
-index e3249f0..a0b7a3a 100644
---- a/src/main.c
-+++ b/src/main.c
-@@ -463,6 +463,12 @@ int main(int argc, char *argv[])
- 
-   if (errors == 0)
-   {
-+    // The TRAP dispatcher follows the code (and the writer's epilogue); like
-+    // the register block, its address is only known once pass 1 has sized
-+    // the code. 0 tells codegen the target has none.
-+    codegen_set_dispatcher(target->dispatcher_off
-+                               ? target->code_base + (uint32_t)buf.size + target->dispatcher_off
-+                               : 0);
-     if (target->has_regfile)
-     {
-       // Code size is final after pass 1 (pass 2 emits the same number of
-diff --git a/src/platform.c b/src/platform.c
-index d0e639b..4c7f7bc 100644
---- a/src/platform.c
-+++ b/src/platform.c
-@@ -5,6 +5,7 @@
- #include "pe_writer.h"
- #include "arm_elf_writer.h"
- #include "elf_writer.h"
-+#include "core.h"
-     
- // Small portable stand-in for strcasecmp()/_stricmp() so we don't have
- // to pull in platform-specific headers just to compare target names.
-@@ -53,7 +54,8 @@ static const PlatformTarget k_targets[] = {
-         .needs_exec_bit = true,
-         .code_base      = 0x08049000,
-         .has_regfile    = true,
--        .code_tail      = ELF_EPILOGUE_SIZE,   // epilogue follows the code
-+        .code_tail      = ELF_EPILOGUE_SIZE + CORE_ELF_DISPATCHER_SIZE,  // epilogue, then the TRAP dispatcher
-+        .dispatcher_off = ELF_EPILOGUE_SIZE,
-         .write          = write_elf,
-     },
- };
-diff --git a/src/platform.h b/src/platform.h
-index 8bbd55f..06cfc74 100644
---- a/src/platform.h
-+++ b/src/platform.h
-@@ -22,6 +22,8 @@ typedef struct {
-     uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
-     bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
-     uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
-+    uint32_t          dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
-+                                      // (inside code_tail); 0 = this target has no dispatcher
-     platform_write_fn write;          // emits the final executable from the assembled buffer
- } PlatformTarget;
- 
-diff --git a/tests/errors/trap_bad_vector.asm b/tests/errors/trap_bad_vector.asm
-new file mode 100644
-index 0000000..f70bcca
---- /dev/null
-+++ b/tests/errors/trap_bad_vector.asm
-@@ -0,0 +1,2 @@
-+; EXPECT: Error in .*trap_bad_vector\.asm at line 2: only TRAP #0 is implemented
-+        trap    #1
-diff --git a/tests/main.asm b/tests/main.asm
-index cd6ba6d..30df016 100644
---- a/tests/main.asm
-+++ b/tests/main.asm
-@@ -18,6 +18,9 @@ start:
-         include "sections/12_endian.asm"
-         include "sections/13_memops.asm"
-         include "sections/14_spilled_an.asm"
-+        ; sections/15_trap.asm is not included here: TRAP needs a dispatcher, which
-+        ; only the elf target has yet, and main.asm must also assemble for x86 (PE).
-+        ; run.sh still runs it as a standalone program.
- 
-         ; ---- all passed ------------------------------------------
-         moveq   #0, d0
-diff --git a/tests/run.sh b/tests/run.sh
-index cdfc545..ecda060 100644
---- a/tests/run.sh
-+++ b/tests/run.sh
-@@ -11,6 +11,9 @@
- #    their first line ("; EXPECT: <extended regex>").
- # 3. tests/arm/*.asm: ARM programs, run with qemu-arm when available (exit code must match "; EXIT: n").
- # 4. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
-+# 5. tests/trap/*.asm: TRAP #0 programs, run natively. Header lines: "; EXIT: n", optional
-+#    "; STDIN: text" (fed to the program) and "; STDOUT: text" (must match its output).
-+#    They must not assemble for the x86 (PE) and arm targets, which have no dispatcher yet.
- 
- ASM=${1:-./mini-asm}
- DIR=$(cd "$(dirname "$0")" && pwd)
-@@ -98,6 +101,36 @@ else
-     echo "FAIL   main (x86/PE does not assemble)"; fail=$((fail + 1))
- fi
- 
-+# 5. TRAP #0 programs (tests/trap/*.asm)
-+for src in "$DIR"/trap/*.asm; do
-+    name=trap/$(basename "$src" .asm)
-+    want=$(sed -n 's/^; EXIT: //p' "$src")
-+    input=$(sed -n 's/^; STDIN: //p' "$src")
-+    if ! "$ASM" -t elf -o "$TMP/trap.bin" "$src" >"$TMP/asm.log" 2>&1; then
-+        echo "FAIL   $name   (did not assemble)"; fail=$((fail + 1)); continue
-+    fi
-+    printf '%s' "$input" | "$TMP/trap.bin" >"$TMP/trap.out"; got=$?
-+    if [ "$got" -ne "$want" ]; then
-+        echo "FAIL   $name   (exit $got, expected $want)"; fail=$((fail + 1)); continue
-+    fi
-+    if grep -q '^; STDOUT: ' "$src"; then
-+        wantout=$(sed -n 's/^; STDOUT: //p' "$src")
-+        if [ "$(cat "$TMP/trap.out")" != "$wantout" ]; then
-+            echo "FAIL   $name   (stdout was '$(cat "$TMP/trap.out")', expected '$wantout')"; fail=$((fail + 1)); continue
-+        fi
-+    fi
-+    echo "PASS   $name"; pass=$((pass + 1))
-+done
-+for tgt in x86 arm; do
-+    if "$ASM" -t $tgt -o "$TMP/trap.bin" "$DIR/trap/hello_exit.asm" >/dev/null 2>"$TMP/err.log"; then
-+        echo "FAIL   trap/$tgt   (assembled, but TRAP is not supported there yet)"; fail=$((fail + 1))
-+    elif grep -q 'TRAP is not supported on this target' "$TMP/err.log"; then
-+        echo "PASS   trap/$tgt (clear 'not supported' error)"; pass=$((pass + 1))
-+    else
-+        echo "FAIL   trap/$tgt   (unexpected message)"; sed 's/^/         got: /' "$TMP/err.log"; fail=$((fail + 1))
-+    fi
-+done
-+
- echo "----"
- echo "$pass ok, $fail failed"
- [ "$fail" -eq 0 ]
-diff --git a/tests/sections/15_trap.asm b/tests/sections/15_trap.asm
-new file mode 100644
-index 0000000..c6240c1
---- /dev/null
-+++ b/tests/sections/15_trap.asm
-@@ -0,0 +1,61 @@
-+        ; ---- 23: TRAP #0, write: 0 bytes -> D0 = 0 and Z set ------
-+        moveq   #23, d3
-+        move.l  #2, d0              ; service 2 = write
-+        move.l  #1, d1              ; fd 1
-+        lea     buf, a0
-+        moveq   #0, d2              ; length 0: nothing is printed
-+        trap    #0
-+        bne     fail                ; N/Z come from D0
-+        bmi     fail
-+        ; ---- 24: TRAP #0 preserves everything except D0 ------------
-+        moveq   #24, d3
-+        move.l  #99, d1             ; bad fd, so nothing is written either
-+        move.l  #5, d2
-+        move.l  #$AAAA5555, d5
-+        move.l  #$12345678, d7
-+        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #2, d0
-+        trap    #0
-+        cmp.l   #99, d1
-+        bne     fail
-+        cmp.l   #5, d2
-+        bne     fail
-+        cmp.l   #24, d3
-+        bne     fail
-+        cmp.l   #$AAAA5555, d5
-+        bne     fail
-+        cmp.l   #$12345678, d7
-+        bne     fail
-+        lea     buf, a2
-+        cmpa.l  a2, a0
-+        bne     fail
-+        lea     buf2, a2
-+        cmpa.l  a2, a1
-+        bne     fail
-+        ; ---- 25: errors come back negative: write to a bad fd -> -9 ---
-+        moveq   #25, d3
-+        move.l  #2, d0
-+        move.l  #99, d1             ; no such fd
-+        lea     buf, a0
-+        moveq   #1, d2
-+        trap    #0
-+        bpl     fail                ; negative: N is set
-+        cmp.l   #-9, d0             ; -EBADF
-+        bne     fail
-+        ; ---- 26: read from a bad fd -> -9 ---------------------------
-+        moveq   #26, d3
-+        move.l  #3, d0              ; service 3 = read
-+        move.l  #99, d1
-+        lea     buf, a0
-+        moveq   #1, d2
-+        trap    #0
-+        cmp.l   #-9, d0
-+        bne     fail
-+        ; ---- 27: unknown service -> -38 (-ENOSYS) --------------------
-+        moveq   #27, d3
-+        move.l  #99, d0
-+        trap    #0
-+        bpl     fail
-+        cmp.l   #-38, d0
-+        bne     fail
-diff --git a/tests/trap/hello_exit.asm b/tests/trap/hello_exit.asm
-new file mode 100644
-index 0000000..e8e0c25
---- /dev/null
-+++ b/tests/trap/hello_exit.asm
-@@ -0,0 +1,16 @@
-+; EXIT: 7
-+; STDOUT: hi
-+; write "hi" + newline to stdout, then leave through the exit service (status = D1)
-+start:  move.l  #2, d0              ; write
-+        move.l  #1, d1              ; fd 1
-+        lea     text, a0
-+        move.l  #3, d2
-+        trap    #0
-+        cmp.l   #3, d0              ; all 3 bytes written
-+        bne     bad
-+        move.l  #1, d0              ; exit
-+        move.l  #7, d1
-+        trap    #0
-+bad:    move.l  #100, d0
-+        rts
-+text    dc.b    "hi", 10
-diff --git a/tests/trap/read_echo.asm b/tests/trap/read_echo.asm
-new file mode 100644
-index 0000000..a516947
---- /dev/null
-+++ b/tests/trap/read_echo.asm
-@@ -0,0 +1,21 @@
-+; EXIT: 4
-+; STDIN: abcd
-+; STDOUT: abcd
-+; read 4 bytes from stdin, echo them to stdout, exit with the byte count
-+start:  move.l  #3, d0              ; read
-+        moveq   #0, d1              ; fd 0
-+        lea     ibuf, a0
-+        move.l  #4, d2
-+        trap    #0
-+        tst.l   d0
-+        bmi     bad                 ; negative = error
-+        move.l  d0, d2              ; echo what was read
-+        move.l  #2, d0              ; write
-+        moveq   #1, d1
-+        trap    #0
-+        move.l  d2, d1              ; exit status = number of bytes
-+        move.l  #1, d0
-+        trap    #0
-+bad:    move.l  #100, d0
-+        rts
-+ibuf    dc.b    0,0,0,0,0,0,0,0
+#ifndef CORE_H
+#define CORE_H
+
+#include <stddef.h> // size_t
+#include <stdint.h> // uint8_t
+
+//void exit(void);
+void write(void);
+void read(void);
+
+#define CORE_SVC_EXIT 1
+#define CORE_SVC_WRITE 2
+#define CORE_SVC_READ 3
+
+#define CORE_ELF_DISPATCHER_SIZE 64  // core.c checks this at compile time
+#define CORE_ARM_DISPATCHER_SIZE 120 // likewise (30 ARM instructions)
+
+// Windows PE (x86): the dispatcher calls kernel32 through the import table, so
+// it needs the table's address; use these two instead of core_emit_dispatcher().
+#define CORE_PE_IMPORT_SIZE     176 // the import block (directory, ILT, IAT, names)
+#define CORE_PE_IAT_OFFSET      64  // where the IAT sits inside the import block
+#define CORE_PE_DISPATCHER_SIZE 164 // the dispatcher itself
+
+size_t core_dispatcher_size(const char *target); // 0 = unsupported target
+int core_emit_dispatcher(const char *target, uint8_t *out, size_t cap);
+// bytes written, or -1
+
+// Windows PE: write the CORE_PE_IMPORT_SIZE-byte import block that goes at
+// block_rva (an RVA), and the dispatcher, which calls through that block's IAT
+// (block_va = image base + block_rva). Each returns the bytes written, or -1.
+int core_pe_emit_imports(uint8_t *out, size_t cap, uint32_t block_rva);
+int core_pe_emit_dispatcher(uint8_t *out, size_t cap, uint32_t block_va);
+
+#endif /* CORE_H */
