@@ -128,40 +128,40 @@ typedef char core_elf_size_check[(sizeof(k_elf_dispatcher) == CORE_ELF_DISPATCHE
                     (uint8_t)(((w) >> 16) & 0xFF), (uint8_t)(((w) >> 24) & 0xFF)
 
 static const uint8_t k_arm_dispatcher[] = {
-    ARM_WORD(0xE59C0000u),                  //  0 ldr  r0, [r12]
-    ARM_WORD(0xE3500000u | CORE_SVC_EXIT),  //  1 cmp  r0, #EXIT
-    ARM_WORD(0x0A000005u),                  //  2 beq  do_exit  (24)
-    ARM_WORD(0xE3500000u | CORE_SVC_WRITE), //  3 cmp  r0, #WRITE
-    ARM_WORD(0x0A000007u),                  //  4 beq  do_write (34)
-    ARM_WORD(0xE3500000u | CORE_SVC_READ),  //  5 cmp  r0, #READ
-    ARM_WORD(0x0A00000Bu),                  //  6 beq  do_read  (4C)
-    ARM_WORD(0xE3E00025u),                  //  7 mvn  r0, #37  (-ENOSYS)
-    ARM_WORD(0xEA00000Eu),                  //  8 b    done     (60)
+    ARM_WORD(0xE59C0000u),                     //  0 ldr  r0, [r12]
+    ARM_WORD(0xE3500000u | CORE_SVC_EXIT),     //  1 cmp  r0, #EXIT
+    ARM_WORD(0x0A000005u),                     //  2 beq  do_exit  (24)
+    ARM_WORD(0xE3500000u | CORE_SVC_WRITE),    //  3 cmp  r0, #WRITE
+    ARM_WORD(0x0A000007u),                     //  4 beq  do_write (34)
+    ARM_WORD(0xE3500000u | CORE_SVC_READ),     //  5 cmp  r0, #READ
+    ARM_WORD(0x0A00000Bu),                     //  6 beq  do_read  (4C)
+    ARM_WORD(0xE3E00025u),                     //  7 mvn  r0, #37  (-ENOSYS)
+    ARM_WORD(0xEA00000Eu),                     //  8 b    done     (60)
     // do_exit:
-    ARM_WORD(0xE59C0004u), //  9 ldr  r0, [r12, #4]   status = D1
-    ARM_WORD(0xE3A07001u), // 10 mov  r7, #1          sys_exit
-    ARM_WORD(0xEF000000u), // 11 svc  #0
-    ARM_WORD(0xEA00000Au), // 12 b    done
+    ARM_WORD(0xE59C0004u),                     //  9 ldr  r0, [r12, #4]   status = D1
+    ARM_WORD(0xE3A07001u),                     // 10 mov  r7, #1          sys_exit
+    ARM_WORD(0xEF000000u),                     // 11 svc  #0
+    ARM_WORD(0xEA00000Au),                     // 12 b    done
     // do_write:
-    ARM_WORD(0xE59C0004u), // 13 ldr  r0, [r12, #4]   fd  = D1
-    ARM_WORD(0xE59C1020u), // 14 ldr  r1, [r12, #32]  buf = A0
-    ARM_WORD(0xE59C2008u), // 15 ldr  r2, [r12, #8]   len = D2
-    ARM_WORD(0xE3A07004u), // 16 mov  r7, #4          sys_write
-    ARM_WORD(0xEF000000u), // 17 svc  #0
-    ARM_WORD(0xEA000004u), // 18 b    done
+    ARM_WORD(0xE59C0004u),                     // 13 ldr  r0, [r12, #4]   fd  = D1
+    ARM_WORD(0xE59C1020u),                     // 14 ldr  r1, [r12, #32]  buf = A0
+    ARM_WORD(0xE59C2008u),                     // 15 ldr  r2, [r12, #8]   len = D2
+    ARM_WORD(0xE3A07004u),                     // 16 mov  r7, #4          sys_write
+    ARM_WORD(0xEF000000u),                     // 17 svc  #0
+    ARM_WORD(0xEA000004u),                     // 18 b    done
     // do_read:
-    ARM_WORD(0xE59C0004u), // 19 ldr  r0, [r12, #4]   fd  = D1
-    ARM_WORD(0xE59C1020u), // 20 ldr  r1, [r12, #32]  buf = A0
-    ARM_WORD(0xE59C2008u), // 21 ldr  r2, [r12, #8]   len = D2
-    ARM_WORD(0xE3A07003u), // 22 mov  r7, #3          sys_read
-    ARM_WORD(0xEF000000u), // 23 svc  #0
+    ARM_WORD(0xE59C0004u),                     // 19 ldr  r0, [r12, #4]   fd  = D1
+    ARM_WORD(0xE59C1020u),                     // 20 ldr  r1, [r12, #32]  buf = A0
+    ARM_WORD(0xE59C2008u),                     // 21 ldr  r2, [r12, #8]   len = D2
+    ARM_WORD(0xE3A07003u),                     // 22 mov  r7, #3          sys_read
+    ARM_WORD(0xEF000000u),                     // 23 svc  #0
     // done:
-    ARM_WORD(0xE58C0000u), // 24 str  r0, [r12]       D0 = result
-    ARM_WORD(0xE1100000u), // 25 tst  r0, r0          N, Z from D0
-    ARM_WORD(0xE10F1000u), // 26 mrs  r1, cpsr
-    ARM_WORD(0xE3C11203u), // 27 bic  r1, r1, #0x30000000   clear C, V
-    ARM_WORD(0xE128F001u), // 28 msr  cpsr_f, r1
-    ARM_WORD(0xE12FFF1Eu)  // 29 bx   lr
+    ARM_WORD(0xE58C0000u),                     // 24 str  r0, [r12]       D0 = result
+    ARM_WORD(0xE1100000u),                     // 25 tst  r0, r0          N, Z from D0
+    ARM_WORD(0xE10F1000u),                     // 26 mrs  r1, cpsr
+    ARM_WORD(0xE3C11203u),                     // 27 bic  r1, r1, #0x30000000   clear C, V
+    ARM_WORD(0xE128F001u),                     // 28 msr  cpsr_f, r1
+    ARM_WORD(0xE12FFF1Eu)                      // 29 bx   lr
 };
 
 typedef char core_arm_size_check[(sizeof(k_arm_dispatcher) == CORE_ARM_DISPATCHER_SIZE) ? 1 : -1];
@@ -200,20 +200,14 @@ static const uint8_t k_pe_dispatcher[] = {
     0x85, 0xC0, 0x75, 0x0D, 0xFF, 0x15, 0x04, 0x00, 0xAA, 0xAA, 0x83, 0xF8,
     0x6D, 0x74, 0x06, 0xEB, 0x08, 0x89, 0xC8, 0xEB, 0x10, 0x31, 0xC0, 0xEB,
     0x0C, 0xB8, 0xFB, 0xFF, 0xFF, 0xFF, 0xEB, 0x05, 0xB8, 0xF7, 0xFF, 0xFF,
-    0xFF, 0x5A, 0x59, 0x85, 0xC0, 0xC3, 0xCC, 0xCC};
+    0xFF, 0x5A, 0x59, 0x85, 0xC0, 0xC3, 0xCC, 0xCC
+};
 
 typedef char core_pe_size_check[(sizeof(k_pe_dispatcher) == CORE_PE_DISPATCHER_SIZE) ? 1 : -1];
 
 // Where the IAT operands are in k_pe_dispatcher, and which import each one is.
-enum
-{
-    PE_IMP_EXITPROCESS,
-    PE_IMP_GETSTDHANDLE,
-    PE_IMP_WRITEFILE,
-    PE_IMP_READFILE,
-    PE_IMP_GETLASTERROR,
-    PE_IMP_COUNT
-};
+enum { PE_IMP_EXITPROCESS, PE_IMP_GETSTDHANDLE, PE_IMP_WRITEFILE, PE_IMP_READFILE,
+       PE_IMP_GETLASTERROR, PE_IMP_GETCOMMANDLINEA, PE_IMP_COUNT };
 
 static const struct
 {
@@ -225,10 +219,12 @@ static const struct
     {75, 2},
     {96, 1},
     {115, 3},
-    {126, 4}};
+    {126, 4}
+};
 
 static const char *const k_pe_import_names[PE_IMP_COUNT] = {
-    "ExitProcess", "GetStdHandle", "WriteFile", "ReadFile", "GetLastError"};
+    "ExitProcess", "GetStdHandle", "WriteFile", "ReadFile", "GetLastError", "GetCommandLineA"
+};
 
 static void put32(uint8_t *p, uint32_t v)
 {
@@ -241,10 +237,12 @@ static void put32(uint8_t *p, uint32_t v)
 // Import block layout (offsets from the start of the block):
 //   0  import directory: one descriptor for kernel32.dll + a null one (2 x 20)
 //  40  ILT (import lookup table): PE_IMP_COUNT hint/name RVAs + 0
-//  64  IAT (import address table): same values; the loader overwrites them
-//  88  hint/name entries (2-byte hint, name, NUL, padded to an even size)
+//  68  IAT (import address table): same values; the loader overwrites them
+//  96  hint/name entries (2-byte hint, name, NUL, padded to an even size)
 //      then "kernel32.dll", padded so the block is CORE_PE_IMPORT_SIZE bytes
 #define PE_ILT_OFFSET 40
+typedef char core_pe_iat_check[(CORE_PE_IAT_OFFSET == PE_ILT_OFFSET + 4 * (PE_IMP_COUNT + 1) &&
+                                CORE_PE_IAT_SIZE == 4 * (PE_IMP_COUNT + 1)) ? 1 : -1];
 int core_pe_emit_imports(uint8_t *out, size_t cap, uint32_t block_rva)
 {
     if (!out || cap < CORE_PE_IMPORT_SIZE)
@@ -264,9 +262,9 @@ int core_pe_emit_imports(uint8_t *out, size_t cap, uint32_t block_rva)
         return -1;
     memcpy(out + pos, "kernel32.dll", sizeof("kernel32.dll"));
 
-    put32(out + 0, block_rva + PE_ILT_OFFSET);       // OriginalFirstThunk
-    put32(out + 12, block_rva + (uint32_t)pos);      // Name
-    put32(out + 16, block_rva + CORE_PE_IAT_OFFSET); // FirstThunk
+    put32(out + 0, block_rva + PE_ILT_OFFSET);          // OriginalFirstThunk
+    put32(out + 12, block_rva + (uint32_t)pos);         // Name
+    put32(out + 16, block_rva + CORE_PE_IAT_OFFSET);    // FirstThunk
     return CORE_PE_IMPORT_SIZE;
 }
 
@@ -279,6 +277,73 @@ int core_pe_emit_dispatcher(uint8_t *out, size_t cap, uint32_t block_va)
         put32(out + k_pe_iat_patches[i].offset,
               block_va + CORE_PE_IAT_OFFSET + 4u * k_pe_iat_patches[i].import);
     return (int)sizeof(k_pe_dispatcher);
+}
+
+// ---------------------------------------------------------------------------
+// Windows x86 entry stub: argc/argv
+//
+// ELF and ARM start programs with D0 = argc (counting the command itself) and
+// A0 = argv, an array of big-endian pointers to NUL-terminated strings that
+// ends with a NULL pointer. Windows only hands a process one command-line
+// string, so this stub (the PE entry point) does the splitting, with the rules
+// the MSVC runtime documents for C/C++ programs:
+//   - arguments are separated by spaces and tabs;
+//   - a "quoted string" is part of one argument, whatever it contains;
+//   - 2n backslashes before a quote give n backslashes, and the quote then
+//     opens or closes a group; 2n+1 backslashes give n backslashes and a
+//     literal quote; backslashes not followed by a quote are literal;
+//   - argv[0] is special: with a leading quote it runs to the next quote, with
+//     no backslash handling; otherwise it runs to the first space or tab.
+// Not implemented: the newer runtimes' rule that "" inside a quoted group means
+// a literal quote; here it just closes and reopens the group.
+//
+// The strings are copied into a scratch area (the parsed text is never longer
+// than the command line plus its NUL, at most 32768 bytes), the pointers go
+// to the argv array right after it, byte-swapped for the 68K view of memory.
+// Registers: ESI = source, EDI = string output, EBX = argv output, EBP = argv
+// base, EDX = inside-quotes flag. When the program returns, its D0 (EAX) is
+// the exit code. Assembled with GNU as (as --32, Intel syntax); the five
+// operands below are placeholders that core_pe_emit_startup() fills.
+// ---------------------------------------------------------------------------
+static const uint8_t k_pe_startup[] = {
+    0xFF, 0x15, 0x00, 0x00, 0xBB, 0xBB, 0x89, 0xC6, 0xBF, 0x02, 0x00, 0xBB,
+    0xBB, 0xBD, 0x03, 0x00, 0xBB, 0xBB, 0x89, 0xEB, 0x89, 0xF8, 0x0F, 0xC8,
+    0x89, 0x03, 0x83, 0xC3, 0x04, 0x80, 0x3E, 0x22, 0x75, 0x11, 0x46, 0x8A,
+    0x06, 0x84, 0xC0, 0x74, 0x1E, 0x46, 0x3C, 0x22, 0x74, 0x19, 0x88, 0x07,
+    0x47, 0xEB, 0xF0, 0x8A, 0x06, 0x84, 0xC0, 0x74, 0x0E, 0x3C, 0x20, 0x74,
+    0x0A, 0x3C, 0x09, 0x74, 0x06, 0x46, 0x88, 0x07, 0x47, 0xEB, 0xEC, 0xC6,
+    0x07, 0x00, 0x47, 0x8A, 0x06, 0x3C, 0x20, 0x74, 0x04, 0x3C, 0x09, 0x75,
+    0x03, 0x46, 0xEB, 0xF3, 0x84, 0xC0, 0x74, 0x78, 0x89, 0xF8, 0x0F, 0xC8,
+    0x89, 0x03, 0x83, 0xC3, 0x04, 0x31, 0xD2, 0x8A, 0x06, 0x84, 0xC0, 0x74,
+    0x5E, 0x3C, 0x5C, 0x74, 0x1E, 0x3C, 0x22, 0x74, 0x14, 0x3C, 0x20, 0x74,
+    0x0A, 0x3C, 0x09, 0x74, 0x06, 0x88, 0x07, 0x47, 0x46, 0xEB, 0xE4, 0x85,
+    0xD2, 0x75, 0xF6, 0xEB, 0x42, 0x83, 0xF2, 0x01, 0x46, 0xEB, 0xD8, 0x31,
+    0xC9, 0x80, 0x3E, 0x5C, 0x75, 0x04, 0x41, 0x46, 0xEB, 0xF7, 0x80, 0x3E,
+    0x22, 0x74, 0x0B, 0x85, 0xC9, 0x74, 0xC4, 0xC6, 0x07, 0x5C, 0x47, 0x49,
+    0xEB, 0xF5, 0x89, 0xC8, 0xD1, 0xE8, 0x85, 0xC0, 0x74, 0x07, 0xC6, 0x07,
+    0x5C, 0x47, 0x48, 0xEB, 0xF5, 0xF6, 0xC1, 0x01, 0x74, 0x07, 0xC6, 0x07,
+    0x22, 0x47, 0x46, 0xEB, 0xA2, 0x83, 0xF2, 0x01, 0x46, 0xEB, 0x9C, 0xC6,
+    0x07, 0x00, 0x47, 0xE9, 0x77, 0xFF, 0xFF, 0xFF, 0xC7, 0x03, 0x00, 0x00,
+    0x00, 0x00, 0x89, 0xD8, 0x29, 0xE8, 0xC1, 0xE8, 0x02, 0x89, 0xEE, 0xE8,
+    0x01, 0x00, 0xCC, 0xCC, 0x50, 0xFF, 0x15, 0x01, 0x00, 0xBB, 0xBB, 0xCC
+};
+
+typedef char core_pe_startup_check[(sizeof(k_pe_startup) == CORE_PE_STARTUP_SIZE) ? 1 : -1];
+
+#define PE_STARTUP_ARGV_OFFSET 32768 // the argv array starts this far into the scratch area
+
+int core_pe_emit_startup(uint8_t *out, size_t cap, uint32_t startup_va, uint32_t user_va,
+                         uint32_t iat_va, uint32_t area_va)
+{
+    if (!out || cap < sizeof(k_pe_startup))
+        return -1;
+    memcpy(out, k_pe_startup, sizeof(k_pe_startup));
+    put32(out + 2, iat_va + 4u * PE_IMP_GETCOMMANDLINEA);   // call [GetCommandLineA]
+    put32(out + 9, area_va);                                // string area
+    put32(out + 14, area_va + PE_STARTUP_ARGV_OFFSET);      // argv array
+    put32(out + 228, user_va - (startup_va + 228 + 4));     // call <program>: rel32
+    put32(out + 235, iat_va + 4u * PE_IMP_EXITPROCESS);     // call [ExitProcess]
+    return (int)sizeof(k_pe_startup);
 }
 
 // ---------------------------------------------------------------------------
