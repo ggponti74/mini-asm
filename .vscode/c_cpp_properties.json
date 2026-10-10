@@ -20,9 +20,8 @@
         {
             "name": "Linux-Portable",
           "includePath": [
-                "${workspaceFolder}/**",
+                "${workspaceFolder}/**"
                 // 🐧 The updated recursive path to your downloaded Linux headers
-                "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\linux_include/include/**"
             ],
             "defines": [
                 "_DEBUG",
@@ -30,7 +29,6 @@
                 "__x86_64__"
             ],
             // We use the same compiler path for syntax checking, but simulate the Linux workspace layout
-            "compilerPath": "C:\\Users\\Puser.CFL2024-P-03\\OneDrive\\DevEnv\\mingw64\\bin\\gcc.exe",
             "cStandard": "c17",
             "cppStandard": "c++20",
             "intelliSenseMode": "linux-gcc-x64"
