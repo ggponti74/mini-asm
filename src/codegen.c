@@ -1099,6 +1099,383 @@ static bool emit_x86_div(const Operand *operands, OpSize size, bool is_signed,
     return true;
 }
 
+// ---- bit manipulation: NOT NEG SWAP EXT, BTST/BSET/BCLR/BCHG, shifts/rotates
+// Everything here follows the 68K flag rules (X is not modelled, as elsewhere):
+//   NOT          N,Z from the result, V=C=0
+//   NEG          like SUB from zero: N,Z,V,C (C = result != 0)
+//   SWAP, EXT    N,Z from the result, V=C=0
+//   BTST..BCHG   Z = the tested bit was 0; N,V,C untouched
+//   shifts/rot.  N,Z from the result; C = last bit shifted out (0 for a
+//                count of 0); V = 0, except ASL: 1 if the sign bit changed at
+//                any point during the shift
+// x86 doesn't match: bt* report the bit in CF (68K wants it, inverted, in Z),
+// rotates leave SF/ZF alone, and SHL/SHR/SAR/ROL/ROR leave OF undefined for
+// counts above 1 (and CF for counts at or above the operand size). So the
+// shifts are done one bit at a time (every 1-bit form is fully defined) and
+// the final flags are assembled in a flags image on the stack:
+//   pushfd ; ...result flags... ; pushfd ; pop S ; and [esp],keep ; or [esp],S ; popfd
+// which uses the stack, so D4 (= ESP) can't take part in those instructions.
+#define ERR_BIT_ESP \
+    "D4 maps to ESP on this target and this instruction uses the stack, so D4 can't be used with it yet"
+#define ERR_BIT_NOREG "no free scratch register for this instruction"
+
+static bool is_dreg(const Operand *o) {
+    return o->type == OPERAND_REGISTER && o->value.reg >= 0 && o->value.reg <= 7;
+}
+
+// Reserves a scratch register not in *avoid (x86 register bits) and not ESP;
+// low_only limits it to EAX..EBX, the ones with a byte half. -1 if none.
+static int pick_free(unsigned *avoid, bool low_only) {
+    for (int t = 0; t < (low_only ? 4 : 8); t++) {
+        if (t == 4 || (*avoid & (1u << t))) continue;
+        *avoid |= 1u << t;
+        return t;
+    }
+    return -1;
+}
+
+static void wr_pushfd(OutputBuffer *out) { buffer_write(out, 0x9C); }
+static void wr_popfd(OutputBuffer *out)  { buffer_write(out, 0x9D); }
+
+// and dword [esp],imm32
+static void wr_and_esp(OutputBuffer *out, uint32_t imm) {
+    buffer_write(out, 0x81); buffer_write(out, 0x24); buffer_write(out, 0x24);
+    write_le(out, imm, 4);
+}
+
+// or [esp],r
+static void wr_or_esp(OutputBuffer *out, int r) {
+    buffer_write(out, 0x09); buffer_write(out, (uint8_t)((r << 3) | 0x04));
+    buffer_write(out, 0x24);
+}
+
+// xor r,r
+static void wr_zero(OutputBuffer *out, int r) {
+    buffer_write(out, 0x31); buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
+}
+
+// Z := !CF with the other flags as they were when the stack image was
+// pushed. Expects: the original flags just pushed (pushfd) and the bit just
+// tested into CF. S is a free register (already saved by the caller).
+//   setnc S8 ; movzx S,S8 ; shl S,6 ; and [esp],~ZF ; or [esp],S ; popfd
+static void wr_z_from_carry(OutputBuffer *out, int s) {
+    buffer_write(out, 0x0F); buffer_write(out, 0x93); buffer_write(out, (uint8_t)(0xC0 | s));
+    buffer_write(out, 0x0F); buffer_write(out, 0xB6);
+    buffer_write(out, (uint8_t)(0xC0 | (s << 3) | s));
+    buffer_write(out, 0xC1); buffer_write(out, (uint8_t)(0xE0 | s)); buffer_write(out, 6);
+    wr_and_esp(out, ~0x40u);
+    wr_or_esp(out, s);
+    wr_popfd(out);
+}
+
+// ---- BTST / BSET / BCLR / BCHG ---------------------------------------------
+// bt/bts/btr/btc: 0F A3 / AB / B3 / BB /r (bit number in a register) or
+// 0F BA /4../7 ib (immediate). On a data register the bit number is taken
+// mod 32 (what the 68K does and what bt does on a register); on memory it is
+// a byte, bit number mod 8, so the byte is loaded into a scratch register,
+// worked on there (bit number masked with 7) and stored back.
+static bool emit_x86_bitop(const char *m, const Operand *operands, OpSize size,
+                           OutputBuffer *out) {
+    static const struct { const char *name; uint8_t reg_op; uint8_t sub; bool modifies; } k[] = {
+        {"BTST", 0xA3, 4, false}, {"BSET", 0xAB, 5, true},
+        {"BCLR", 0xB3, 6, true},  {"BCHG", 0xBB, 7, true},
+    };
+    int kind = 0;
+    while (strcmp(k[kind].name, m) != 0) kind++;
+    const Operand *src = &operands[0], *dst = &operands[1];
+    bool by_reg = src->type == OPERAND_REGISTER;
+    int s = -1;
+    if (by_reg) {
+        if (!is_dreg(src)) return fail("the bit number must be an immediate or a data register");
+        s = x86_reg_code(src->value.reg);
+        if (s == X86_ESP) return fail(ERR_BIT_ESP);
+    } else if (src->value.imm < 0 || src->value.imm > 255) {
+        return fail("the bit number must be in the range 0..255");
+    }
+    unsigned n = by_reg ? 0 : (unsigned)src->value.imm;
+    unsigned avoid = by_reg ? 1u << s : 0;
+
+    if (dst->type == OPERAND_REGISTER) {
+        if (!is_dreg(dst))
+            return fail("BTST/BSET/BCLR/BCHG need a data register or memory destination");
+        if (size == SIZE_B)
+            return fail("bit operations on a data register are long-sized (.l)");
+        int d = x86_reg_code(dst->value.reg);
+        if (d == X86_ESP) return fail(ERR_BIT_ESP);
+        avoid |= 1u << d;
+        int t = pick_free(&avoid, true);
+        if (t < 0) return fail(ERR_BIT_NOREG);
+        write_push(out, t);
+        wr_pushfd(out);
+        buffer_write(out, 0x0F);
+        if (by_reg) {
+            buffer_write(out, k[kind].reg_op);
+            buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        } else {
+            buffer_write(out, 0xBA);
+            buffer_write(out, (uint8_t)(0xC0 | (k[kind].sub << 3) | d));
+            buffer_write(out, (uint8_t)(n & 31));
+        }
+        wr_z_from_carry(out, t);
+        write_pop(out, t);
+        return true;
+    }
+
+    if (!operand_is_memory(dst->type)) return false;
+    if (size == SIZE_W || size == SIZE_L)
+        return fail("bit operations on memory are byte-sized (.b)");
+    int base = x86_reg_code(dst->value.reg);
+    if (!plain_base(base)) return fail(ERR_MEM_PTR);
+    avoid |= 1u << base;
+    int t = pick_free(&avoid, true);
+    int u = by_reg ? pick_free(&avoid, false) : -1;
+    if (t < 0 || (by_reg && u < 0)) return fail(ERR_BIT_NOREG);
+    mem_pre(out, dst->type, base, 1);
+    write_push(out, t);
+    if (by_reg) write_push(out, u);
+    wr_pushfd(out);
+    buffer_write(out, 0x0F); buffer_write(out, 0xB6);                // movzx t,byte [base]
+    write_modrm_mem(out, t, base);
+    if (by_reg) {
+        buffer_write(out, 0x89); buffer_write(out, (uint8_t)(0xC0 | (s << 3) | u));   // mov u,s
+        buffer_write(out, 0x83); buffer_write(out, (uint8_t)(0xE0 | u)); buffer_write(out, 7);
+        buffer_write(out, 0x0F); buffer_write(out, k[kind].reg_op);
+        buffer_write(out, (uint8_t)(0xC0 | (u << 3) | t));
+    } else {
+        buffer_write(out, 0x0F); buffer_write(out, 0xBA);
+        buffer_write(out, (uint8_t)(0xC0 | (k[kind].sub << 3) | t));
+        buffer_write(out, (uint8_t)(n & 7));
+    }
+    if (k[kind].modifies) write_store(out, t, base, SIZE_B);           // mov [base],t8 (no flags)
+    wr_z_from_carry(out, t);
+    if (by_reg) write_pop(out, u);
+    write_pop(out, t);
+    mem_post(out, dst->type, base, 1);
+    return true;
+}
+
+// ---- NOT / NEG --------------------------------------------------------------
+// F6/F7 /2 (not), /3 (neg). x86 NOT sets no flags, so N,Z come from a test
+// that follows; NEG's flags are already the 68K's. In memory NOT inverts the
+// bytes in place (byte order is irrelevant to it); the flags still need the
+// plain value, so word/long read it into a scratch register. NEG does its
+// arithmetic on the plain value there.
+static bool emit_x86_notneg(const char *m, const Operand *o, OpSize size, OutputBuffer *out) {
+    bool is_neg = strcmp(m, "NEG") == 0;
+    uint8_t sub = is_neg ? 3 : 2;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (o->type == OPERAND_REGISTER) {
+        if (!is_dreg(o)) return fail("NOT/NEG need a data register or memory operand");
+        int r = x86_reg_code(o->value.reg);
+        if (size == SIZE_B && r > 3) return fail(ERR_BYTE_REG);
+        if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, size == SIZE_B ? 0xF6 : 0xF7);
+        buffer_write(out, (uint8_t)(0xC0 | (sub << 3) | r));
+        if (!is_neg) write_test(out, r, size);
+        return true;
+    }
+    if (!operand_is_memory(o->type)) return false;
+    int base = x86_reg_code(o->value.reg);
+    if (!plain_base(base)) return fail(ERR_MEM_PTR);
+    int n = op_bytes(size);
+    mem_pre(out, o->type, base, n);
+    if (size == SIZE_B) {
+        buffer_write(out, 0xF6);
+        write_modrm_mem(out, sub, base);
+        if (!is_neg) {                                   // cmp byte [base],0
+            buffer_write(out, 0x80); write_modrm_mem(out, 7, base); buffer_write(out, 0);
+        }
+    } else {
+        if (!is_neg) {
+            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+            buffer_write(out, 0xF7);
+            write_modrm_mem(out, sub, base);
+        }
+        int t = pick_scratch(1u << base);
+        if (t < 0) return fail(ERR_NO_SCRATCH);
+        write_push(out, t);
+        write_load(out, t, base, size);
+        if (is_neg) {
+            write_swap(out, t, size);
+            if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+            buffer_write(out, 0xF7);
+            buffer_write(out, (uint8_t)(0xC0 | (3 << 3) | t));       // neg t
+            write_swap(out, t, size);                                // flags untouched
+            write_store(out, t, base, size);
+        } else {
+            write_swap_any(out, t, size);
+            write_test(out, t, size);
+        }
+        write_pop(out, t);
+    }
+    mem_post(out, o->type, base, n);
+    return true;
+}
+
+// SWAP Dn: ror r,16 then test r,r (the 32-bit result sets N,Z; V=C=0).
+static bool emit_x86_swap(const Operand *o, OutputBuffer *out) {
+    if (!is_dreg(o)) return fail("SWAP needs a data register");
+    int r = x86_reg_code(o->value.reg);
+    buffer_write(out, 0xC1); buffer_write(out, (uint8_t)(0xC8 | r)); buffer_write(out, 16);
+    write_test(out, r, SIZE_L);
+    return true;
+}
+
+// EXT.w Dn: movsx r16,r8   EXT.l Dn: movsx r32,r16   then test (N,Z; V=C=0).
+static bool emit_x86_ext(const Operand *o, OpSize size, OutputBuffer *out) {
+    if (!is_dreg(o)) return fail("EXT needs a data register");
+    int r = x86_reg_code(o->value.reg);
+    if (size == SIZE_UNSPEC) size = SIZE_W;
+    if (size == SIZE_W) {
+        if (r > 3) return fail(ERR_BYTE_REG);
+        buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, 0x0F); buffer_write(out, 0xBE);
+    } else {
+        buffer_write(out, 0x0F); buffer_write(out, 0xBF);
+    }
+    buffer_write(out, (uint8_t)(0xC0 | (r << 3) | r));
+    write_test(out, r, size);
+    return true;
+}
+
+// ---- ASL ASR LSL LSR ROL ROR -----------------------------------------------
+typedef enum { SH_ASL, SH_ASR, SH_LSL, SH_LSR, SH_ROL, SH_ROR } ShiftKind;
+
+static bool shift_kind_of(const char *m, ShiftKind *kind) {
+    static const char *names[] = {"ASL", "ASR", "LSL", "LSR", "ROL", "ROR"};
+    for (int i = 0; i < 6; i++)
+        if (strcmp(m, names[i]) == 0) { *kind = (ShiftKind)i; return true; }
+    return false;
+}
+
+// One-bit shift/rotate of register r: D0/D1 /sub. shl=/4 shr=/5 sar=/7 rol=/0 ror=/1
+static size_t wr_shift1(OutputBuffer *out, ShiftKind k, int r, OpSize size) {
+    static const uint8_t sub[] = {4, 7, 4, 5, 0, 1};
+    size_t before = out->size;
+    if (size == SIZE_W) buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0xD0 : 0xD1);
+    buffer_write(out, (uint8_t)(0xC0 | (sub[k] << 3) | r));
+    return out->size - before;
+}
+
+// Final flags of a shift/rotate whose last 1-bit step has just run (CF = the
+// bit shifted out, OF = ASL's "sign changed" for that step). The caller has
+// saved S (a free register) and, for ASL, put the V collected over the earlier
+// steps in vacc (0/1; -1 when there are none). Leaves N,Z from the result in
+// r, C from CF, V from OF (ASL only) or 0.
+static void wr_shift_finish(OutputBuffer *out, int r, OpSize size, int s, int vacc,
+                            bool is_asl) {
+    wr_pushfd(out);                                            // A: CF/OF of the last step
+    if (vacc >= 0) {                                           // vacc <<= 11 (the OF bit)
+        buffer_write(out, 0xC1); buffer_write(out, (uint8_t)(0xE0 | vacc)); buffer_write(out, 11);
+    }
+    write_test(out, r, size);                                  // SF,ZF from the result; CF=OF=0
+    wr_pushfd(out);                                            // B
+    write_pop(out, s);                                         // s = B
+    wr_and_esp(out, is_asl ? 0x801u : 0x1u);                   // A & (CF | OF for ASL)
+    wr_or_esp(out, s);                                         // ... | B
+    if (vacc >= 0) wr_or_esp(out, vacc);
+    wr_popfd(out);
+}
+
+static bool emit_x86_shift(const char *m, const Operand *operands, OpSize size,
+                           OutputBuffer *out) {
+    ShiftKind k;
+    if (!shift_kind_of(m, &k)) return false;
+    bool is_asl = k == SH_ASL;
+    const Operand *a = &operands[0], *b = &operands[1];
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+
+    if (b->type == OPERAND_NONE) {                 // <mem>: one word, shifted by one bit
+        if (!operand_is_memory(a->type))
+            return fail("a shift/rotate with one operand needs a memory operand "
+                        "(registers use the Dx,Dy or #n,Dy forms)");
+        if (size != SIZE_W)
+            return fail("shifts and rotates of memory are word-sized (.w) and move one bit");
+        int base = x86_reg_code(a->value.reg);
+        if (!plain_base(base)) return fail(ERR_MEM_PTR);
+        unsigned avoid = 1u << base;
+        int t = pick_free(&avoid, true);
+        int s = pick_free(&avoid, false);
+        if (t < 0 || s < 0) return fail(ERR_BIT_NOREG);
+        mem_pre(out, a->type, base, 2);
+        write_push(out, t);
+        write_push(out, s);
+        write_load(out, t, base, SIZE_W);
+        write_swap(out, t, SIZE_W);
+        wr_shift1(out, k, t, SIZE_W);
+        wr_shift_finish(out, t, SIZE_W, s, -1, is_asl);
+        write_swap(out, t, SIZE_W);                // flags untouched
+        write_store(out, t, base, SIZE_W);
+        write_pop(out, s);
+        write_pop(out, t);
+        mem_post(out, a->type, base, 2);
+        return true;
+    }
+
+    if (!is_dreg(b)) return fail("a shift/rotate of a register needs a data register destination");
+    int d = x86_reg_code(b->value.reg);
+    if (d == X86_ESP) return fail(ERR_BIT_ESP);
+    if (size == SIZE_B && d > 3) return fail(ERR_BYTE_REG);
+    bool by_reg = a->type == OPERAND_REGISTER;
+    int x = -1, n = 0;
+    if (by_reg) {
+        if (!is_dreg(a)) return fail("the shift count must be an immediate or a data register");
+        x = x86_reg_code(a->value.reg);
+        if (x == X86_ESP) return fail(ERR_BIT_ESP);
+    } else {
+        n = a->value.imm;
+        if (n < 1 || n > 8)
+            return fail("an immediate shift/rotate count must be in the range 1..8 "
+                        "(use a data register for other counts)");
+    }
+    unsigned avoid = (1u << d) | (by_reg ? 1u << x : 0);
+    int s = pick_free(&avoid, true);
+    int vacc = is_asl ? pick_free(&avoid, false) : -1;
+    int cnt = by_reg ? pick_free(&avoid, false) : -1;
+    if (s < 0 || (is_asl && vacc < 0) || (by_reg && cnt < 0)) return fail(ERR_BIT_NOREG);
+
+    write_push(out, s);
+    if (vacc >= 0) write_push(out, vacc);
+    if (cnt >= 0) write_push(out, cnt);
+    if (is_asl) { wr_zero(out, vacc); wr_zero(out, s); }       // s stays 0/1 for seto
+
+    // ASL collects the "sign changed" bit of every step but the last in vacc.
+    // seto s8 ; or vacc,s  (the flags are only needed after the last step)
+    size_t collect_len = is_asl ? 5 : 0;
+    if (!by_reg) {
+        for (int i = 0; i < n; i++) {
+            wr_shift1(out, k, d, size);
+            if (is_asl && i < n - 1) {
+                buffer_write(out, 0x0F); buffer_write(out, 0x90); buffer_write(out, (uint8_t)(0xC0 | s));
+                buffer_write(out, 0x09); buffer_write(out, (uint8_t)(0xC0 | (s << 3) | vacc));
+            }
+        }
+    } else {
+        // cnt = Dx & 63; zero skips the loop (and leaves CF=OF=0 from the "and").
+        buffer_write(out, 0x89); buffer_write(out, (uint8_t)(0xC0 | (x << 3) | cnt));
+        buffer_write(out, 0x83); buffer_write(out, (uint8_t)(0xE0 | cnt)); buffer_write(out, 63);
+        size_t step_len = size == SIZE_W ? 3 : 2;
+        size_t body_len = step_len + collect_len;
+        size_t loop_len = 1 + 2 + body_len + 2 + step_len;
+        buffer_write(out, 0x74); buffer_write(out, (uint8_t)loop_len);        // jz finish
+        buffer_write(out, (uint8_t)(0x48 + cnt));                             // head: dec cnt
+        buffer_write(out, 0x74); buffer_write(out, (uint8_t)(body_len + 2));  // jz last
+        wr_shift1(out, k, d, size);
+        if (is_asl) {
+            buffer_write(out, 0x0F); buffer_write(out, 0x90); buffer_write(out, (uint8_t)(0xC0 | s));
+            buffer_write(out, 0x09); buffer_write(out, (uint8_t)(0xC0 | (s << 3) | vacc));
+        }
+        buffer_write(out, 0xEB); buffer_write(out, (uint8_t)(-(int)(body_len + 5)));  // jmp head
+        wr_shift1(out, k, d, size);                                           // last
+    }
+    wr_shift_finish(out, d, size, s, vacc, is_asl);
+    if (cnt >= 0) write_pop(out, cnt);
+    if (vacc >= 0) write_pop(out, vacc);
+    write_pop(out, s);
+    return true;
+}
+
 // ---- A1-A7: address registers kept in the emulated-register block ---------
 // D0-D7 already use all eight x86 registers (A0 shares ESI with D6), so
 // A1-A7 live in memory: register number r (Dn = 0..7, An = 8..15) has the
@@ -1148,13 +1525,21 @@ static bool x86_writes_destination(const char *m) {
            strcmp(m, "SUBQ") == 0;
 }
 
+static bool is_bitop_mnemonic(const char *m) {
+    static const char *names[] = {"NOT", "NEG", "BTST", "BSET", "BCLR", "BCHG",
+                                  "ASL", "ASR", "LSL", "LSR", "ROL", "ROR"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        if (strcmp(m, names[i]) == 0) return true;
+    return false;
+}
+
 static bool spill_capable(const char *m) {
     return is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
            strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0 ||
            strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
            strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
-           strcmp(m, "SUBQ") == 0;
+           strcmp(m, "SUBQ") == 0 || is_bitop_mnemonic(m);
 }
 
 // mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
@@ -1188,6 +1573,12 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
     if (strcmp(m, "SUBQ") == 0)
         return emit_x86_quick(operands, size, true, out) ? 1 : 0;
     if (strcmp(m, "DBRA") == 0) return emit_x86_dbra(operands, out) ? 1 : 0;
+    if (strcmp(m, "BTST") == 0 || strcmp(m, "BSET") == 0 ||
+        strcmp(m, "BCLR") == 0 || strcmp(m, "BCHG") == 0)
+        return emit_x86_bitop(m, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "ASL") == 0 || strcmp(m, "ASR") == 0 || strcmp(m, "LSL") == 0 ||
+        strcmp(m, "LSR") == 0 || strcmp(m, "ROL") == 0 || strcmp(m, "ROR") == 0)
+        return emit_x86_shift(m, operands, size, out) ? 1 : 0;
     return -1;
 }
 
@@ -1195,6 +1586,10 @@ static int x86_dispatch1(const OpcodeEntry *entry, Operand *operand, OpSize size
                          OutputBuffer *out) {
     if (strcmp(entry->mnemonic, "CLR") == 0 || strcmp(entry->mnemonic, "TST") == 0)
         return emit_x86_clrtst(entry->mnemonic, operand, size, out) ? 1 : 0;
+    if (strcmp(entry->mnemonic, "NOT") == 0 || strcmp(entry->mnemonic, "NEG") == 0)
+        return emit_x86_notneg(entry->mnemonic, operand, size, out) ? 1 : 0;
+    if (strcmp(entry->mnemonic, "SWAP") == 0) return emit_x86_swap(operand, out) ? 1 : 0;
+    if (strcmp(entry->mnemonic, "EXT") == 0) return emit_x86_ext(operand, size, out) ? 1 : 0;
     if (strcmp(entry->mnemonic, "JMP") == 0 || strcmp(entry->mnemonic, "JSR") == 0)
         return emit_x86_jump(entry->mnemonic, operand, out) ? 1 : 0;
     return -1;
@@ -2023,6 +2418,295 @@ static bool arm_emit_bcc(const char *m, const Operand *operand, OutputBuffer *ou
     return false;
 }
 
+// ---- ARM: bit manipulation (same instructions and flag rules as the x86 code)
+// The CPSR holds the 68K flags (N Z V C; see arm_emit_cmp). Registers r0-r7
+// and r12 are scratch (the 68K registers live in the register block).
+enum { ARM_LSL = 0, ARM_LSR = 1, ARM_ASR = 2, ARM_ROR = 3 };
+
+// op rd, rn, rm, <type> #amount  (data-processing, register operand with an
+// immediate shift; opcode as in arm_dp_reg_word)
+static void arm_dp_shifted(OutputBuffer *out, unsigned opcode, bool set_flags,
+                           unsigned rd, unsigned rn, unsigned rm,
+                           unsigned type, unsigned amount) {
+    arm_write_word(out, arm_dp_reg_word(opcode, set_flags, rd, rn, rm) |
+                   (amount << 7) | (type << 5));
+}
+
+// mov{s} rd, rm, <type> rs   (shift amount in a register, taken from its low byte)
+static void arm_shift_reg(OutputBuffer *out, unsigned type, bool set_flags,
+                          unsigned rd, unsigned rm, unsigned rs) {
+    arm_write_word(out, 0xE1A00010u | (set_flags ? 1u << 20 : 0) | (rd << 12) |
+                   (rs << 8) | (type << 5) | rm);
+}
+
+static void arm_mov_small(OutputBuffer *out, unsigned rd, unsigned value) {
+    arm_dp_imm(out, 13, false, rd, 0, value);
+}
+
+// mov<cond> rd,#value
+static void arm_cond_mov_small(OutputBuffer *out, unsigned cond, unsigned rd, unsigned value) {
+    arm_write_word(out, (cond << 28) | 0x03A00000u | (rd << 12) | value);
+}
+
+// N,Z from the low bits of `res` at `size`; C from the 0/1 value in `creg`;
+// V from the 0/1 value in `vreg` (or cleared when vreg < 0).
+static bool arm_flags_from(OutputBuffer *out, unsigned res, OpSize size,
+                           unsigned creg, int vreg) {
+    arm_test_value(out, res, size);
+    arm_write_word(out, 0xE10FC000u);                                    // mrs r12,cpsr
+    if (!arm_dp_imm(out, 14, false, 12, 12, 0x30000000u)) return false;  // bic C,V
+    arm_dp_shifted(out, 12, false, 12, 12, creg, ARM_LSL, 29);           // orr r12,r12,creg,lsl #29
+    if (vreg >= 0) arm_dp_shifted(out, 12, false, 12, 12, (unsigned)vreg, ARM_LSL, 28);
+    arm_write_word(out, 0xE128F00Cu);                                    // msr cpsr_f,r12
+    return true;
+}
+
+// Destination of a one-operand instruction as r0 (the plain, zero-extended
+// value for memory; the whole register for Dn). Returns false if `o` isn't
+// something these instructions accept.
+static bool arm_unary_begin(OutputBuffer *out, const Operand *o, OpSize size,
+                            const char *what, unsigned base) {
+    if (o->type == OPERAND_REGISTER) {
+        if (o->value.reg >= 8) return fail(what);
+        arm_load_vreg(out, 0, (unsigned)o->value.reg);
+        return true;
+    }
+    if (!operand_is_memory(o->type)) return false;
+    arm_mem_begin(out, o, base, size);
+    arm_mem_transfer(out, true, 0, base, size);
+    return true;
+}
+
+// Writes r0 (Dn: .b/.w only replace the low part, done by the caller) back.
+static void arm_unary_end(OutputBuffer *out, const Operand *o, OpSize size, unsigned base) {
+    if (o->type == OPERAND_REGISTER) {
+        arm_store_vreg(out, 0, (unsigned)o->value.reg);
+    } else {
+        arm_mem_transfer(out, false, 0, base, size);
+        arm_mem_finish(out, o, base, size);
+    }
+}
+
+// NOT / NEG
+static bool arm_emit_notneg(const char *m, const Operand *o, OpSize size, OutputBuffer *out) {
+    bool is_neg = strcmp(m, "NEG") == 0;
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (!arm_unary_begin(out, o, size, "NOT/NEG need a data register or memory operand", 4))
+        return false;
+    unsigned shift = size == SIZE_B ? 24 : size == SIZE_W ? 16 : 0;
+    if (!is_neg) {
+        arm_write_word(out, arm_dp_reg_word(15, false, 1, 0, 0));        // mvn r1,r0
+        if (size != SIZE_L) arm_merge_low(out, 0, 1, size);
+        else arm_write_word(out, arm_dp_reg_word(13, false, 0, 0, 1));   // mov r0,r1
+        arm_test_value(out, 1, size);
+        if (!arm_clear_cv_flags(out)) return false;
+    } else {
+        // 0 - value on the value shifted to the top of the register, so the
+        // 32-bit N,Z,V are those of the sized operation; ARM's carry is the
+        // inverse of the 68K's borrow.
+        if (shift) arm_mov_shift(out, 1, 0, false, shift);
+        else arm_write_word(out, arm_dp_reg_word(13, false, 1, 0, 0));
+        if (!arm_dp_imm(out, 3, true, 2, 1, 0)) return false;            // rsbs r2,r1,#0
+        if (!arm_invert_carry_flag(out)) return false;
+        if (shift) {
+            arm_mov_shift(out, 3, 2, true, shift);                       // plain result
+            arm_merge_low(out, 0, 3, size);
+        } else {
+            arm_write_word(out, arm_dp_reg_word(13, false, 0, 0, 2));
+        }
+    }
+    arm_unary_end(out, o, size, 4);
+    return true;
+}
+
+static bool arm_emit_swap(const Operand *o, OutputBuffer *out) {
+    if (o->type != OPERAND_REGISTER || o->value.reg >= 8) return fail("SWAP needs a data register");
+    arm_load_vreg(out, 0, (unsigned)o->value.reg);
+    arm_dp_shifted(out, 13, false, 1, 0, 0, ARM_ROR, 16);                // mov r1,r0,ror #16
+    arm_test_value(out, 1, SIZE_L);
+    if (!arm_clear_cv_flags(out)) return false;
+    arm_store_vreg(out, 1, (unsigned)o->value.reg);
+    return true;
+}
+
+static bool arm_emit_ext(const Operand *o, OpSize size, OutputBuffer *out) {
+    if (o->type != OPERAND_REGISTER || o->value.reg >= 8) return fail("EXT needs a data register");
+    if (size == SIZE_UNSPEC) size = SIZE_W;
+    unsigned reg = (unsigned)o->value.reg;
+    arm_load_vreg(out, 0, reg);
+    if (size == SIZE_W) {
+        arm_mov_shift(out, 2, 0, false, 24);
+        arm_asr(out, 2, 2, 24);                                          // sign-extended byte
+        arm_merge_low(out, 0, 2, SIZE_W);
+        arm_test_value(out, 2, SIZE_W);
+    } else {
+        arm_sign_extend_word(out, 0, 0);
+        arm_test_value(out, 0, SIZE_L);
+    }
+    if (!arm_clear_cv_flags(out)) return false;
+    arm_store_vreg(out, 0, reg);
+    return true;
+}
+
+// BTST/BSET/BCLR/BCHG: Z := (bit was 0); the other flags stay as they were.
+static bool arm_emit_bitop(const char *m, const Operand *operands, OpSize size,
+                           OutputBuffer *out) {
+    const Operand *src = &operands[0], *dst = &operands[1];
+    bool by_reg = src->type == OPERAND_REGISTER;
+    if (by_reg && src->value.reg >= 8)
+        return fail("the bit number must be an immediate or a data register");
+    if (!by_reg && (src->value.imm < 0 || src->value.imm > 255))
+        return fail("the bit number must be in the range 0..255");
+    bool mem = operand_is_memory(dst->type);
+    if (dst->type == OPERAND_REGISTER) {
+        if (dst->value.reg >= 8)
+            return fail("BTST/BSET/BCLR/BCHG need a data register or memory destination");
+        if (size == SIZE_B) return fail("bit operations on a data register are long-sized (.l)");
+    } else if (!mem) {
+        return false;
+    } else if (size == SIZE_W || size == SIZE_L) {
+        return fail("bit operations on memory are byte-sized (.b)");
+    }
+    unsigned mask_bits = mem ? 7 : 31;
+    if (by_reg) {
+        arm_load_vreg(out, 1, (unsigned)src->value.reg);
+        if (!arm_dp_imm(out, 0, false, 1, 1, mask_bits)) return false;   // and r1,r1,#7|31
+    } else {
+        arm_mov_small(out, 1, (unsigned)src->value.imm & mask_bits);
+    }
+    if (mem) {
+        arm_mem_begin(out, dst, 4, SIZE_B);
+        arm_mem_transfer(out, true, 0, 4, SIZE_B);
+    } else {
+        arm_load_vreg(out, 0, (unsigned)dst->value.reg);
+    }
+    arm_mov_small(out, 2, 1);
+    arm_shift_reg(out, ARM_LSL, false, 2, 2, 1);                          // r2 = 1 << bit
+    arm_write_word(out, 0xE10F3000u);                                     // mrs r3,cpsr
+    arm_write_word(out, arm_dp_reg_word(8, true, 0, 0, 2));               // tst r0,r2 -> Z
+    arm_write_word(out, 0xE10FC000u);                                     // mrs r12,cpsr
+    if (strcmp(m, "BSET") == 0) arm_write_word(out, arm_dp_reg_word(12, false, 0, 0, 2));       // orr
+    else if (strcmp(m, "BCLR") == 0) arm_write_word(out, arm_dp_reg_word(14, false, 0, 0, 2));  // bic
+    else if (strcmp(m, "BCHG") == 0) arm_write_word(out, arm_dp_reg_word(1, false, 0, 0, 2));   // eor
+    if (!arm_dp_imm(out, 14, false, 3, 3, 0x40000000u)) return false;     // r3 &= ~Z
+    if (!arm_dp_imm(out, 0, false, 12, 12, 0x40000000u)) return false;    // r12 &= Z
+    arm_write_word(out, arm_dp_reg_word(12, false, 3, 3, 12));            // r3 |= r12
+    arm_write_word(out, 0xE128F003u);                                     // msr cpsr_f,r3
+    if (strcmp(m, "BTST") != 0) {
+        if (mem) {
+            arm_mem_transfer(out, false, 0, 4, SIZE_B);
+            arm_mem_finish(out, dst, 4, SIZE_B);
+        } else {
+            arm_store_vreg(out, 0, (unsigned)dst->value.reg);
+        }
+    } else if (mem) {
+        arm_mem_finish(out, dst, 4, SIZE_B);
+    }
+    return true;
+}
+
+// ASL ASR LSL LSR ROL ROR. r0 = the register (or the word loaded from memory),
+// r1 = count (0..63). The shifts run on a form of the value that makes the
+// ARM shifter give the 68K carry directly (LSL: value at the top of the
+// register, LSR: zero-extended, ASR: sign-extended); rotates run on the value
+// replicated across the register and take C from the result (0 for a count of
+// 0). Flags are then assembled by arm_flags_from().
+static bool arm_shift_core(OutputBuffer *out, const char *m, OpSize size, bool count_is_imm) {
+    bool left = m[1] == 'S' ? m[2] == 'L' : m[2] == 'L';       // ASL/LSL/ROL
+    char t = m[0];                                             // 'A', 'L' or 'R'
+    unsigned bits = size == SIZE_B ? 8 : size == SIZE_W ? 16 : 32;
+    unsigned shift = 32 - bits;
+    unsigned result = 3;                                       // register with the plain result
+    int vreg = -1;
+    if (t == 'R') {
+        if (size == SIZE_L) arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0));
+        else if (size == SIZE_W) { arm_mov_shift(out, 2, 0, false, 16); arm_mov_shift(out, 2, 2, true, 16);
+                                   arm_dp_shifted(out, 12, false, 2, 2, 2, ARM_LSL, 16); }
+        else { if (!arm_dp_imm(out, 0, false, 2, 0, 0xFF)) return false;
+               arm_dp_shifted(out, 12, false, 2, 2, 2, ARM_LSL, 8);
+               arm_dp_shifted(out, 12, false, 2, 2, 2, ARM_LSL, 16); }
+        if (left) { if (!arm_dp_imm(out, 3, false, 6, 1, 0)) return false; }          // rsb r6,r1,#0
+        else arm_write_word(out, arm_dp_reg_word(13, false, 6, 0, 1));                // mov r6,r1
+        if (!arm_dp_imm(out, 0, false, 6, 6, bits - 1)) return false;                 // and r6,r6,#bits-1
+        arm_shift_reg(out, ARM_ROR, false, 3, 2, 6);                                  // r3 = rotated
+        if (left) { if (!arm_dp_imm(out, 0, false, 4, 3, 1)) return false; }          // C = bit 0
+        else {
+            arm_mov_shift(out, 4, 3, true, bits - 1);
+            if (!arm_dp_imm(out, 0, false, 4, 4, 1)) return false;                    // C = bit bits-1
+        }
+        if (!count_is_imm) {
+            arm_write_word(out, arm_dp_reg_word(10, true, 0, 1, 0) | (1u << 25) | 0);  // cmp r1,#0
+            arm_cond_mov_small(out, 0x0, 4, 0);                                        // moveq r4,#0
+        }
+    } else {
+        bool is_asl = t == 'A' && left;
+        if (!arm_clear_cv_flags(out)) return false;       // C,V = 0 so a count of 0 leaves C = 0
+        if (left) {                                        // ASL/LSL
+            if (shift) arm_mov_shift(out, 2, 0, false, shift);
+            else arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0));
+            arm_shift_reg(out, ARM_LSL, true, 3, 2, 1);
+        } else if (t == 'L') {                             // LSR
+            if (shift) { arm_mov_shift(out, 2, 0, false, shift); arm_mov_shift(out, 2, 2, true, shift); }
+            else arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0));
+            arm_shift_reg(out, ARM_LSR, true, 3, 2, 1);
+        } else {                                           // ASR
+            if (shift) { arm_mov_shift(out, 2, 0, false, shift); arm_asr(out, 2, 2, shift); }
+            else arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0));
+            arm_shift_reg(out, ARM_ASR, true, 3, 2, 1);
+        }
+        arm_mov_small(out, 4, 0);                          // r4 = C
+        arm_write_word(out, arm_dp_reg_word(5, false, 4, 4, 0) | (1u << 25));  // adc r4,r4,#0
+        if (is_asl) {
+            // sign changed at some point <=> shifting back doesn't restore the value
+            arm_shift_reg(out, ARM_ASR, false, 6, 3, 1);
+            arm_write_word(out, arm_dp_reg_word(9, true, 0, 6, 2));            // teq r6,r2
+            arm_mov_small(out, 5, 0);
+            arm_cond_mov_small(out, 0x1, 5, 1);                                // movne r5,#1
+            vreg = 5;
+        }
+        if (left && shift) { arm_mov_shift(out, 6, 3, true, shift); result = 6; }   // plain result
+    }
+    if (size == SIZE_L) arm_write_word(out, arm_dp_reg_word(13, false, 0, 0, result));
+    else arm_merge_low(out, 0, result, size);
+    return arm_flags_from(out, 0, size, 4, vreg);
+}
+
+static bool arm_emit_shift(const char *m, const Operand *operands, OpSize size, OutputBuffer *out) {
+    const Operand *a = &operands[0], *b = &operands[1];
+    if (size == SIZE_UNSPEC) size = DEFAULT_OPSIZE;
+    if (b->type == OPERAND_NONE) {                    // <mem>: one word, one bit
+        if (!operand_is_memory(a->type))
+            return fail("a shift/rotate with one operand needs a memory operand "
+                        "(registers use the Dx,Dy or #n,Dy forms)");
+        if (size != SIZE_W)
+            return fail("shifts and rotates of memory are word-sized (.w) and move one bit");
+        arm_mem_begin(out, a, 7, SIZE_W);
+        arm_mem_transfer(out, true, 0, 7, SIZE_W);
+        arm_mov_small(out, 1, 1);
+        if (!arm_shift_core(out, m, SIZE_W, true)) return false;
+        arm_mem_transfer(out, false, 0, 7, SIZE_W);
+        arm_mem_finish(out, a, 7, SIZE_W);
+        return true;
+    }
+    if (b->type != OPERAND_REGISTER || b->value.reg >= 8)
+        return fail("a shift/rotate of a register needs a data register destination");
+    bool by_reg = a->type == OPERAND_REGISTER;
+    if (by_reg) {
+        if (a->value.reg >= 8) return fail("the shift count must be an immediate or a data register");
+        arm_load_vreg(out, 1, (unsigned)a->value.reg);
+        if (!arm_dp_imm(out, 0, false, 1, 1, 63)) return false;           // count mod 64
+    } else {
+        if (a->value.imm < 1 || a->value.imm > 8)
+            return fail("an immediate shift/rotate count must be in the range 1..8 "
+                        "(use a data register for other counts)");
+        arm_mov_small(out, 1, (unsigned)a->value.imm);
+    }
+    arm_load_vreg(out, 0, (unsigned)b->value.reg);
+    if (!arm_shift_core(out, m, size, !by_reg)) return false;
+    arm_store_vreg(out, 0, (unsigned)b->value.reg);
+    return true;
+}
+
 static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
                                 OpSize size, OutputBuffer *out) {
     const char *m = entry->mnemonic;
@@ -2052,6 +2736,16 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
         strcmp(m, "DIVU") == 0 || strcmp(m, "DIVS") == 0)
         return arm_emit_muldiv(m, operands, size, out) ? 1 : 0;
     if (arm_is_bcc(m)) return arm_emit_bcc(m, &operands[0], out) ? 1 : 0;
+    if (strcmp(m, "NOT") == 0 || strcmp(m, "NEG") == 0)
+        return arm_emit_notneg(m, &operands[0], size, out) ? 1 : 0;
+    if (strcmp(m, "SWAP") == 0) return arm_emit_swap(&operands[0], out) ? 1 : 0;
+    if (strcmp(m, "EXT") == 0) return arm_emit_ext(&operands[0], size, out) ? 1 : 0;
+    if (strcmp(m, "BTST") == 0 || strcmp(m, "BSET") == 0 ||
+        strcmp(m, "BCLR") == 0 || strcmp(m, "BCHG") == 0)
+        return arm_emit_bitop(m, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "ASL") == 0 || strcmp(m, "ASR") == 0 || strcmp(m, "LSL") == 0 ||
+        strcmp(m, "LSR") == 0 || strcmp(m, "ROL") == 0 || strcmp(m, "ROR") == 0)
+        return arm_emit_shift(m, operands, size, out) ? 1 : 0;
     return -1;
 }
 

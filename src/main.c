@@ -265,11 +265,19 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     }
 
     Operand ops[entry->operand_count];
+    memset(ops, 0, sizeof ops);   /* operands left out (optional forms) read as OPERAND_NONE */
     size_t op_count = extract_operands(code, ops, entry->operand_count);
+    size_t min_ops = entry->operand_count;
+    if (min_ops > 0 && entry->operand_types[min_ops - 1] == OPERAND_OPT_REG)
+      min_ops--;   /* trailing optional operand */
 
-    if (op_count != entry->operand_count) {
-      fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
-              line_num, entry->operand_count, op_count);
+    if (op_count < min_ops || op_count > entry->operand_count) {
+      if (min_ops == entry->operand_count)
+        fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
+                line_num, entry->operand_count, op_count);
+      else
+        fprintf(stderr, "Error in %s at line %zu: expected %zu or %zu operands, got %zu\n",
+                g_src_file, line_num, min_ops, entry->operand_count, op_count);
       errors++;
       line_num++;
       continue;
@@ -277,7 +285,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 
     /* Each operand must be the kind the opcode table asks for. */
     int ok = 1;
-    for (size_t i = 0; i < entry->operand_count; i++) {
+    for (size_t i = 0; i < op_count; i++) {
       if (ops[i].type == OPERAND_BAD) {
         fprintf(stderr,
                 "Error in %s at line %zu: operand %zu '%s' is malformed (address "
@@ -293,7 +301,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 
     /* Label operands become absolute addresses. In pass 1 the label may
        not be defined yet, so a placeholder of the same size is used. */
-    for (size_t i = 0; ok && i < entry->operand_count; i++) {
+    for (size_t i = 0; ok && i < op_count; i++) {
       if (ops[i].type == OPERAND_IMMEDIATE && ops[i].symbol) {
         if (pass == 2) {
           int32_t value;

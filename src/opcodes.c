@@ -78,6 +78,25 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"BLT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BGT", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BLE", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+    // Bit manipulation. Opcode bytes are placeholders; codegen.c emits the code.
+    // NOT/NEG <ea>; SWAP Dn; EXT.w/.l Dn
+    // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
+    // ASL/ASR/LSL/LSR/ROL/ROR  Dx|#1..8, Dy   or   <mem> (word, one bit)
+    // ROXL/ROXR need the X flag, which isn't modelled yet, so they're not here.
+    {"NOT",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NEG",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"SWAP", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W},
+    {"EXT",  0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
+    {"BTST", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BSET", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BCLR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BCHG", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"ASL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
 };
 
 static const OpcodeEntry arm_opcode_table[] = {
@@ -129,6 +148,25 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
     {"SUBQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
     {"DBRA", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_LABEL}, 0},
+    // Bit manipulation (same forms as the x86 table above).
+    // NOT/NEG <ea>; SWAP Dn; EXT.w/.l Dn
+    // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
+    // ASL/ASR/LSL/LSR/ROL/ROR  Dx|#1..8, Dy   or   <mem> (word, one bit)
+    // ROXL/ROXR need the X flag, which isn't modelled yet, so they're not here.
+    {"NOT",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NEG",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"SWAP", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W},
+    {"EXT",  0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
+    {"BTST", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BSET", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BCLR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"BCHG", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
+    {"ASL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
 };
 
 bool operand_is_memory(OperandType t)
@@ -149,6 +187,8 @@ bool operand_matches(OperandType expected, OperandType actual)
         return actual == OPERAND_REGISTER || operand_is_memory(actual);
     if (expected == OPERAND_CONTROL)
         return actual == OPERAND_LABEL || actual == OPERAND_IND;
+    if (expected == OPERAND_OPT_REG)
+        return actual == OPERAND_REGISTER;
     return expected == actual;
 }
 
@@ -237,6 +277,7 @@ static const char *operand_kind_name(OperandType t)
     case OPERAND_REG_OR_MEM: return "reg|mem";
     case OPERAND_EA_ALT:     return "reg|mem";
     case OPERAND_CONTROL:    return "label|(An)";
+    case OPERAND_OPT_REG:    return "[reg]";
     default:                 return "";
     }
 }

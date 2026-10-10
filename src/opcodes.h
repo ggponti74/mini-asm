@@ -21,6 +21,9 @@ typedef enum {
     OPERAND_REG_OR_MEM,// table-only: register or memory operand
     OPERAND_EA_ALT,    // table-only: register or memory destination
     OPERAND_CONTROL,   // table-only: label or address-register indirect
+    OPERAND_OPT_REG,   // table-only: a register that may be left out (ASL/LSL/... <mem> has one
+                       // operand, ASL/LSL/... #n,Dn has two); a missing operand reaches codegen
+                       // as OPERAND_NONE
     OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
 } OperandType;
 
