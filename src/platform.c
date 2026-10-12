@@ -35,7 +35,10 @@ static const PlatformTarget k_targets[] = {
         .needs_exec_bit = false,
         .code_base = 0x00401000,
         .has_regfile = true,
-        .code_tail = 0,
+        .code_align = 4,
+        // entry stub, TRAP dispatcher and import block follow the (aligned) code, then the register block
+        .code_tail = CORE_PE_STARTUP_SIZE + CORE_PE_DISPATCHER_SIZE + CORE_PE_IMPORT_SIZE,
+        .dispatcher_off = CORE_PE_STARTUP_SIZE, // the dispatcher comes right after the entry stub
         .write = write_pe,
     },
     {

@@ -1,203 +1,218 @@
-diff --git a/src/arm_elf_writer.c b/src/arm_elf_writer.c
-index 0e5ec0c..5179ab7 100644
---- a/src/arm_elf_writer.c
-+++ b/src/arm_elf_writer.c
-@@ -2,6 +2,7 @@
- #include <stdio.h>
+diff --git a/src/pe_writer.c b/src/pe_writer.c
+index 51750e9..56aae77 100644
+--- a/src/pe_writer.c
++++ b/src/pe_writer.c
+@@ -3,6 +3,7 @@
+ #include <stdint.h>
  
- #include "arm_elf_writer.h"
+ #include "pe_writer.h"
 +#include "core.h"
  
- void write_arm_elf(const char *filename, const OutputBuffer *buf) {
-   if (!buf)
-@@ -13,7 +14,8 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
-   const uint32_t padded_size = ((uint32_t)buf->size + 3u) & ~3u;
-   const uint32_t epilogue_addr = code_addr + padded_size;
-   const uint32_t entry_addr = epilogue_addr;
--  const uint32_t total_size = padded_size + EPILOGUE_SIZE;
-+  // layout: code | epilogue (EPILOGUE_SIZE) | TRAP dispatcher | register block
-+  const uint32_t total_size = padded_size + EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE;
-   const uint32_t regfile_addr = REGFILE_ALIGN_UP(code_addr + total_size);
- 
-   FILE *f = fopen(filename, "wb");
-@@ -109,5 +111,16 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
-     fwrite(bytes, 1, 4, f);
-   }
- 
-+  // --- TRAP #0 dispatcher, right after the epilogue (codegen BLs to it) ---
-+  uint8_t dispatcher[CORE_ARM_DISPATCHER_SIZE];
-+  int dn = core_emit_dispatcher("arm", dispatcher, sizeof(dispatcher));
-+  if (dn != CORE_ARM_DISPATCHER_SIZE) {
-+    fprintf(stderr, "internal error: ARM dispatcher is %d bytes, expected %d\n",
-+            dn, CORE_ARM_DISPATCHER_SIZE);
-+    fclose(f);
-+    return;
-+  }
-+  fwrite(dispatcher, 1, (size_t)dn, f);
-+
-   fclose(f);
- }
-diff --git a/src/codegen.c b/src/codegen.c
-index 3e6da4b..82a8268 100644
---- a/src/codegen.c
-+++ b/src/codegen.c
-@@ -2359,20 +2359,39 @@ static const struct { const char *mnemonic; uint32_t cond; } k_arm_bcc[] = {
-     {"BGE", 0xA}, {"BLT", 0xB}, {"BGT", 0xC}, {"BLE", 0xD},
- };
- 
--// TRAP #0 -> E8 cd    call rel32 to the target's service dispatcher (core.c).
--// Same stack protocol as BSR: CALL pushes the return address, the dispatcher
--// ends with RET. The dispatcher preserves every register except D0 and sets
--// N/Z from D0, so the caller sees the 68K convention described in core.c.
--// Only vector 0 exists; the other vectors are left free for later.
-+// TRAP #0 -> call the target's service dispatcher (core.c). The dispatcher
-+// preserves every register except D0 and sets N/Z from D0 (C and V cleared),
-+// so the caller sees the 68K convention described in core.c. Only vector 0
-+// exists; the other vectors are left free for later.
+ // Align to 512 bytes for file alignment
+ #define FILE_ALIGN 0x200
+@@ -104,11 +105,23 @@ static uint32_t align_up(uint32_t value, uint32_t align) {
+ // (DOS stub + COFF header + optional header + one .text section)
+ // from the assembled code in buf, and writes it to filename.
+ //
+-// Note: this produces a structurally valid, loadable PE32 image with
+-// a single executable section. It does not link against any Windows
+-// import libraries (no IAT/import table), so code beyond a bare
+-// RET-style instruction (anything that needs kernel32 imports, e.g.
+-// ExitProcess) will need import-table support added separately.
++// .text holds everything, in this order (all offsets from the section start):
 +//
-+//   x86  E8 cd       call rel32; CALL pushes the return address and the
-+//                    dispatcher ends with RET (the stack protocol of BSR).
-+//   ARM  push {lr}   the 68K registers live in the register block, which the
-+//        ldr r12,=block   dispatcher finds through r12 (every other ARM
-+//        bl dispatcher    instruction loads r12 itself, so nothing else holds
-+//        pop {lr}         it); lr is saved around the BL like JSR does. 24 bytes.
- static bool emit_trap(const Operand *operands, OutputBuffer *out) {
-     if (operands[0].type != OPERAND_IMMEDIATE)
-         return fail("TRAP needs a vector number, e.g. TRAP #0");
-     if (operands[0].value.imm != 0)
-         return fail("only TRAP #0 is implemented (the mini-asm services)");
-     const char *arch = opcodes_active_arch_name();
--    if (!arch || strcmp(arch, "x86") != 0 || (g_final_pass && g_dispatcher == 0))
-+    bool arm = arch && strcmp(arch, "arm") == 0;
-+    if (!arch || (!arm && strcmp(arch, "x86") != 0) || (g_final_pass && g_dispatcher == 0))
-         return fail("TRAP is not supported on this target yet");
++//   0                  the assembled program (buf)
++//   startup_off        entry stub (core.c): GetCommandLineA -> argc/argv,
++//                      CALL program, ExitProcess(D0); 4-byte aligned
++//   dispatcher_off     the TRAP #0 dispatcher (core.c)
++//   import_off         the import block: kernel32.dll with the nine functions
++//                      the stub and the dispatcher use (core.c)
++//   regfile_off        REGFILE_SIZE bytes, the emulated-register block  } memory
++//   area_off           CORE_PE_ARGS_AREA_SIZE bytes, the stub's scratch } only
++//
++// The first three and the import block are in the file; the last two exist
++// only in memory (VirtualSize > SizeOfRawData, zero filled by the loader).
++// 68K programs mix code and data, so .text is writable (RWX); that also lets
++// the loader fill in the IAT. The same layout is described to codegen through
++// platform.c (code_align, dispatcher_off, code_tail): main.c computes the
++// dispatcher and register-block addresses from it before pass 2.
+ void write_pe(const char *filename, const OutputBuffer *buf)
+ {
+     if (!buf) return;
+@@ -125,16 +138,23 @@ void write_pe(const char *filename, const OutputBuffer *buf)
+         (uint32_t)sizeof(IMAGE_SECTION_HEADER);   // 1 section
+     const uint32_t size_of_headers = align_up(headers_raw_size, FILE_ALIGN);
  
-+    if (arm) {
-+        arm_write_word(out, 0xE92D4000u);                 // push {lr}
-+        arm_load_literal(out, 12, codegen_regfile_base()); // ldr r12,=block (3 words)
-+        int64_t delta = g_final_pass
-+            ? (int64_t)g_dispatcher - (int64_t)(g_pc + 16 + 8) : 0;  // the BL is word 4
-+        if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
-+            return fail("ARM branch target is outside the encodable range");
-+        arm_write_word(out, 0xEB000000u | ((uint32_t)(delta >> 2) & 0x00FFFFFFu)); // bl dispatcher
-+        arm_write_word(out, 0xE8BD4000u);                 // pop {lr}
-+        return true;
-+    }
+-    const uint32_t code_raw_size = align_up((uint32_t)buf->size, FILE_ALIGN);
+-    // .text is also the emulated-register block's home: REGFILE_SIZE zeroed
+-    // bytes right after the code (4-byte aligned), present in memory only.
+-    // 68K programs mix code and data, so .text is writable (RWX) for now.
+-    const uint32_t text_virtual_size = REGFILE_ALIGN_UP((uint32_t)buf->size) + REGFILE_SIZE;
+-    const uint32_t code_virtual_size = align_up(text_virtual_size, SEC_ALIGN);
+-
+     const uint32_t text_rva = SEC_ALIGN;            // .text starts at first section alignment boundary
 +
-     int32_t rel = 0;  // pass 1 only reserves space
-     if (g_final_pass)
-         rel = (int32_t)(g_dispatcher - (g_pc + 5));
-diff --git a/src/main.c b/src/main.c
-index b13a017..f3bb4ed 100644
---- a/src/main.c
-+++ b/src/main.c
-@@ -474,8 +474,12 @@ int main(int argc, char *argv[])
-     // The TRAP dispatcher follows the code (and the writer's epilogue); like
-     // the register block, its address is only known once pass 1 has sized
-     // the code. 0 tells codegen the target has none.
-+    // (ARM pads the code to a whole number of words first, see code_align.)
-+    uint32_t code_len = (uint32_t)buf.size;
-+    if (target->code_align > 1)
-+      code_len = (code_len + target->code_align - 1) / target->code_align * target->code_align;
-     codegen_set_dispatcher(target->dispatcher_off
--                               ? target->code_base + (uint32_t)buf.size + target->dispatcher_off
-+                               ? target->code_base + code_len + target->dispatcher_off
-                                : 0);
-     if (target->has_regfile)
-     {
-diff --git a/src/opcodes.c b/src/opcodes.c
-index 6e46462..c0fc7fc 100644
---- a/src/opcodes.c
-+++ b/src/opcodes.c
-@@ -118,7 +118,8 @@ static const OpcodeEntry arm_opcode_table[] = {
-     {"CMPI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
-     {"BRA", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-     {"BSR", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
--    // TRAP is recognized so the user gets a clear message; no ARM dispatcher yet.
-+    // TRAP #0: mini-asm service call. codegen.c emits push {lr}; ldr r12,=block;
-+    // bl dispatcher; pop {lr} (24 bytes); the size field here is a placeholder.
-     {"TRAP", 0x00, 4, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
-     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-     {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
++    // --- layout of .text (see above) ---
++    const uint32_t startup_off    = align_up((uint32_t)buf->size, 4);
++    const uint32_t dispatcher_off = startup_off + CORE_PE_STARTUP_SIZE;
++    const uint32_t import_off     = dispatcher_off + CORE_PE_DISPATCHER_SIZE;
++    const uint32_t file_len       = import_off + CORE_PE_IMPORT_SIZE;
++    const uint32_t regfile_off    = REGFILE_ALIGN_UP(file_len);
++    const uint32_t area_off       = regfile_off + REGFILE_SIZE;
++
++    const uint32_t code_raw_size = align_up(file_len, FILE_ALIGN);
++    const uint32_t text_virtual_size = area_off + CORE_PE_ARGS_AREA_SIZE;
++    const uint32_t code_virtual_size = align_up(text_virtual_size, SEC_ALIGN);
+     const uint32_t size_of_image = align_up(SEC_ALIGN, SEC_ALIGN) + code_virtual_size; // headers page + code page(s)
+ 
++    const uint32_t import_rva = text_rva + import_off;
++
+     // --- DOS header ---
+     DOSHeader dos = {0};
+     dos.e_magic  = 0x5A4D;              // "MZ"
+@@ -157,7 +177,7 @@ void write_pe(const char *filename, const OutputBuffer *buf)
+     IMAGE_OPTIONAL_HEADER32 opt = {0};
+     opt.Magic                       = 0x10B; // PE32
+     opt.SizeOfCode                  = code_raw_size;
+-    opt.AddressOfEntryPoint         = text_rva;   // code starts at the top of .text
++    opt.AddressOfEntryPoint         = text_rva + startup_off;   // the entry stub, which CALLs the program
+     opt.BaseOfCode                  = text_rva;
+     opt.BaseOfData                  = 0;
+     opt.ImageBase                   = image_base;
+@@ -175,6 +195,10 @@ void write_pe(const char *filename, const OutputBuffer *buf)
+     opt.SizeOfHeapReserve            = 0x100000;
+     opt.SizeOfHeapCommit             = 0x1000;
+     opt.NumberOfRvaAndSizes          = 16;
++    opt.DataDirectory[1].VirtualAddress = import_rva;                       // import table
++    opt.DataDirectory[1].Size           = 2 * 20;                           // kernel32 + the null descriptor
++    opt.DataDirectory[12].VirtualAddress = import_rva + CORE_PE_IAT_OFFSET; // IAT
++    opt.DataDirectory[12].Size           = CORE_PE_IAT_SIZE;
+     fwrite(&opt, sizeof(opt), 1, f);
+ 
+     // --- Section header: .text ---
+@@ -194,9 +218,30 @@ void write_pe(const char *filename, const OutputBuffer *buf)
+         pos++;
+     }
+ 
+-    // --- Code section, padded to SizeOfRawData ---
++    // --- .text: program | entry stub | dispatcher | import block, padded to SizeOfRawData ---
++    uint8_t startup[CORE_PE_STARTUP_SIZE];
++    uint8_t dispatcher[CORE_PE_DISPATCHER_SIZE];
++    uint8_t imports[CORE_PE_IMPORT_SIZE];
++    const uint32_t text_va = image_base + text_rva;
++    const uint32_t import_va = image_base + import_rva;
++    const uint32_t regfile_va = text_va + regfile_off;
++    if (core_pe_emit_startup(startup, sizeof startup, text_va + startup_off, text_va,
++                             import_va + CORE_PE_IAT_OFFSET, text_va + area_off) != CORE_PE_STARTUP_SIZE ||
++        core_pe_emit_dispatcher(dispatcher, sizeof dispatcher, import_va) != CORE_PE_DISPATCHER_SIZE ||
++        core_pe_emit_imports(imports, sizeof imports, import_rva) != CORE_PE_IMPORT_SIZE) {
++        fprintf(stderr, "internal error: could not build the PE entry stub, dispatcher or import block\n");
++        fclose(f);
++        return;
++    }
++    (void)regfile_va; // the register block is addressed by codegen (main.c computes the same address)
++
+     fwrite(buf->data, 1, buf->size, f);
+-    for (uint32_t i = (uint32_t)buf->size; i < code_raw_size; i++) {
++    for (uint32_t i = (uint32_t)buf->size; i < startup_off; i++)
++        fputc(0, f);
++    fwrite(startup, 1, sizeof startup, f);
++    fwrite(dispatcher, 1, sizeof dispatcher, f);
++    fwrite(imports, 1, sizeof imports, f);
++    for (uint32_t i = file_len; i < code_raw_size; i++) {
+         fputc(0, f);
+     }
+ 
 diff --git a/src/platform.c b/src/platform.c
-index 4c7f7bc..6afc963 100644
+index 4e27714..a63462c 100644
 --- a/src/platform.c
 +++ b/src/platform.c
-@@ -43,7 +43,9 @@ static const PlatformTarget k_targets[] = {
-         .needs_exec_bit = true,
-         .code_base = 0x00008000,
-         .has_regfile    = true,
--        .code_tail      = EPILOGUE_SIZE,
-+        .code_align     = 4,
-+        .code_tail      = EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE,  // epilogue, then the TRAP dispatcher
-+        .dispatcher_off = EPILOGUE_SIZE,
-         .write          = write_arm_elf,
+@@ -35,7 +35,10 @@ static const PlatformTarget k_targets[] = {
+         .needs_exec_bit = false,
+         .code_base = 0x00401000,
+         .has_regfile = true,
+-        .code_tail = 0,
++        .code_align = 4,
++        // entry stub, TRAP dispatcher and import block follow the (aligned) code, then the register block
++        .code_tail = CORE_PE_STARTUP_SIZE + CORE_PE_DISPATCHER_SIZE + CORE_PE_IMPORT_SIZE,
++        .dispatcher_off = CORE_PE_STARTUP_SIZE, // the dispatcher comes right after the entry stub
+         .write = write_pe,
      },
      {
-diff --git a/src/platform.h b/src/platform.h
-index 06cfc74..879e4cd 100644
---- a/src/platform.h
-+++ b/src/platform.h
-@@ -21,6 +21,8 @@ typedef struct {
-     bool              needs_exec_bit; // true if the output should get chmod +x on POSIX hosts
-     uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
-     bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
-+    uint32_t          code_align;     // the writer pads the code to a multiple of this before what follows
-+                                      // it (the epilogue, dispatcher, register block); 0 = no padding
-     uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
-     uint32_t          dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
-                                       // (inside code_tail); 0 = this target has no dispatcher
 diff --git a/tests/run.sh b/tests/run.sh
-index a29a88a..47d0fa6 100644
+index cdfc545..0384c10 100644
 --- a/tests/run.sh
 +++ b/tests/run.sh
-@@ -11,8 +11,7 @@
+@@ -10,7 +10,11 @@
+ # 2. tests/errors/*.asm must fail to assemble; stderr must match the regex on
  #    their first line ("; EXPECT: <extended regex>").
  # 3. tests/arm/*.asm: ARM programs, run with qemu-arm when available (exit code must match "; EXIT: n").
- # 4. tests/trap/*.asm: TRAP #0 services (files etc.), exit code 0 = pass, N = test N failed. They
--#    run in a scratch directory (they create files). ELF always; ARM when TRAP is wired up for it
--#    and qemu-arm exists. tests/trap/pe_dispatcher_test.c checks the PE dispatcher against fake
-+#    run in a scratch directory (they create files), on the ELF target and, with qemu-arm, on ARM. tests/trap/pe_dispatcher_test.c checks the PE dispatcher against fake
- #    kernel32 functions when a 32-bit gcc (gcc -m32) works.
- # 5. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
+-# 4. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
++# 4. tests/trap/*.asm: TRAP #0 services (files etc.), exit code 0 = pass, N = test N failed. They
++#    run in a scratch directory (they create files), on the ELF target, on ARM with qemu-arm, and
++#    as real PE executables with wine. tests/trap/pe_dispatch_test.c checks the PE dispatcher against fake
++#    kernel32 functions when a 32-bit gcc (gcc -m32) works.
++# 5. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
  
-@@ -102,10 +101,10 @@ for src in "$DIR"/trap/*.asm; do
-     if ! "$ASM" -t elf -o "$TMP/trap.elf" "$src" >"$TMP/asm.log" 2>&1; then
-         echo "FAIL   $name   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1)); continue
-     fi
--    (cd "$TMP/work" && "$TMP/trap.elf"); report "$name" $?
-+    (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$name" $?
-     if command -v qemu-arm >/dev/null 2>&1; then
-         if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
--            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" 2>/dev/null); report "$name (arm)" $?
-+            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$name (arm)" $?
-         elif grep -q "not supported" "$TMP/asm.log"; then
-             echo "SKIP   $name (arm)   (TRAP is not supported on the ARM target yet)"
-         else
-diff --git a/tests/trap/odd_size.asm b/tests/trap/odd_size.asm
-new file mode 100644
-index 0000000..0fea84a
---- /dev/null
-+++ b/tests/trap/odd_size.asm
-@@ -0,0 +1,21 @@
-+; odd_size.asm - TRAP #0 still reaches the dispatcher when the program's size
-+; is not a multiple of 4 (the ARM writer pads the code, so the dispatcher
-+; address has to include the padding). Writes 3 bytes to stdout.
-+; Exit 0 = pass, N = test N failed.
-+start:
-+        moveq   #1, d7
-+        move.l  #1, d1              ; fd 1 = stdout
-+        lea     msg, a0
-+        move.l  #3, d2
-+        move.l  #2, d0              ; service 2 = write
-+        trap    #0
-+        cmp.l   #3, d0
-+        bne     fail
-+        moveq   #0, d0
-+        rts
-+fail:   move.l  d7, d0
-+        rts
-+msg     dc.b    "ok", 10
-+        dc.b    0
-+        dc.b    0
-+        dc.b    0
+ ASM=${1:-./mini-asm}
+ DIR=$(cd "$(dirname "$0")" && pwd)
+@@ -91,7 +95,57 @@ else
+     echo "SKIP   arm/*   (qemu-arm not installed)"
+ fi
+ 
+-# 4. other x86 output format: assembly only (a PE file cannot run here)
++# 4. TRAP #0 service tests
++mkdir -p "$TMP/work"
++# wine is only used if it can run a trivial PE program made by this assembler (exit code 7)
++wine_ok=0
++if command -v wine >/dev/null 2>&1; then
++    export WINEPREFIX="$TMP/wineprefix" WINEDEBUG=-all
++    printf 'start:  moveq   #7, d0\n        rts\n' >"$TMP/wine_probe.asm"
++    if "$ASM" -t x86 -o "$TMP/wine_probe.exe" "$TMP/wine_probe.asm" >/dev/null 2>&1; then
++        (cd "$TMP/work" && timeout 300 wine "$TMP/wine_probe.exe" >/dev/null 2>&1); [ $? -eq 7 ] && wine_ok=1
++    fi
++fi
++for src in "$DIR"/trap/*.asm; do
++    tname=trap/$(basename "$src" .asm)   # (report() overwrites $name)
++    if ! "$ASM" -t elf -o "$TMP/trap.elf" "$src" >"$TMP/asm.log" 2>&1; then
++        echo "FAIL   $tname   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1)); continue
++    fi
++    (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$tname" $?
++    if command -v qemu-arm >/dev/null 2>&1; then
++        if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
++            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$tname (arm)" $?
++        elif grep -q "not supported" "$TMP/asm.log"; then
++            echo "SKIP   $tname (arm)   (TRAP is not supported on the ARM target yet)"
++        else
++            echo "FAIL   $tname (arm)   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1))
++        fi
++    fi
++    if [ "$wine_ok" -eq 1 ]; then
++        if "$ASM" -t x86 -o "$TMP/trap.exe" "$src" >"$TMP/asm.log" 2>&1; then
++            (cd "$TMP/work" && timeout 300 wine "$TMP/trap.exe" >/dev/null 2>&1); report "$tname (pe/wine)" $?
++        else
++            echo "FAIL   $tname (pe/wine)   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1))
++        fi
++    fi
++done
++[ "$wine_ok" -eq 1 ] || echo "SKIP   trap/* as PE   (no working wine)"
++if gcc -m32 -x c -o "$TMP/m32" - >/dev/null 2>&1 <<'EOC'
++int main(void) { return 0; }
++EOC
++then
++    if gcc -m32 -Wall -Wextra -I"$DIR/../src" -o "$TMP/pe_test" "$DIR/trap/pe_dispatch_test.c" "$DIR/../src/core.c" >"$TMP/asm.log" 2>&1; then
++        (cd "$TMP/work" && "$TMP/pe_test" </dev/null >"$TMP/pe.log" 2>&1); code=$?
++        if [ "$code" -eq 0 ]; then echo "PASS   trap/pe_dispatcher (fake kernel32)"; pass=$((pass + 1))
++        else echo "FAIL   trap/pe_dispatcher"; sed 's/^/         /' "$TMP/pe.log" | grep FAIL; fail=$((fail + 1)); fi
++    else
++        echo "FAIL   trap/pe_dispatcher   (did not compile)"; sed 's/^/         /' "$TMP/asm.log" | head -5; fail=$((fail + 1))
++    fi
++else
++    echo "SKIP   trap/pe_dispatcher   (no 32-bit gcc)"
++fi
++
++# 5. other x86 output format: assembly only (a PE file cannot run here)
+ if "$ASM" -t x86 -o "$TMP/main.exe" "$DIR/main.asm" >/dev/null 2>&1; then
+     echo "PASS   main (x86/PE assembles)"; pass=$((pass + 1))
+ else
+ 
