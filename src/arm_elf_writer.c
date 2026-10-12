@@ -2,8 +2,10 @@
 #include <stdio.h>
 
 #include "arm_elf_writer.h"
+#include "core.h"
 
-void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+void write_arm_elf(const char *filename, const OutputBuffer *buf)
+{
   if (!buf)
     return;
 
@@ -13,7 +15,8 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   const uint32_t padded_size = ((uint32_t)buf->size + 3u) & ~3u;
   const uint32_t epilogue_addr = code_addr + padded_size;
   const uint32_t entry_addr = epilogue_addr;
-  const uint32_t total_size = padded_size + EPILOGUE_SIZE;
+  // layout: code | epilogue (EPILOGUE_SIZE) | TRAP dispatcher | register block
+  const uint32_t total_size = padded_size + EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE;
   const uint32_t regfile_addr = REGFILE_ALIGN_UP(code_addr + total_size);
 
   FILE *f = fopen(filename, "wb");
@@ -42,9 +45,9 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   Elf32_Phdr phdr;
   memset(&phdr, 0, sizeof(phdr));
   phdr.p_type = PT_LOAD;
-  phdr.p_offset = 0x8000;     // file offset where code starts
-  phdr.p_vaddr = 0x8000;      // virtual address
-  phdr.p_paddr = 0x8000;      // physical address (match vaddr)
+  phdr.p_offset = 0x8000; // file offset where code starts
+  phdr.p_vaddr = 0x8000;  // virtual address
+  phdr.p_paddr = 0x8000;  // physical address (match vaddr)
   phdr.p_filesz = total_size;
   phdr.p_memsz = REGFILE_ALIGN_UP(total_size) + REGFILE_SIZE;
   phdr.p_flags = PF_X | PF_R | PF_W;
@@ -97,9 +100,10 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
   uint32_t epilogue[EPILOGUE_SIZE / 4] = {
       0xE59FC03Cu, 0xE59D0000u, 0xE58C0000u, 0xE28D1004u, 0xE58C1020u,
       0xE1A02001u, 0xE5923000u, 0xE3530000u, 0x0A000002u, 0xE6BF3F33u,
-      0xE4823004u, 0xEAFFFFF9u, bl_instr,   0xE59FC008u, 0xE59C0000u,
+      0xE4823004u, 0xEAFFFFF9u, bl_instr, 0xE59FC008u, 0xE59C0000u,
       0xE3A07001u, 0xEF000000u, regfile_addr};
-  for (int i = 0; i < EPILOGUE_SIZE / 4; i++) {
+  for (int i = 0; i < EPILOGUE_SIZE / 4; i++)
+  {
     uint8_t bytes[4] = {
         (uint8_t)(epilogue[i] & 0xFF),
         (uint8_t)((epilogue[i] >> 8) & 0xFF),
@@ -108,6 +112,18 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
     };
     fwrite(bytes, 1, 4, f);
   }
+
+  // --- TRAP #0 dispatcher, right after the epilogue (codegen BLs to it) ---
+  uint8_t dispatcher[CORE_ARM_DISPATCHER_SIZE];
+  int dn = core_emit_dispatcher("arm", dispatcher, sizeof(dispatcher));
+  if (dn != CORE_ARM_DISPATCHER_SIZE)
+  {
+    fprintf(stderr, "internal error: ARM dispatcher is %d bytes, expected %d\n",
+            dn, CORE_ARM_DISPATCHER_SIZE);
+    fclose(f);
+    return;
+  }
+  fwrite(dispatcher, 1, (size_t)dn, f);
 
   fclose(f);
 }

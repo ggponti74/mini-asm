@@ -6,12 +6,15 @@
 #include "arm_elf_writer.h"
 #include "elf_writer.h"
 #include "core.h"
-    
+
 // Small portable stand-in for strcasecmp()/_stricmp() so we don't have
 // to pull in platform-specific headers just to compare target names.
-static bool names_equal_ci(const char *a, const char *b) {
-    while (*a && *b) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
+static bool names_equal_ci(const char *a, const char *b)
+{
+    while (*a && *b)
+    {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+        {
             return false;
         }
         a++;
@@ -25,59 +28,68 @@ static bool names_equal_ci(const char *a, const char *b) {
 // to change.
 static const PlatformTarget k_targets[] = {
     {
-        .name           = "x86",
-        .description    = "Windows PE32 console executable (x86)",
-        .cpu_arch       = "x86",
-        .default_ext    = ".exe",
+        .name = "x86",
+        .description = "Windows PE32 console executable (x86)",
+        .cpu_arch = "x86",
+        .default_ext = ".exe",
         .needs_exec_bit = false,
         .code_base = 0x00401000,
-        .has_regfile    = true,
-        .code_tail      = 0,
-        .write          = write_pe,
+        .has_regfile = true,
+        .code_tail = 0,
+        .write = write_pe,
     },
     {
-        .name           = "arm",
-        .description    = "Bare-metal/Linux ELF32 executable (ARM)",
-        .cpu_arch       = "arm",
-        .default_ext    = "",
+        .name = "arm",
+        .description = "Bare-metal/Linux ELF32 executable (ARM)",
+        .cpu_arch = "arm",
+        .default_ext = "",
         .needs_exec_bit = true,
         .code_base = 0x00008000,
-        .has_regfile    = true,
-        .code_tail      = EPILOGUE_SIZE,
-        .write          = write_arm_elf,
+        .has_regfile = true,
+        .code_align = 4,
+        .code_tail = EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE, // epilogue, then the TRAP dispatcher
+        .dispatcher_off = EPILOGUE_SIZE,
+        .write = write_arm_elf,
     },
     {
-        .name           = "elf",
-        .description    = "Linux ELF32 executable (x86)",
-        .cpu_arch       = "x86",
-        .default_ext    = "",
+        .name = "elf",
+        .description = "Linux ELF32 executable (x86)",
+        .cpu_arch = "x86",
+        .default_ext = "",
         .needs_exec_bit = true,
-        .code_base      = 0x08049000,
-        .has_regfile    = true,
-        .code_tail      = ELF_EPILOGUE_SIZE + CORE_ELF_DISPATCHER_SIZE,  // epilogue, then the TRAP dispatcher
+        .code_base = 0x08049000,
+        .has_regfile = true,
+        .code_tail = ELF_EPILOGUE_SIZE + CORE_ELF_DISPATCHER_SIZE, // epilogue, then the TRAP dispatcher
         .dispatcher_off = ELF_EPILOGUE_SIZE,
-        .write          = write_elf,
+        .write = write_elf,
     },
 };
 #define NUM_TARGETS (sizeof(k_targets) / sizeof(k_targets[0]))
 
-const PlatformTarget *platform_find(const char *name) {
-    if (!name) return NULL;
-    for (size_t i = 0; i < NUM_TARGETS; i++) {
-        if (names_equal_ci(k_targets[i].name, name)) {
+const PlatformTarget *platform_find(const char *name)
+{
+    if (!name)
+        return NULL;
+    for (size_t i = 0; i < NUM_TARGETS; i++)
+    {
+        if (names_equal_ci(k_targets[i].name, name))
+        {
             return &k_targets[i];
         }
     }
     return NULL;
 }
 
-const PlatformTarget *platform_default(void) {
+const PlatformTarget *platform_default(void)
+{
     // x86/PE matches the assembler's original default (see README).
     return platform_find("x86");
 }
 
-void platform_print_targets(FILE *out) {
-    for (size_t i = 0; i < NUM_TARGETS; i++) {
+void platform_print_targets(FILE *out)
+{
+    for (size_t i = 0; i < NUM_TARGETS; i++)
+    {
         fprintf(out, "  %-6s %s\n", k_targets[i].name, k_targets[i].description);
     }
 }

@@ -67,7 +67,8 @@ static void derive_base_name(const char *source_path, char *out,
 
 static int parse_include_path(const char *line, const char *code,
                               const char **path_start,
-                              size_t *path_len, size_t *column) {
+                              size_t *path_len, size_t *column)
+{
   const char *p = code;
   while (*p && isspace((unsigned char)*p))
     p++;
@@ -84,14 +85,17 @@ static int parse_include_path(const char *line, const char *code,
   if (*p == '"' || *p == '\'')
     quote = *p++;
   *path_start = p;
-  if (quote) {
+  if (quote)
+  {
     while (*p && *p != quote)
       p++;
     if (*p != quote)
       return 0;
     *path_len = (size_t)(p - *path_start);
     p++;
-  } else {
+  }
+  else
+  {
     while (*p && !isspace((unsigned char)*p))
       p++;
     *path_len = (size_t)(p - *path_start);
@@ -101,14 +105,17 @@ static int parse_include_path(const char *line, const char *code,
   return *path_len > 0 && *p == '\0';
 }
 
-static int path_is_absolute(const char *path) {
+static int path_is_absolute(const char *path)
+{
   return path[0] == '/' || path[0] == '\\' ||
          (isalpha((unsigned char)path[0]) && path[1] == ':');
 }
 
 static char *resolve_include_path(const char *source_path,
-                                  const char *include_path) {
-  if (path_is_absolute(include_path)) {
+                                  const char *include_path)
+{
+  if (path_is_absolute(include_path))
+  {
     size_t len = strlen(include_path) + 1;
     char *resolved = malloc(len);
     if (resolved)
@@ -133,23 +140,27 @@ static char *resolve_include_path(const char *source_path,
 
 static int assemble_source(FILE *src, const char *source_path, int pass,
                            OutputBuffer *buf, uint32_t code_base,
-                           size_t depth, const char **include_stack) {
+                           size_t depth, const char **include_stack)
+{
   char line[1024];
   size_t line_num = 1;
   int errors = 0;
-  const char *outer_file = g_src_file;   // restored when an INCLUDE returns
+  const char *outer_file = g_src_file; // restored when an INCLUDE returns
   g_src_file = source_path;
 
-  while (fgets(line, sizeof(line), src)) {
+  while (fgets(line, sizeof(line), src))
+  {
     strip_comment(line);
-    if (line[0] == '\0') {
+    if (line[0] == '\0')
+    {
       line_num++;
       continue;
     }
 
     char label[64];
     const char *code = split_label(line, label, sizeof label, line_num);
-    if (!code) {
+    if (!code)
+    {
       errors++;
       line_num++;
       continue;
@@ -159,10 +170,12 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     sscanf(code, "%15s", first_token);
     int equ_line = directive_is_equ(first_token);
 
-    if (label[0] && pass == 1 && !equ_line) {
+    if (label[0] && pass == 1 && !equ_line)
+    {
       size_t prev;
       const char *prev_file;
-      if (symtab_define(label, buf->size, line_num, &prev, &prev_file) != 0) {
+      if (symtab_define(label, buf->size, line_num, &prev, &prev_file) != 0)
+      {
         fprintf(stderr,
                 "Error in %s at line %zu: label '%s' already defined in %s at line %zu\n",
                 g_src_file, line_num, label, prev_file, prev);
@@ -170,60 +183,80 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       }
     }
 
-    if (directive_is_include(first_token)) {
+    if (directive_is_include(first_token))
+    {
       const char *include_arg;
       size_t include_len;
       size_t column;
       if (!parse_include_path(line, code, &include_arg, &include_len,
-              &column)) {
+                              &column))
+      {
         fprintf(stderr,
                 "Error in %s at line %zu, column %zu: INCLUDE requires one path\n", g_src_file,
                 line_num, column);
         errors++;
-      } else {
+      }
+      else
+      {
         char *include_name = malloc(include_len + 1);
-        if (!include_name) {
+        if (!include_name)
+        {
           fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
                   line_num, column);
           errors++;
-        } else {
+        }
+        else
+        {
           memcpy(include_name, include_arg, include_len);
           include_name[include_len] = '\0';
           char *resolved_path = resolve_include_path(source_path, include_name);
           free(include_name);
-          if (!resolved_path) {
+          if (!resolved_path)
+          {
             fprintf(stderr, "Error in %s at line %zu, column %zu: out of memory\n", g_src_file,
                     line_num, column);
             errors++;
-          } else if (depth >= MAX_INCLUDE_DEPTH) {
+          }
+          else if (depth >= MAX_INCLUDE_DEPTH)
+          {
             fprintf(stderr,
                     "Error in %s at line %zu, column %zu: INCLUDE nesting exceeds %d\n", g_src_file,
                     line_num, column, MAX_INCLUDE_DEPTH);
             errors++;
             free(resolved_path);
-          } else {
+          }
+          else
+          {
             int cycle = 0;
-            for (size_t i = 0; i <= depth; i++) {
-              if (strcmp(include_stack[i], resolved_path) == 0) {
+            for (size_t i = 0; i <= depth; i++)
+            {
+              if (strcmp(include_stack[i], resolved_path) == 0)
+              {
                 cycle = 1;
                 break;
               }
             }
-            if (cycle) {
+            if (cycle)
+            {
               fprintf(stderr,
                       "Error in %s at line %zu, column %zu: recursive INCLUDE '%s'\n", g_src_file,
                       line_num, column, resolved_path);
               errors++;
               free(resolved_path);
-            } else {
+            }
+            else
+            {
               FILE *included = fopen(resolved_path, "r");
-              if (!included) {
+              if (!included)
+              {
                 fprintf(stderr,
                         "Error in %s at line %zu, column %zu: cannot open INCLUDE '%s'\n", g_src_file,
                         line_num, column, resolved_path);
                 errors++;
                 free(resolved_path);
-              } else {
+              }
+              else
+              {
                 include_stack[depth + 1] = resolved_path;
                 errors += assemble_source(included, resolved_path, pass, buf,
                                           code_base, depth + 1, include_stack);
@@ -238,40 +271,45 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       continue;
     }
 
-    if (*code == '\0') { /* label-only line */
+    if (*code == '\0')
+    { /* label-only line */
       line_num++;
       continue;
     }
 
     int derr = directive_assemble(code, label, line_num, pass, buf, code_base);
-    if (derr >= 0) {
+    if (derr >= 0)
+    {
       errors += derr;
       line_num++;
       continue;
     }
 
     const OpcodeEntry *entry = parse_line(code, line_num);
-    if (!entry) {
+    if (!entry)
+    {
       errors++;
       line_num++;
       continue;
     }
 
     OpSize size;
-    if (!parse_size_suffix(code, entry, &size, line_num)) {
+    if (!parse_size_suffix(code, entry, &size, line_num))
+    {
       errors++;
       line_num++;
       continue;
     }
 
     Operand ops[entry->operand_count];
-    memset(ops, 0, sizeof ops);   /* operands left out (optional forms) read as OPERAND_NONE */
+    memset(ops, 0, sizeof ops); /* operands left out (optional forms) read as OPERAND_NONE */
     size_t op_count = extract_operands(code, ops, entry->operand_count);
     size_t min_ops = entry->operand_count;
     if (min_ops > 0 && entry->operand_types[min_ops - 1] == OPERAND_OPT_REG)
-      min_ops--;   /* trailing optional operand */
+      min_ops--; /* trailing optional operand */
 
-    if (op_count < min_ops || op_count > entry->operand_count) {
+    if (op_count < min_ops || op_count > entry->operand_count)
+    {
       if (min_ops == entry->operand_count)
         fprintf(stderr, "Error in %s at line %zu: expected %zu operands, got %zu\n", g_src_file,
                 line_num, entry->operand_count, op_count);
@@ -285,14 +323,19 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 
     /* Each operand must be the kind the opcode table asks for. */
     int ok = 1;
-    for (size_t i = 0; i < op_count; i++) {
-      if (ops[i].type == OPERAND_BAD) {
+    for (size_t i = 0; i < op_count; i++)
+    {
+      if (ops[i].type == OPERAND_BAD)
+      {
         fprintf(stderr,
                 "Error in %s at line %zu: operand %zu '%s' is malformed (address "
-                "register modes are (An), (An)+ and -(An), no spaces inside)\n", g_src_file,
+                "register modes are (An), (An)+ and -(An), no spaces inside)\n",
+                g_src_file,
                 line_num, i + 1, ops[i].value.label);
         ok = 0;
-      } else if (!operand_matches(entry->operand_types[i], ops[i].type)) {
+      }
+      else if (!operand_matches(entry->operand_types[i], ops[i].type))
+      {
         fprintf(stderr, "Error in %s at line %zu: operand %zu has the wrong type for %s\n", g_src_file,
                 line_num, i + 1, entry->mnemonic);
         ok = 0;
@@ -301,11 +344,15 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 
     /* Label operands become absolute addresses. In pass 1 the label may
        not be defined yet, so a placeholder of the same size is used. */
-    for (size_t i = 0; ok && i < op_count; i++) {
-      if (ops[i].type == OPERAND_IMMEDIATE && ops[i].symbol) {
-        if (pass == 2) {
+    for (size_t i = 0; ok && i < op_count; i++)
+    {
+      if (ops[i].type == OPERAND_IMMEDIATE && ops[i].symbol)
+      {
+        if (pass == 2)
+        {
           int32_t value;
-          if (!symtab_find_equ(ops[i].symbol, &value)) {
+          if (!symtab_find_equ(ops[i].symbol, &value))
+          {
             fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
                     line_num, ops[i].symbol);
             ok = 0;
@@ -315,11 +362,14 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
         }
         continue;
       }
-      if (ops[i].type != OPERAND_LABEL) continue;
+      if (ops[i].type != OPERAND_LABEL)
+        continue;
       int32_t addr = 0;
-      if (pass == 2) {
+      if (pass == 2)
+      {
         size_t off;
-        if (!symtab_find(ops[i].value.label, &off)) {
+        if (!symtab_find(ops[i].value.label, &off))
+        {
           fprintf(stderr, "Error in %s at line %zu: undefined label '%s'\n", g_src_file,
                   line_num, ops[i].value.label);
           ok = 0;
@@ -331,16 +381,19 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       ops[i].value.imm = addr;
     }
 
-    if (!ok) {
+    if (!ok)
+    {
       errors++;
       line_num++;
       continue;
     }
 
     codegen_set_context(code_base + (uint32_t)buf->size, pass == 2);
-    if (emit_code(entry, ops, size, buf) != 0) {
+    if (emit_code(entry, ops, size, buf) != 0)
+    {
       const char *why = codegen_error();
-      if (why) {
+      if (why)
+      {
         fprintf(stderr, "Error in %s at line %zu: %s\n", g_src_file, line_num, why);
         errors++;
         line_num++;
@@ -348,7 +401,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       }
       fprintf(stderr,
               "Error in %s at line %zu: can't encode %s with these operands on this "
-              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n", g_src_file,
+              "target (supported registers: D0-D7 and A0; LEA needs an A register; ADD/SUB/MULU/MULS/DIVU/DIVS need a D register destination)\n",
+              g_src_file,
               line_num, entry->mnemonic);
       errors++;
     }
@@ -361,7 +415,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
 }
 
 static int assemble_pass(FILE *src, const char *source_path, int pass,
-                         OutputBuffer *buf, uint32_t code_base) {
+                         OutputBuffer *buf, uint32_t code_base)
+{
   const char *include_stack[MAX_INCLUDE_DEPTH + 1];
   include_stack[0] = source_path;
   int errors = assemble_source(src, source_path, pass, buf, code_base, 0,
@@ -474,8 +529,12 @@ int main(int argc, char *argv[])
     // The TRAP dispatcher follows the code (and the writer's epilogue); like
     // the register block, its address is only known once pass 1 has sized
     // the code. 0 tells codegen the target has none.
+    // (ARM pads the code to a whole number of words first, see code_align.)
+    uint32_t code_len = (uint32_t)buf.size;
+    if (target->code_align > 1)
+      code_len = (code_len + target->code_align - 1) / target->code_align * target->code_align;
     codegen_set_dispatcher(target->dispatcher_off
-                               ? target->code_base + (uint32_t)buf.size + target->dispatcher_off
+                               ? target->code_base + code_len + target->dispatcher_off
                                : 0);
     if (target->has_regfile)
     {
@@ -486,7 +545,7 @@ int main(int argc, char *argv[])
       uint32_t regfile = REGFILE_ALIGN_UP(target->code_base + (uint32_t)buf.size +
                                           target->code_tail);
       codegen_set_regfile(regfile);
-      //printf("Register block at 0x%08X (%d bytes)\n", regfile, REGFILE_SIZE);
+      // printf("Register block at 0x%08X (%d bytes)\n", regfile, REGFILE_SIZE);
     }
     rewind(src);
     buf.size = 0; /* discard pass-1 output */

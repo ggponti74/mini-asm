@@ -13,18 +13,21 @@
 // no scattered if/else chains, just a call through target->write().
 typedef void (*platform_write_fn)(const char *filename, const OutputBuffer *buf);
 
-typedef struct {
-    const char       *name;           // canonical id, e.g. "x86", "arm" (matched case-insensitively)
-    const char       *description;    // short human-readable summary, for -h/--help
-    const char       *cpu_arch;       // instruction-encoding table to select, see opcodes_select_arch()
-    const char       *default_ext;    // appended to the derived output name, e.g. ".exe" or "" for none
-    bool              needs_exec_bit; // true if the output should get chmod +x on POSIX hosts
-    uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
-    bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
-    uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
-    uint32_t          dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
-                                      // (inside code_tail); 0 = this target has no dispatcher
-    platform_write_fn write;          // emits the final executable from the assembled buffer
+typedef struct
+{
+    const char *name;        // canonical id, e.g. "x86", "arm" (matched case-insensitively)
+    const char *description; // short human-readable summary, for -h/--help
+    const char *cpu_arch;    // instruction-encoding table to select, see opcodes_select_arch()
+    const char *default_ext; // appended to the derived output name, e.g. ".exe" or "" for none
+    bool needs_exec_bit;     // true if the output should get chmod +x on POSIX hosts
+    uint32_t code_base;      // absolute address where byte 0 of the assembled code is loaded
+    bool has_regfile;        // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
+    uint32_t code_align;     // the writer pads the code to a multiple of this before what follows
+                             // it (the epilogue, dispatcher, register block); 0 = no padding
+    uint32_t code_tail;      // bytes the writer appends after the code, before the register block
+    uint32_t dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
+                             // (inside code_tail); 0 = this target has no dispatcher
+    platform_write_fn write; // emits the final executable from the assembled buffer
 } PlatformTarget;
 
 // Look up a target by name (case-insensitive). Returns NULL if unknown.

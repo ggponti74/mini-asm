@@ -1,335 +1,203 @@
-diff --git a/lib/std.asm b/lib/std.asm
+diff --git a/src/arm_elf_writer.c b/src/arm_elf_writer.c
+index 0e5ec0c..5179ab7 100644
+--- a/src/arm_elf_writer.c
++++ b/src/arm_elf_writer.c
+@@ -2,6 +2,7 @@
+ #include <stdio.h>
+ 
+ #include "arm_elf_writer.h"
++#include "core.h"
+ 
+ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+   if (!buf)
+@@ -13,7 +14,8 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+   const uint32_t padded_size = ((uint32_t)buf->size + 3u) & ~3u;
+   const uint32_t epilogue_addr = code_addr + padded_size;
+   const uint32_t entry_addr = epilogue_addr;
+-  const uint32_t total_size = padded_size + EPILOGUE_SIZE;
++  // layout: code | epilogue (EPILOGUE_SIZE) | TRAP dispatcher | register block
++  const uint32_t total_size = padded_size + EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE;
+   const uint32_t regfile_addr = REGFILE_ALIGN_UP(code_addr + total_size);
+ 
+   FILE *f = fopen(filename, "wb");
+@@ -109,5 +111,16 @@ void write_arm_elf(const char *filename, const OutputBuffer *buf) {
+     fwrite(bytes, 1, 4, f);
+   }
+ 
++  // --- TRAP #0 dispatcher, right after the epilogue (codegen BLs to it) ---
++  uint8_t dispatcher[CORE_ARM_DISPATCHER_SIZE];
++  int dn = core_emit_dispatcher("arm", dispatcher, sizeof(dispatcher));
++  if (dn != CORE_ARM_DISPATCHER_SIZE) {
++    fprintf(stderr, "internal error: ARM dispatcher is %d bytes, expected %d\n",
++            dn, CORE_ARM_DISPATCHER_SIZE);
++    fclose(f);
++    return;
++  }
++  fwrite(dispatcher, 1, (size_t)dn, f);
++
+   fclose(f);
+ }
+diff --git a/src/codegen.c b/src/codegen.c
+index 3e6da4b..82a8268 100644
+--- a/src/codegen.c
++++ b/src/codegen.c
+@@ -2359,20 +2359,39 @@ static const struct { const char *mnemonic; uint32_t cond; } k_arm_bcc[] = {
+     {"BGE", 0xA}, {"BLT", 0xB}, {"BGT", 0xC}, {"BLE", 0xD},
+ };
+ 
+-// TRAP #0 -> E8 cd    call rel32 to the target's service dispatcher (core.c).
+-// Same stack protocol as BSR: CALL pushes the return address, the dispatcher
+-// ends with RET. The dispatcher preserves every register except D0 and sets
+-// N/Z from D0, so the caller sees the 68K convention described in core.c.
+-// Only vector 0 exists; the other vectors are left free for later.
++// TRAP #0 -> call the target's service dispatcher (core.c). The dispatcher
++// preserves every register except D0 and sets N/Z from D0 (C and V cleared),
++// so the caller sees the 68K convention described in core.c. Only vector 0
++// exists; the other vectors are left free for later.
++//
++//   x86  E8 cd       call rel32; CALL pushes the return address and the
++//                    dispatcher ends with RET (the stack protocol of BSR).
++//   ARM  push {lr}   the 68K registers live in the register block, which the
++//        ldr r12,=block   dispatcher finds through r12 (every other ARM
++//        bl dispatcher    instruction loads r12 itself, so nothing else holds
++//        pop {lr}         it); lr is saved around the BL like JSR does. 24 bytes.
+ static bool emit_trap(const Operand *operands, OutputBuffer *out) {
+     if (operands[0].type != OPERAND_IMMEDIATE)
+         return fail("TRAP needs a vector number, e.g. TRAP #0");
+     if (operands[0].value.imm != 0)
+         return fail("only TRAP #0 is implemented (the mini-asm services)");
+     const char *arch = opcodes_active_arch_name();
+-    if (!arch || strcmp(arch, "x86") != 0 || (g_final_pass && g_dispatcher == 0))
++    bool arm = arch && strcmp(arch, "arm") == 0;
++    if (!arch || (!arm && strcmp(arch, "x86") != 0) || (g_final_pass && g_dispatcher == 0))
+         return fail("TRAP is not supported on this target yet");
+ 
++    if (arm) {
++        arm_write_word(out, 0xE92D4000u);                 // push {lr}
++        arm_load_literal(out, 12, codegen_regfile_base()); // ldr r12,=block (3 words)
++        int64_t delta = g_final_pass
++            ? (int64_t)g_dispatcher - (int64_t)(g_pc + 16 + 8) : 0;  // the BL is word 4
++        if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
++            return fail("ARM branch target is outside the encodable range");
++        arm_write_word(out, 0xEB000000u | ((uint32_t)(delta >> 2) & 0x00FFFFFFu)); // bl dispatcher
++        arm_write_word(out, 0xE8BD4000u);                 // pop {lr}
++        return true;
++    }
++
+     int32_t rel = 0;  // pass 1 only reserves space
+     if (g_final_pass)
+         rel = (int32_t)(g_dispatcher - (g_pc + 5));
+diff --git a/src/main.c b/src/main.c
+index b13a017..f3bb4ed 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -474,8 +474,12 @@ int main(int argc, char *argv[])
+     // The TRAP dispatcher follows the code (and the writer's epilogue); like
+     // the register block, its address is only known once pass 1 has sized
+     // the code. 0 tells codegen the target has none.
++    // (ARM pads the code to a whole number of words first, see code_align.)
++    uint32_t code_len = (uint32_t)buf.size;
++    if (target->code_align > 1)
++      code_len = (code_len + target->code_align - 1) / target->code_align * target->code_align;
+     codegen_set_dispatcher(target->dispatcher_off
+-                               ? target->code_base + (uint32_t)buf.size + target->dispatcher_off
++                               ? target->code_base + code_len + target->dispatcher_off
+                                : 0);
+     if (target->has_regfile)
+     {
+diff --git a/src/opcodes.c b/src/opcodes.c
+index 6e46462..c0fc7fc 100644
+--- a/src/opcodes.c
++++ b/src/opcodes.c
+@@ -118,7 +118,8 @@ static const OpcodeEntry arm_opcode_table[] = {
+     {"CMPI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+     {"BRA", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+     {"BSR", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+-    // TRAP is recognized so the user gets a clear message; no ARM dispatcher yet.
++    // TRAP #0: mini-asm service call. codegen.c emits push {lr}; ldr r12,=block;
++    // bl dispatcher; pop {lr} (24 bytes); the size field here is a placeholder.
+     {"TRAP", 0x00, 4, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+     {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+diff --git a/src/platform.c b/src/platform.c
+index 4c7f7bc..6afc963 100644
+--- a/src/platform.c
++++ b/src/platform.c
+@@ -43,7 +43,9 @@ static const PlatformTarget k_targets[] = {
+         .needs_exec_bit = true,
+         .code_base = 0x00008000,
+         .has_regfile    = true,
+-        .code_tail      = EPILOGUE_SIZE,
++        .code_align     = 4,
++        .code_tail      = EPILOGUE_SIZE + CORE_ARM_DISPATCHER_SIZE,  // epilogue, then the TRAP dispatcher
++        .dispatcher_off = EPILOGUE_SIZE,
+         .write          = write_arm_elf,
+     },
+     {
+diff --git a/src/platform.h b/src/platform.h
+index 06cfc74..879e4cd 100644
+--- a/src/platform.h
++++ b/src/platform.h
+@@ -21,6 +21,8 @@ typedef struct {
+     bool              needs_exec_bit; // true if the output should get chmod +x on POSIX hosts
+     uint32_t          code_base;      // absolute address where byte 0 of the assembled code is loaded
+     bool              has_regfile;    // true if the writer reserves the emulated-register block (REGFILE_SIZE bytes)
++    uint32_t          code_align;     // the writer pads the code to a multiple of this before what follows
++                                      // it (the epilogue, dispatcher, register block); 0 = no padding
+     uint32_t          code_tail;      // bytes the writer appends after the code, before the register block
+     uint32_t          dispatcher_off; // where the TRAP #0 dispatcher sits, in bytes after the end of the code
+                                       // (inside code_tail); 0 = this target has no dispatcher
+diff --git a/tests/run.sh b/tests/run.sh
+index a29a88a..47d0fa6 100644
+--- a/tests/run.sh
++++ b/tests/run.sh
+@@ -11,8 +11,7 @@
+ #    their first line ("; EXPECT: <extended regex>").
+ # 3. tests/arm/*.asm: ARM programs, run with qemu-arm when available (exit code must match "; EXIT: n").
+ # 4. tests/trap/*.asm: TRAP #0 services (files etc.), exit code 0 = pass, N = test N failed. They
+-#    run in a scratch directory (they create files). ELF always; ARM when TRAP is wired up for it
+-#    and qemu-arm exists. tests/trap/pe_dispatcher_test.c checks the PE dispatcher against fake
++#    run in a scratch directory (they create files), on the ELF target and, with qemu-arm, on ARM. tests/trap/pe_dispatcher_test.c checks the PE dispatcher against fake
+ #    kernel32 functions when a 32-bit gcc (gcc -m32) works.
+ # 5. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
+ 
+@@ -102,10 +101,10 @@ for src in "$DIR"/trap/*.asm; do
+     if ! "$ASM" -t elf -o "$TMP/trap.elf" "$src" >"$TMP/asm.log" 2>&1; then
+         echo "FAIL   $name   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1)); continue
+     fi
+-    (cd "$TMP/work" && "$TMP/trap.elf"); report "$name" $?
++    (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$name" $?
+     if command -v qemu-arm >/dev/null 2>&1; then
+         if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
+-            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" 2>/dev/null); report "$name (arm)" $?
++            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$name (arm)" $?
+         elif grep -q "not supported" "$TMP/asm.log"; then
+             echo "SKIP   $name (arm)   (TRAP is not supported on the ARM target yet)"
+         else
+diff --git a/tests/trap/odd_size.asm b/tests/trap/odd_size.asm
 new file mode 100644
-index 0000000..462fb48
+index 0000000..0fea84a
 --- /dev/null
-+++ b/lib/std.asm
-@@ -0,0 +1,124 @@
-+; std.asm - small runtime library for mini-asm programs, written in plain 68K
-+; on top of the TRAP #0 services (see src/core.c). Use it with
-+;
-+;         include "lib/std.asm"        ; path is relative to the including file
-+;
-+; It may sit anywhere in your program: it jumps over itself, so it never
-+; runs by accident. Include it once. Call the routines with BSR.
-+;
-+; Routine         In                          Out / what it clobbers
-+; --------------  --------------------------  ------------------------------------
-+; strlen          A0 = NUL-terminated string  D0 = length (without the NUL)
-+;                                             clobbers A1; A0 is kept
-+; strcpy          A0 = source, A1 = dest      D0 = length copied (without the NUL)
-+;                                             the NUL is copied too; A0 and A1 are
-+;                                             left just past it
-+; print           A0 = NUL-terminated string  writes it to stdout
-+;                                             D0 = bytes written, or negative error
-+;                                             clobbers D1, D2, A1; A0 is kept
-+; println         A0 = NUL-terminated string  like print, then a newline
-+; utoa            D0 = unsigned 32-bit value  writes decimal digits + NUL at A0
-+;                 A0 = buffer (11 bytes)      D0 = number of digits
-+;                                             clobbers D1, D2, A1, A2; A0 is kept
-+; print_dec       D0 = unsigned 32-bit value  prints it in decimal to stdout
-+;                                             D0 = bytes written, or negative error
-+;                                             clobbers D1, D2, A0, A1, A2
-+;
-+; Everything else (D3, D5, D7, A3-A7) is preserved. D4 is ESP and D6 shares
-+; ESI with A0 on the x86 target, so these routines never touch D4 or D6.
-+; The routines are not re-entrant (print_dec uses one static buffer) and
-+; print does not retry a short write.
-+;
-+; These names are global labels; an internal label starts with _std_.
-+
-+        bra     _std_end
-+
-+; ---- strlen ----------------------------------------------------------
-+strlen:
-+        move.l  a0, a1
-+        clr.l   d0
-+_std_strlen1:
-+        tst.b   (a1)+
-+        beq     _std_strlen2
-+        addq.l  #1, d0
-+        bra     _std_strlen1
-+_std_strlen2:
-+        rts
-+
-+; ---- strcpy ----------------------------------------------------------
-+strcpy:
-+        clr.l   d0
-+_std_strcpy1:
-+        move.b  (a0)+, (a1)+        ; sets Z when the NUL has been copied
-+        beq     _std_strcpy2
-+        addq.l  #1, d0
-+        bra     _std_strcpy1
-+_std_strcpy2:
-+        rts
-+
-+; ---- print / println -------------------------------------------------
-+print:
-+        bsr     strlen              ; D0 = length, A0 kept
-+        move.l  d0, d2              ; D2 = length
-+        moveq   #2, d0              ; service 2 = write
-+        moveq   #1, d1              ; fd 1 = stdout
-+        trap    #0                  ; A0 = buffer
-+        rts
-+
-+println:
-+        bsr     print
-+        tst.l   d0
-+        bmi     _std_println1       ; the string failed: skip the newline
-+        lea     _std_nl, a0
-+        bsr     print
-+_std_println1:
-+        rts
-+
-+; ---- utoa ------------------------------------------------------------
-+; Unsigned decimal by repeated subtraction of 10^9 ... 10^0: there is no
-+; shift or SWAP here, and DIVU.W only has a 16-bit quotient, so this is
-+; the simple way to cover the whole 32-bit range.
-+utoa:
-+        move.l  a0, a1              ; A1 = write pointer, A0 stays at the start
-+        lea     _std_pow10, a2      ; A2 walks the table of powers of ten
-+        move.l  d0, d1              ; D1 = what is left to convert
-+_std_utoa1:
-+        move.l  (a2)+, d2           ; D2 = current power of ten
-+        moveq   #0, d0              ; D0 = this digit
-+_std_utoa2:
-+        cmp.l   d2, d1
-+        blo     _std_utoa3          ; value < power: digit is done
-+        sub.l   d2, d1
-+        addq.l  #1, d0
-+        bra     _std_utoa2
-+_std_utoa3:
-+        tst.l   d0
-+        bne     _std_utoa4          ; non-zero digit: write it
-+        cmpa.l  a0, a1
-+        bne     _std_utoa4          ; digits already started: zeros count
-+        cmp.l   #1, d2
-+        bne     _std_utoa1          ; leading zero: skip (but 10^0 always prints)
-+_std_utoa4:
-+        add.b   #48, d0             ; '0' + digit
-+        move.b  d0, (a1)+
-+        cmp.l   #1, d2
-+        bne     _std_utoa1          ; more powers to go
-+        clr.b   (a1)                ; terminating NUL
-+        move.l  a1, d0
-+        move.l  a0, d1
-+        sub.l   d1, d0              ; D0 = number of digits
-+        rts
-+
-+; ---- print_dec -------------------------------------------------------
-+print_dec:
-+        lea     _std_numbuf, a0
-+        bsr     utoa
-+        bra     print               ; tail call: print returns to our caller
-+
-+; ---- data ------------------------------------------------------------
-+_std_nl:     dc.b    10, 0
-+_std_numbuf: dc.b    0,0,0,0,0,0,0,0,0,0,0,0
-+_std_pow10:  dc.l    1000000000, 100000000, 10000000, 1000000, 100000
-+             dc.l    10000, 1000, 100, 10, 1
-+
-+_std_end:
-diff --git a/tests/trap/std_print.asm b/tests/trap/std_print.asm
-new file mode 100644
-index 0000000..088ed42
---- /dev/null
-+++ b/tests/trap/std_print.asm
-@@ -0,0 +1,29 @@
-+; EXIT: 0
-+; STDOUT: Hello 0 7 10 100 1234567890 4294967295 end
-+; lib/std.asm: print, print_dec, println (and the whole 32-bit unsigned range)
-+        include "../../lib/std.asm"
-+start:  lea     hello, a0
-+        bsr     print
-+        moveq   #0, d0
-+        bsr     num
-+        moveq   #7, d0
-+        bsr     num
-+        moveq   #10, d0
-+        bsr     num
-+        moveq   #100, d0
-+        bsr     num
-+        move.l  #1234567890, d0
-+        bsr     num
-+        move.l  #$FFFFFFFF, d0
-+        bsr     num
-+        lea     endmsg, a0
-+        bsr     println
-+        moveq   #0, d1              ; exit(0)
-+        moveq   #1, d0
++++ b/tests/trap/odd_size.asm
+@@ -0,0 +1,21 @@
++; odd_size.asm - TRAP #0 still reaches the dispatcher when the program's size
++; is not a multiple of 4 (the ARM writer pads the code, so the dispatcher
++; address has to include the padding). Writes 3 bytes to stdout.
++; Exit 0 = pass, N = test N failed.
++start:
++        moveq   #1, d7
++        move.l  #1, d1              ; fd 1 = stdout
++        lea     msg, a0
++        move.l  #3, d2
++        move.l  #2, d0              ; service 2 = write
 +        trap    #0
-+num:    bsr     print_dec           ; value in D0
-+        lea     space, a0
-+        bra     print               ; tail call
-+hello:  dc.b    "Hello ", 0
-+space:  dc.b    " ", 0
-+endmsg: dc.b    "end", 0
-diff --git a/tests/trap/std_strings.asm b/tests/trap/std_strings.asm
-new file mode 100644
-index 0000000..14ffb7a
---- /dev/null
-+++ b/tests/trap/std_strings.asm
-@@ -0,0 +1,164 @@
-+; EXIT: 0
-+; STDOUT: Hello12345
-+; lib/std.asm: strlen, strcpy, utoa, and the return values and preserved
-+; registers of print / print_dec. On a failure the exit status is the number
-+; of the check (kept in D3).
-+        include "../../lib/std.asm"
-+start:  move.l  #$DEADBEEF, d5      ; these must survive every library call
-+        move.l  #$CAFEF00D, d7
-+        lea     tbuf, a3
-+
-+        ; ---- 1: strlen("") --------------------------------------
-+        moveq   #1, d3
-+        lea     empty, a0
-+        bsr     strlen
-+        tst.l   d0
++        cmp.l   #3, d0
 +        bne     fail
-+        ; ---- 2: strlen("Hello"), A0 is kept ----------------------
-+        moveq   #2, d3
-+        lea     hello, a0
-+        bsr     strlen
-+        cmp.l   #5, d0
-+        bne     fail
-+        lea     hello, a2
-+        cmpa.l  a2, a0
-+        bne     fail
-+        ; ---- 3: strcpy: length, NUL copied, pointers end past it --
-+        moveq   #3, d3
-+        lea     hello, a0
-+        lea     dbuf, a1
-+        bsr     strcpy
-+        cmp.l   #5, d0
-+        bne     fail
-+        lea     hello, a2
-+        addq.l  #6, a2
-+        cmpa.l  a2, a0
-+        bne     fail
-+        lea     dbuf, a2
-+        addq.l  #6, a2
-+        cmpa.l  a2, a1
-+        bne     fail
-+        lea     dbuf, a0
-+        bsr     strlen
-+        cmp.l   #5, d0
-+        bne     fail
-+        ; ---- 4: strcpy of "" overwrites junk with just the NUL ----
-+        moveq   #4, d3
-+        lea     empty, a0
-+        lea     dbuf, a1
-+        bsr     strcpy
-+        tst.l   d0
-+        bne     fail
-+        lea     dbuf, a0
-+        bsr     strlen
-+        tst.l   d0
-+        bne     fail
-+        ; ---- 5..11: utoa ------------------------------------------
-+        moveq   #5, d3
-+        moveq   #0, d0
-+        lea     s0, a4
-+        bsr     chk_utoa
-+        moveq   #6, d3
-+        moveq   #7, d0
-+        lea     s7, a4
-+        bsr     chk_utoa
-+        moveq   #7, d3
-+        moveq   #10, d0
-+        lea     s10, a4
-+        bsr     chk_utoa
-+        moveq   #8, d3
-+        moveq   #100, d0
-+        lea     s100, a4
-+        bsr     chk_utoa
-+        moveq   #9, d3
-+        move.l  #1000, d0
-+        lea     s1000, a4
-+        bsr     chk_utoa
-+        moveq   #10, d3
-+        move.l  #1000000000, d0
-+        lea     s1e9, a4
-+        bsr     chk_utoa
-+        moveq   #11, d3
-+        move.l  #$FFFFFFFF, d0
-+        lea     smax, a4
-+        bsr     chk_utoa
-+        ; ---- 12: print: bytes written, A0 kept; "" writes 0 -------
-+        moveq   #12, d3
-+        lea     hello, a0
-+        bsr     print
-+        cmp.l   #5, d0
-+        bne     fail
-+        lea     hello, a2
-+        cmpa.l  a2, a0
-+        bne     fail
-+        moveq   #13, d3
-+        lea     empty, a0
-+        bsr     print
-+        tst.l   d0
-+        bne     fail
-+        ; ---- 14: print_dec returns the byte count ------------------
-+        moveq   #14, d3
-+        move.l  #12345, d0
-+        bsr     print_dec
-+        cmp.l   #5, d0
-+        bne     fail
-+        ; ---- 15: D3, D5, D7 and A3 survived everything -----------
-+        moveq   #15, d3
-+        cmp.l   #$DEADBEEF, d5
-+        bne     fail
-+        cmp.l   #$CAFEF00D, d7
-+        bne     fail
-+        lea     tbuf, a2
-+        cmpa.l  a2, a3
-+        bne     fail
-+        moveq   #0, d1              ; exit(0)
-+        moveq   #1, d0
-+        trap    #0
-+fail:   move.l  d3, d1              ; exit(check number)
-+        moveq   #1, d0
-+        trap    #0
-+
-+; utoa D0 into nbuf and compare with the string at A4. A0 must come back
-+; pointing at the buffer, and the reported length must match.
-+chk_utoa:
-+        lea     nbuf, a0
-+        bsr     utoa
-+        move.l  d0, d1              ; D1 = reported digit count
-+        lea     nbuf, a2
-+        cmpa.l  a2, a0
-+        bne     fail
-+        move.l  a4, a0
-+        bsr     strlen              ; D0 = expected digit count
-+        cmp.l   d1, d0
-+        bne     fail
-+        lea     nbuf, a0
-+        move.l  a4, a1
-+        bsr     streq
-+        tst.l   d0
-+        bne     fail
-+        rts
-+
-+; streq: A0, A1 = strings -> D0 = 0 when equal
-+streq:  move.b  (a0)+, d2
-+        move.b  (a1)+, d1
-+        cmp.b   d1, d2
-+        bne     streq2
-+        tst.b   d2
-+        bne     streq
 +        moveq   #0, d0
 +        rts
-+streq2: moveq   #1, d0
++fail:   move.l  d7, d0
 +        rts
-+
-+empty:  dc.b    0
-+hello:  dc.b    "Hello", 0
-+s0:     dc.b    "0", 0
-+s7:     dc.b    "7", 0
-+s10:    dc.b    "10", 0
-+s100:   dc.b    "100", 0
-+s1000:  dc.b    "1000", 0
-+s1e9:   dc.b    "1000000000", 0
-+smax:   dc.b    "4294967295", 0
-+dbuf:   dc.b    $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
-+nbuf:   dc.b    $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
-+tbuf:   dc.b    0
++msg     dc.b    "ok", 10
++        dc.b    0
++        dc.b    0
++        dc.b    0

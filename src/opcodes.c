@@ -14,11 +14,11 @@
 // instead of a build-time #if.
 static const OpcodeEntry x86_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
-    {"RTS", 0xC3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "RET"
-    {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // x86 "NOP"
+    {"RTS", 0xC3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0}, // x86 "RET"
+    {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0}, // x86 "NOP"
     // MOVE also takes memory operands through an address register: (An), (An)+, -(An)
     {"MOVE", 0x89, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REG_OR_MEM}, SIZES_BWL}, // x86 "MOV"
-    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},   // x86 "LEA r32, [disp32]"
+    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},       // x86 "LEA r32, [disp32]"
     // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
     // or 01 /r (reg) depending on the source operand kind.
     {"ADD", 0x01, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
@@ -45,7 +45,7 @@ static const OpcodeEntry x86_opcode_table[] = {
     // CMPA <src>, An      (.w or .l only; a .w source is sign-extended)
     // CMPI #imm, Dn
     // CMPM needs memory operands and isn't supported yet.
-    {"CMP",  0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
+    {"CMP", 0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
     {"CMPA", 0x39, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W | SIZES_L},
     {"CMPI", 0x39, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
@@ -83,26 +83,26 @@ static const OpcodeEntry x86_opcode_table[] = {
     // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
     // ASL/ASR/LSL/LSR/ROL/ROR  Dx|#1..8, Dy   or   <mem> (word, one bit)
     // ROXL/ROXR need the X flag, which isn't modelled yet, so they're not here.
-    {"NOT",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
-    {"NEG",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NOT", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NEG", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
     {"SWAP", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W},
-    {"EXT",  0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
+    {"EXT", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
     {"BTST", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BSET", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BCLR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BCHG", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
-    {"ASL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ASR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"LSL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"LSR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ROL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ROR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
 };
 
 static const OpcodeEntry arm_opcode_table[] = {
     // mnemonic, opcode, size (bytes), length (words), operand_count, operand_types[]
-    {"RTS", 0x1EFF2FE1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // ARM32 "BX LR"
-    {"NOP", 0x0000A0E1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},           // ARM32 "MOV r0, r0"
+    {"RTS", 0x1EFF2FE1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0}, // ARM32 "BX LR"
+    {"NOP", 0x0000A0E1, 4, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0}, // ARM32 "MOV r0, r0"
     // Opcode words below are placeholders: codegen.c emits the real ARM
     // instruction sequences (the 68K registers live in the register block).
     {"MOVE", 0xE0D1F002, 4, 1, 2, {OPERAND_EA_SRC, OPERAND_REG_OR_MEM}, SIZES_BWL},
@@ -113,12 +113,13 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
     {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
     {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"CMP",  0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
+    {"CMP", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
     {"CMPA", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W | SIZES_L},
     {"CMPI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
     {"BRA", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BSR", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-    // TRAP is recognized so the user gets a clear message; no ARM dispatcher yet.
+    // TRAP #0: mini-asm service call. codegen.c emits push {lr}; ldr r12,=block;
+    // bl dispatcher; pop {lr} (24 bytes); the size field here is a placeholder.
     {"TRAP", 0x00, 4, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
     {"BLS", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
@@ -153,20 +154,20 @@ static const OpcodeEntry arm_opcode_table[] = {
     // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
     // ASL/ASR/LSL/LSR/ROL/ROR  Dx|#1..8, Dy   or   <mem> (word, one bit)
     // ROXL/ROXR need the X flag, which isn't modelled yet, so they're not here.
-    {"NOT",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
-    {"NEG",  0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NOT", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+    {"NEG", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
     {"SWAP", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W},
-    {"EXT",  0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
+    {"EXT", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, SIZES_W | SIZES_L},
     {"BTST", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BSET", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BCLR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
     {"BCHG", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_B | SIZES_L},
-    {"ASL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ASR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"LSL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"LSR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ROL",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
-    {"ROR",  0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ASR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"LSR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROL", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
+    {"ROR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
 };
 
 bool operand_is_memory(OperandType t)
@@ -269,16 +270,26 @@ static const char *operand_kind_name(OperandType t)
 {
     switch (t)
     {
-    case OPERAND_REGISTER:   return "reg";
-    case OPERAND_IMMEDIATE:  return "#imm";
-    case OPERAND_LABEL:      return "label";
-    case OPERAND_REG_OR_IMM: return "reg|#imm";
-    case OPERAND_EA_SRC:     return "reg|#imm|mem";
-    case OPERAND_REG_OR_MEM: return "reg|mem";
-    case OPERAND_EA_ALT:     return "reg|mem";
-    case OPERAND_CONTROL:    return "label|(An)";
-    case OPERAND_OPT_REG:    return "[reg]";
-    default:                 return "";
+    case OPERAND_REGISTER:
+        return "reg";
+    case OPERAND_IMMEDIATE:
+        return "#imm";
+    case OPERAND_LABEL:
+        return "label";
+    case OPERAND_REG_OR_IMM:
+        return "reg|#imm";
+    case OPERAND_EA_SRC:
+        return "reg|#imm|mem";
+    case OPERAND_REG_OR_MEM:
+        return "reg|mem";
+    case OPERAND_EA_ALT:
+        return "reg|mem";
+    case OPERAND_CONTROL:
+        return "label|(An)";
+    case OPERAND_OPT_REG:
+        return "[reg]";
+    default:
+        return "";
     }
 }
 
@@ -292,14 +303,18 @@ static int compare_opcode_entries(const void *a, const void *b)
 static void format_opcode_entry(const OpcodeEntry *e, char *cell, size_t size)
 {
     char sizes[8] = "";
-    if (e->size_mask & SIZES_B) strcat(sizes, "b");
-    if (e->size_mask & SIZES_W) strcat(sizes, "w");
-    if (e->size_mask & SIZES_L) strcat(sizes, "l");
+    if (e->size_mask & SIZES_B)
+        strcat(sizes, "b");
+    if (e->size_mask & SIZES_W)
+        strcat(sizes, "w");
+    if (e->size_mask & SIZES_L)
+        strcat(sizes, "l");
 
     char operands[40] = "";
     for (size_t k = 0; k < e->operand_count && k < 2; k++)
     {
-        if (k) strcat(operands, ", ");
+        if (k)
+            strcat(operands, ", ");
         strcat(operands, operand_kind_name(e->operand_types[k]));
     }
 
