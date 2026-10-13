@@ -875,12 +875,73 @@ static int x86_logic_opcode(const char *mnemonic, bool byte, bool memory_to_reg)
     return base + (byte ? 0 : 1) + (memory_to_reg ? 2 : 0);
 }
 
+// AND/OR/EOR #imm,<ea> (ANDI/ORI/EORI): the 80/81 group, /4 AND, /1 OR, /6 XOR.
+// A memory destination is big-endian, so word/long work on a swapped copy in a
+// scratch register, like the register/memory forms below.
+static bool emit_x86_logic_imm(const OpcodeEntry *entry, int32_t imm, const Operand *dst,
+                               OpSize size, OutputBuffer *out)
+{
+    if (size == SIZE_B && (imm < -128 || imm > 255))
+        return fail("the immediate does not fit in a byte");
+    if (size == SIZE_W && (imm < -32768 || imm > 65535))
+        return fail("the immediate does not fit in a word");
+    int ext = strcmp(entry->mnemonic, "AND") == 0 ? 4 : strcmp(entry->mnemonic, "OR") == 0 ? 1 : 6;
+    int bytes = size == SIZE_B ? 1 : size == SIZE_W ? 2 : 4;
+    if (dst->type == OPERAND_REGISTER)
+    {
+        if (dst->value.reg >= 8)
+            return fail("AND/OR/EOR with an immediate need a data register or memory destination");
+        int d = x86_reg_code(dst->value.reg);
+        if (size == SIZE_B && d > 3)
+            return fail(ERR_BYTE_REG);
+        if (size == SIZE_W)
+            buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, size == SIZE_B ? 0x80 : 0x81);
+        buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | d));
+        write_le(out, (uint32_t)imm, bytes);
+        return true;
+    }
+    if (!operand_is_memory(dst->type))
+        return false;
+    int base = x86_reg_code(dst->value.reg);
+    if (!plain_base(base))
+        return fail(ERR_MEM_PTR);
+    mem_pre(out, dst->type, base, op_bytes(size));
+    if (size == SIZE_B)
+    {
+        buffer_write(out, 0x80);
+        write_modrm_mem(out, ext, base);
+        write_le(out, (uint32_t)imm, 1);
+    }
+    else
+    {
+        int t = pick_scratch(1u << base);
+        if (t < 0)
+            return fail(ERR_NO_SCRATCH);
+        write_push(out, t);
+        write_load(out, t, base, size);
+        write_swap(out, t, size);
+        if (size == SIZE_W)
+            buffer_write(out, X86_OPSIZE_PREFIX);
+        buffer_write(out, 0x81);
+        buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | t));
+        write_le(out, (uint32_t)imm, bytes);
+        write_swap(out, t, size);
+        write_store(out, t, base, size);
+        write_pop(out, t);
+    }
+    mem_post(out, dst->type, base, op_bytes(size));
+    return true;
+}
+
 static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
                            OpSize size, OutputBuffer *out)
 {
     const Operand *src = &operands[0], *dst = &operands[1];
     if (size == SIZE_UNSPEC)
         size = DEFAULT_OPSIZE;
+    if (src->type == OPERAND_IMMEDIATE)
+        return emit_x86_logic_imm(entry, src->value.imm, dst, size, out);
     if (src->type == OPERAND_REGISTER && dst->type == OPERAND_REGISTER)
     {
         if (src->value.reg >= 8 || dst->value.reg >= 8)
@@ -2386,6 +2447,7 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
         return true;
     }
     unsigned shift = size == SIZE_B ? 24 : 16;
+    unsigned keep = 32 - shift; // bits above the byte/word, which stay as they are
     arm_mov_shift(out, result, original, false, shift);
     if (opcode == 2 || opcode == 4)
     {
@@ -2393,8 +2455,8 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
         arm_write_word(out, arm_dp_reg_word(opcode, true, result, result, 12));
         arm_write_word(out, 0xE10FC000u); // save arithmetic flags
         arm_mov_shift(out, result, result, true, shift);
-        arm_mov_shift(out, original, original, true, 32 - shift);
-        arm_mov_shift(out, original, original, false, shift);
+        arm_mov_shift(out, original, original, true, keep); // clear the low byte/word
+        arm_mov_shift(out, original, original, false, keep);
         arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
         if (opcode == 2 &&
             !arm_dp_imm(out, 1, false, 12, 12, 0x20000000u))
@@ -2402,14 +2464,12 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
         arm_write_word(out, 0xE128F00Cu); // restore operation flags
         return true;
     }
-    arm_mov_shift(out, result, result, true, 32 - shift);
+    arm_mov_shift(out, result, result, true, shift); // low byte/word of the destination, zero-extended
     arm_mov_shift(out, 12, rhs, false, shift);
-    arm_mov_shift(out, 12, 12, true, 32 - shift);
+    arm_mov_shift(out, 12, 12, true, shift);         // ... and of the source
     arm_write_word(out, arm_dp_reg_word(opcode, false, result, result, 12));
-    arm_mov_shift(out, result, result, false, shift);
-    arm_mov_shift(out, result, result, true, 32 - shift);
-    arm_mov_shift(out, original, original, true, 32 - shift);
-    arm_mov_shift(out, original, original, false, shift);
+    arm_mov_shift(out, original, original, true, keep); // clear the low byte/word of the destination
+    arm_mov_shift(out, original, original, false, keep);
     arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
     arm_test_value(out, result, size);
     return arm_clear_cv_flags(out);
@@ -2488,9 +2548,9 @@ static bool arm_emit_clrtst(const char *mnemonic, const Operand *operand,
             }
             else
             {
-                unsigned shift = size == SIZE_B ? 24 : 16;
-                arm_mov_shift(out, 0, 0, true, 32 - shift);
-                arm_mov_shift(out, 0, 0, false, shift);
+                unsigned keep = size == SIZE_B ? 8 : 16; // clear the low byte/word only
+                arm_mov_shift(out, 0, 0, true, keep);
+                arm_mov_shift(out, 0, 0, false, keep);
                 arm_test_value(out, 0, size);
             }
             if (!arm_clear_cv_flags(out))
@@ -2558,6 +2618,15 @@ static bool arm_emit_logic(const OpcodeEntry *entry, const Operand *operands,
     else if (src->type == OPERAND_REGISTER && src->value.reg < 8)
     {
         arm_load_vreg(out, source, (unsigned)src->value.reg);
+    }
+    else if (src->type == OPERAND_IMMEDIATE)
+    {
+        int32_t imm = src->value.imm;
+        if (size == SIZE_B && (imm < -128 || imm > 255))
+            return fail("the immediate does not fit in a byte");
+        if (size == SIZE_W && (imm < -32768 || imm > 65535))
+            return fail("the immediate does not fit in a word");
+        arm_load_literal(out, source, (uint32_t)imm);
     }
     else
     {
@@ -3597,6 +3666,23 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
 
     if (strcmp(entry->mnemonic, "TRAP") == 0)
         return emit_trap(operands, out) ? 0 : -1;
+
+    // ANDI/ORI/EORI/ADDI/SUBI share the code of AND/OR/EOR/ADD/SUB, which take an
+    // immediate source (the table row of the I-form already made sure it is one).
+    static const struct { const char *immediate_form, *base; } k_imm_forms[] = {
+        {"ANDI", "AND"}, {"ORI", "OR"}, {"EORI", "EOR"}, {"ADDI", "ADD"}, {"SUBI", "SUB"}};
+    for (size_t i = 0; i < sizeof(k_imm_forms) / sizeof(k_imm_forms[0]); i++)
+    {
+        if (strcmp(entry->mnemonic, k_imm_forms[i].immediate_form) != 0)
+            continue;
+        if (operands[1].type == OPERAND_REGISTER && operands[1].value.reg >= 8)
+            return fail(i < 3 ? "ANDI/ORI/EORI need a data register or memory destination"
+                              : "ADDI/SUBI need a data register destination") ? 0 : -1;
+        const OpcodeEntry *base = lookup_opcode(k_imm_forms[i].base);
+        if (base)
+            entry = base;
+        break;
+    }
 
     const char *arch = opcodes_active_arch_name();
     if (arch && strcmp(arch, "arm") == 0)

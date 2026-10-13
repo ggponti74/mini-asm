@@ -1,218 +1,696 @@
-diff --git a/src/pe_writer.c b/src/pe_writer.c
-index 51750e9..56aae77 100644
---- a/src/pe_writer.c
-+++ b/src/pe_writer.c
-@@ -3,6 +3,7 @@
- #include <stdint.h>
+diff --git a/src/codegen.c b/src/codegen.c
+index 6b7857b..1ecb4f1 100644
+--- a/src/codegen.c
++++ b/src/codegen.c
+@@ -875,12 +875,73 @@ static int x86_logic_opcode(const char *mnemonic, bool byte, bool memory_to_reg)
+     return base + (byte ? 0 : 1) + (memory_to_reg ? 2 : 0);
+ }
  
- #include "pe_writer.h"
-+#include "core.h"
- 
- // Align to 512 bytes for file alignment
- #define FILE_ALIGN 0x200
-@@ -104,11 +105,23 @@ static uint32_t align_up(uint32_t value, uint32_t align) {
- // (DOS stub + COFF header + optional header + one .text section)
- // from the assembled code in buf, and writes it to filename.
- //
--// Note: this produces a structurally valid, loadable PE32 image with
--// a single executable section. It does not link against any Windows
--// import libraries (no IAT/import table), so code beyond a bare
--// RET-style instruction (anything that needs kernel32 imports, e.g.
--// ExitProcess) will need import-table support added separately.
-+// .text holds everything, in this order (all offsets from the section start):
-+//
-+//   0                  the assembled program (buf)
-+//   startup_off        entry stub (core.c): GetCommandLineA -> argc/argv,
-+//                      CALL program, ExitProcess(D0); 4-byte aligned
-+//   dispatcher_off     the TRAP #0 dispatcher (core.c)
-+//   import_off         the import block: kernel32.dll with the nine functions
-+//                      the stub and the dispatcher use (core.c)
-+//   regfile_off        REGFILE_SIZE bytes, the emulated-register block  } memory
-+//   area_off           CORE_PE_ARGS_AREA_SIZE bytes, the stub's scratch } only
-+//
-+// The first three and the import block are in the file; the last two exist
-+// only in memory (VirtualSize > SizeOfRawData, zero filled by the loader).
-+// 68K programs mix code and data, so .text is writable (RWX); that also lets
-+// the loader fill in the IAT. The same layout is described to codegen through
-+// platform.c (code_align, dispatcher_off, code_tail): main.c computes the
-+// dispatcher and register-block addresses from it before pass 2.
- void write_pe(const char *filename, const OutputBuffer *buf)
- {
-     if (!buf) return;
-@@ -125,16 +138,23 @@ void write_pe(const char *filename, const OutputBuffer *buf)
-         (uint32_t)sizeof(IMAGE_SECTION_HEADER);   // 1 section
-     const uint32_t size_of_headers = align_up(headers_raw_size, FILE_ALIGN);
- 
--    const uint32_t code_raw_size = align_up((uint32_t)buf->size, FILE_ALIGN);
--    // .text is also the emulated-register block's home: REGFILE_SIZE zeroed
--    // bytes right after the code (4-byte aligned), present in memory only.
--    // 68K programs mix code and data, so .text is writable (RWX) for now.
--    const uint32_t text_virtual_size = REGFILE_ALIGN_UP((uint32_t)buf->size) + REGFILE_SIZE;
--    const uint32_t code_virtual_size = align_up(text_virtual_size, SEC_ALIGN);
--
-     const uint32_t text_rva = SEC_ALIGN;            // .text starts at first section alignment boundary
-+
-+    // --- layout of .text (see above) ---
-+    const uint32_t startup_off    = align_up((uint32_t)buf->size, 4);
-+    const uint32_t dispatcher_off = startup_off + CORE_PE_STARTUP_SIZE;
-+    const uint32_t import_off     = dispatcher_off + CORE_PE_DISPATCHER_SIZE;
-+    const uint32_t file_len       = import_off + CORE_PE_IMPORT_SIZE;
-+    const uint32_t regfile_off    = REGFILE_ALIGN_UP(file_len);
-+    const uint32_t area_off       = regfile_off + REGFILE_SIZE;
-+
-+    const uint32_t code_raw_size = align_up(file_len, FILE_ALIGN);
-+    const uint32_t text_virtual_size = area_off + CORE_PE_ARGS_AREA_SIZE;
-+    const uint32_t code_virtual_size = align_up(text_virtual_size, SEC_ALIGN);
-     const uint32_t size_of_image = align_up(SEC_ALIGN, SEC_ALIGN) + code_virtual_size; // headers page + code page(s)
- 
-+    const uint32_t import_rva = text_rva + import_off;
-+
-     // --- DOS header ---
-     DOSHeader dos = {0};
-     dos.e_magic  = 0x5A4D;              // "MZ"
-@@ -157,7 +177,7 @@ void write_pe(const char *filename, const OutputBuffer *buf)
-     IMAGE_OPTIONAL_HEADER32 opt = {0};
-     opt.Magic                       = 0x10B; // PE32
-     opt.SizeOfCode                  = code_raw_size;
--    opt.AddressOfEntryPoint         = text_rva;   // code starts at the top of .text
-+    opt.AddressOfEntryPoint         = text_rva + startup_off;   // the entry stub, which CALLs the program
-     opt.BaseOfCode                  = text_rva;
-     opt.BaseOfData                  = 0;
-     opt.ImageBase                   = image_base;
-@@ -175,6 +195,10 @@ void write_pe(const char *filename, const OutputBuffer *buf)
-     opt.SizeOfHeapReserve            = 0x100000;
-     opt.SizeOfHeapCommit             = 0x1000;
-     opt.NumberOfRvaAndSizes          = 16;
-+    opt.DataDirectory[1].VirtualAddress = import_rva;                       // import table
-+    opt.DataDirectory[1].Size           = 2 * 20;                           // kernel32 + the null descriptor
-+    opt.DataDirectory[12].VirtualAddress = import_rva + CORE_PE_IAT_OFFSET; // IAT
-+    opt.DataDirectory[12].Size           = CORE_PE_IAT_SIZE;
-     fwrite(&opt, sizeof(opt), 1, f);
- 
-     // --- Section header: .text ---
-@@ -194,9 +218,30 @@ void write_pe(const char *filename, const OutputBuffer *buf)
-         pos++;
-     }
- 
--    // --- Code section, padded to SizeOfRawData ---
-+    // --- .text: program | entry stub | dispatcher | import block, padded to SizeOfRawData ---
-+    uint8_t startup[CORE_PE_STARTUP_SIZE];
-+    uint8_t dispatcher[CORE_PE_DISPATCHER_SIZE];
-+    uint8_t imports[CORE_PE_IMPORT_SIZE];
-+    const uint32_t text_va = image_base + text_rva;
-+    const uint32_t import_va = image_base + import_rva;
-+    const uint32_t regfile_va = text_va + regfile_off;
-+    if (core_pe_emit_startup(startup, sizeof startup, text_va + startup_off, text_va,
-+                             import_va + CORE_PE_IAT_OFFSET, text_va + area_off) != CORE_PE_STARTUP_SIZE ||
-+        core_pe_emit_dispatcher(dispatcher, sizeof dispatcher, import_va) != CORE_PE_DISPATCHER_SIZE ||
-+        core_pe_emit_imports(imports, sizeof imports, import_rva) != CORE_PE_IMPORT_SIZE) {
-+        fprintf(stderr, "internal error: could not build the PE entry stub, dispatcher or import block\n");
-+        fclose(f);
-+        return;
++// AND/OR/EOR #imm,<ea> (ANDI/ORI/EORI): the 80/81 group, /4 AND, /1 OR, /6 XOR.
++// A memory destination is big-endian, so word/long work on a swapped copy in a
++// scratch register, like the register/memory forms below.
++static bool emit_x86_logic_imm(const OpcodeEntry *entry, int32_t imm, const Operand *dst,
++                               OpSize size, OutputBuffer *out)
++{
++    if (size == SIZE_B && (imm < -128 || imm > 255))
++        return fail("the immediate does not fit in a byte");
++    if (size == SIZE_W && (imm < -32768 || imm > 65535))
++        return fail("the immediate does not fit in a word");
++    int ext = strcmp(entry->mnemonic, "AND") == 0 ? 4 : strcmp(entry->mnemonic, "OR") == 0 ? 1 : 6;
++    int bytes = size == SIZE_B ? 1 : size == SIZE_W ? 2 : 4;
++    if (dst->type == OPERAND_REGISTER)
++    {
++        if (dst->value.reg >= 8)
++            return fail("AND/OR/EOR with an immediate need a data register or memory destination");
++        int d = x86_reg_code(dst->value.reg);
++        if (size == SIZE_B && d > 3)
++            return fail(ERR_BYTE_REG);
++        if (size == SIZE_W)
++            buffer_write(out, X86_OPSIZE_PREFIX);
++        buffer_write(out, size == SIZE_B ? 0x80 : 0x81);
++        buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | d));
++        write_le(out, (uint32_t)imm, bytes);
++        return true;
 +    }
-+    (void)regfile_va; // the register block is addressed by codegen (main.c computes the same address)
-+
-     fwrite(buf->data, 1, buf->size, f);
--    for (uint32_t i = (uint32_t)buf->size; i < code_raw_size; i++) {
-+    for (uint32_t i = (uint32_t)buf->size; i < startup_off; i++)
-+        fputc(0, f);
-+    fwrite(startup, 1, sizeof startup, f);
-+    fwrite(dispatcher, 1, sizeof dispatcher, f);
-+    fwrite(imports, 1, sizeof imports, f);
-+    for (uint32_t i = file_len; i < code_raw_size; i++) {
-         fputc(0, f);
-     }
- 
-diff --git a/src/platform.c b/src/platform.c
-index 4e27714..a63462c 100644
---- a/src/platform.c
-+++ b/src/platform.c
-@@ -35,7 +35,10 @@ static const PlatformTarget k_targets[] = {
-         .needs_exec_bit = false,
-         .code_base = 0x00401000,
-         .has_regfile = true,
--        .code_tail = 0,
-+        .code_align = 4,
-+        // entry stub, TRAP dispatcher and import block follow the (aligned) code, then the register block
-+        .code_tail = CORE_PE_STARTUP_SIZE + CORE_PE_DISPATCHER_SIZE + CORE_PE_IMPORT_SIZE,
-+        .dispatcher_off = CORE_PE_STARTUP_SIZE, // the dispatcher comes right after the entry stub
-         .write = write_pe,
-     },
-     {
-diff --git a/tests/run.sh b/tests/run.sh
-index cdfc545..0384c10 100644
---- a/tests/run.sh
-+++ b/tests/run.sh
-@@ -10,7 +10,11 @@
- # 2. tests/errors/*.asm must fail to assemble; stderr must match the regex on
- #    their first line ("; EXPECT: <extended regex>").
- # 3. tests/arm/*.asm: ARM programs, run with qemu-arm when available (exit code must match "; EXIT: n").
--# 4. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
-+# 4. tests/trap/*.asm: TRAP #0 services (files etc.), exit code 0 = pass, N = test N failed. They
-+#    run in a scratch directory (they create files), on the ELF target, on ARM with qemu-arm, and
-+#    as real PE executables with wine. tests/trap/pe_dispatch_test.c checks the PE dispatcher against fake
-+#    kernel32 functions when a 32-bit gcc (gcc -m32) works.
-+# 5. tests/main.asm must also assemble for the x86 (PE) target (assembly only).
- 
- ASM=${1:-./mini-asm}
- DIR=$(cd "$(dirname "$0")" && pwd)
-@@ -91,7 +95,57 @@ else
-     echo "SKIP   arm/*   (qemu-arm not installed)"
- fi
- 
--# 4. other x86 output format: assembly only (a PE file cannot run here)
-+# 4. TRAP #0 service tests
-+mkdir -p "$TMP/work"
-+# wine is only used if it can run a trivial PE program made by this assembler (exit code 7)
-+wine_ok=0
-+if command -v wine >/dev/null 2>&1; then
-+    export WINEPREFIX="$TMP/wineprefix" WINEDEBUG=-all
-+    printf 'start:  moveq   #7, d0\n        rts\n' >"$TMP/wine_probe.asm"
-+    if "$ASM" -t x86 -o "$TMP/wine_probe.exe" "$TMP/wine_probe.asm" >/dev/null 2>&1; then
-+        (cd "$TMP/work" && timeout 300 wine "$TMP/wine_probe.exe" >/dev/null 2>&1); [ $? -eq 7 ] && wine_ok=1
-+    fi
-+fi
-+for src in "$DIR"/trap/*.asm; do
-+    tname=trap/$(basename "$src" .asm)   # (report() overwrites $name)
-+    if ! "$ASM" -t elf -o "$TMP/trap.elf" "$src" >"$TMP/asm.log" 2>&1; then
-+        echo "FAIL   $tname   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1)); continue
-+    fi
-+    (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$tname" $?
-+    if command -v qemu-arm >/dev/null 2>&1; then
-+        if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
-+            (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$tname (arm)" $?
-+        elif grep -q "not supported" "$TMP/asm.log"; then
-+            echo "SKIP   $tname (arm)   (TRAP is not supported on the ARM target yet)"
-+        else
-+            echo "FAIL   $tname (arm)   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1))
-+        fi
-+    fi
-+    if [ "$wine_ok" -eq 1 ]; then
-+        if "$ASM" -t x86 -o "$TMP/trap.exe" "$src" >"$TMP/asm.log" 2>&1; then
-+            (cd "$TMP/work" && timeout 300 wine "$TMP/trap.exe" >/dev/null 2>&1); report "$tname (pe/wine)" $?
-+        else
-+            echo "FAIL   $tname (pe/wine)   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1))
-+        fi
-+    fi
-+done
-+[ "$wine_ok" -eq 1 ] || echo "SKIP   trap/* as PE   (no working wine)"
-+if gcc -m32 -x c -o "$TMP/m32" - >/dev/null 2>&1 <<'EOC'
-+int main(void) { return 0; }
-+EOC
-+then
-+    if gcc -m32 -Wall -Wextra -I"$DIR/../src" -o "$TMP/pe_test" "$DIR/trap/pe_dispatch_test.c" "$DIR/../src/core.c" >"$TMP/asm.log" 2>&1; then
-+        (cd "$TMP/work" && "$TMP/pe_test" </dev/null >"$TMP/pe.log" 2>&1); code=$?
-+        if [ "$code" -eq 0 ]; then echo "PASS   trap/pe_dispatcher (fake kernel32)"; pass=$((pass + 1))
-+        else echo "FAIL   trap/pe_dispatcher"; sed 's/^/         /' "$TMP/pe.log" | grep FAIL; fail=$((fail + 1)); fi
++    if (!operand_is_memory(dst->type))
++        return false;
++    int base = x86_reg_code(dst->value.reg);
++    if (!plain_base(base))
++        return fail(ERR_MEM_PTR);
++    mem_pre(out, dst->type, base, op_bytes(size));
++    if (size == SIZE_B)
++    {
++        buffer_write(out, 0x80);
++        write_modrm_mem(out, ext, base);
++        write_le(out, (uint32_t)imm, 1);
++    }
 +    else
-+        echo "FAIL   trap/pe_dispatcher   (did not compile)"; sed 's/^/         /' "$TMP/asm.log" | head -5; fail=$((fail + 1))
-+    fi
-+else
-+    echo "SKIP   trap/pe_dispatcher   (no 32-bit gcc)"
-+fi
++    {
++        int t = pick_scratch(1u << base);
++        if (t < 0)
++            return fail(ERR_NO_SCRATCH);
++        write_push(out, t);
++        write_load(out, t, base, size);
++        write_swap(out, t, size);
++        if (size == SIZE_W)
++            buffer_write(out, X86_OPSIZE_PREFIX);
++        buffer_write(out, 0x81);
++        buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | t));
++        write_le(out, (uint32_t)imm, bytes);
++        write_swap(out, t, size);
++        write_store(out, t, base, size);
++        write_pop(out, t);
++    }
++    mem_post(out, dst->type, base, op_bytes(size));
++    return true;
++}
 +
-+# 5. other x86 output format: assembly only (a PE file cannot run here)
- if "$ASM" -t x86 -o "$TMP/main.exe" "$DIR/main.asm" >/dev/null 2>&1; then
-     echo "PASS   main (x86/PE assembles)"; pass=$((pass + 1))
- else
+ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
+                            OpSize size, OutputBuffer *out)
+ {
+     const Operand *src = &operands[0], *dst = &operands[1];
+     if (size == SIZE_UNSPEC)
+         size = DEFAULT_OPSIZE;
++    if (src->type == OPERAND_IMMEDIATE)
++        return emit_x86_logic_imm(entry, src->value.imm, dst, size, out);
+     if (src->type == OPERAND_REGISTER && dst->type == OPERAND_REGISTER)
+     {
+         if (src->value.reg >= 8 || dst->value.reg >= 8)
+@@ -2386,6 +2447,7 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
+         return true;
+     }
+     unsigned shift = size == SIZE_B ? 24 : 16;
++    unsigned keep = 32 - shift; // bits above the byte/word, which stay as they are
+     arm_mov_shift(out, result, original, false, shift);
+     if (opcode == 2 || opcode == 4)
+     {
+@@ -2393,8 +2455,8 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
+         arm_write_word(out, arm_dp_reg_word(opcode, true, result, result, 12));
+         arm_write_word(out, 0xE10FC000u); // save arithmetic flags
+         arm_mov_shift(out, result, result, true, shift);
+-        arm_mov_shift(out, original, original, true, 32 - shift);
+-        arm_mov_shift(out, original, original, false, shift);
++        arm_mov_shift(out, original, original, true, keep); // clear the low byte/word
++        arm_mov_shift(out, original, original, false, keep);
+         arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
+         if (opcode == 2 &&
+             !arm_dp_imm(out, 1, false, 12, 12, 0x20000000u))
+@@ -2402,14 +2464,12 @@ static bool arm_write_sized_result(OutputBuffer *out, unsigned original,
+         arm_write_word(out, 0xE128F00Cu); // restore operation flags
+         return true;
+     }
+-    arm_mov_shift(out, result, result, true, 32 - shift);
++    arm_mov_shift(out, result, result, true, shift); // low byte/word of the destination, zero-extended
+     arm_mov_shift(out, 12, rhs, false, shift);
+-    arm_mov_shift(out, 12, 12, true, 32 - shift);
++    arm_mov_shift(out, 12, 12, true, shift);         // ... and of the source
+     arm_write_word(out, arm_dp_reg_word(opcode, false, result, result, 12));
+-    arm_mov_shift(out, result, result, false, shift);
+-    arm_mov_shift(out, result, result, true, 32 - shift);
+-    arm_mov_shift(out, original, original, true, 32 - shift);
+-    arm_mov_shift(out, original, original, false, shift);
++    arm_mov_shift(out, original, original, true, keep); // clear the low byte/word of the destination
++    arm_mov_shift(out, original, original, false, keep);
+     arm_write_word(out, arm_dp_reg_word(12, false, original, original, result));
+     arm_test_value(out, result, size);
+     return arm_clear_cv_flags(out);
+@@ -2488,9 +2548,9 @@ static bool arm_emit_clrtst(const char *mnemonic, const Operand *operand,
+             }
+             else
+             {
+-                unsigned shift = size == SIZE_B ? 24 : 16;
+-                arm_mov_shift(out, 0, 0, true, 32 - shift);
+-                arm_mov_shift(out, 0, 0, false, shift);
++                unsigned keep = size == SIZE_B ? 8 : 16; // clear the low byte/word only
++                arm_mov_shift(out, 0, 0, true, keep);
++                arm_mov_shift(out, 0, 0, false, keep);
+                 arm_test_value(out, 0, size);
+             }
+             if (!arm_clear_cv_flags(out))
+@@ -2559,6 +2619,15 @@ static bool arm_emit_logic(const OpcodeEntry *entry, const Operand *operands,
+     {
+         arm_load_vreg(out, source, (unsigned)src->value.reg);
+     }
++    else if (src->type == OPERAND_IMMEDIATE)
++    {
++        int32_t imm = src->value.imm;
++        if (size == SIZE_B && (imm < -128 || imm > 255))
++            return fail("the immediate does not fit in a byte");
++        if (size == SIZE_W && (imm < -32768 || imm > 65535))
++            return fail("the immediate does not fit in a word");
++        arm_load_literal(out, source, (uint32_t)imm);
++    }
+     else
+     {
+         return fail("ARM logical operations require data-register operands");
+@@ -3598,6 +3667,23 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
+     if (strcmp(entry->mnemonic, "TRAP") == 0)
+         return emit_trap(operands, out) ? 0 : -1;
  
++    // ANDI/ORI/EORI/ADDI/SUBI share the code of AND/OR/EOR/ADD/SUB, which take an
++    // immediate source (the table row of the I-form already made sure it is one).
++    static const struct { const char *immediate_form, *base; } k_imm_forms[] = {
++        {"ANDI", "AND"}, {"ORI", "OR"}, {"EORI", "EOR"}, {"ADDI", "ADD"}, {"SUBI", "SUB"}};
++    for (size_t i = 0; i < sizeof(k_imm_forms) / sizeof(k_imm_forms[0]); i++)
++    {
++        if (strcmp(entry->mnemonic, k_imm_forms[i].immediate_form) != 0)
++            continue;
++        if (operands[1].type == OPERAND_REGISTER && operands[1].value.reg >= 8)
++            return fail(i < 3 ? "ANDI/ORI/EORI need a data register or memory destination"
++                              : "ADDI/SUBI need a data register destination") ? 0 : -1;
++        const OpcodeEntry *base = lookup_opcode(k_imm_forms[i].base);
++        if (base)
++            entry = base;
++        break;
++    }
++
+     const char *arch = opcodes_active_arch_name();
+     if (arch && strcmp(arch, "arm") == 0)
+     {
+diff --git a/src/opcodes.c b/src/opcodes.c
+index 0efb38d..857f6f6 100644
+--- a/src/opcodes.c
++++ b/src/opcodes.c
+@@ -51,9 +51,16 @@ static const OpcodeEntry x86_opcode_table[] = {
+     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
+     {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+     {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+-    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+-    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+-    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
++    {"AND", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL}, // AND #imm,<ea> is ANDI
++    {"OR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},  // OR #imm,<ea> is ORI
++    {"EOR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_BWL}, // EOR #imm,<ea> is EORI
++    // Immediate forms: placeholders; codegen.c runs them as AND/OR/EOR/ADD/SUB
++    // (emit_code maps them to the base entry), the types here only restrict the syntax.
++    {"ANDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"ORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"EORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"ADDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
++    {"SUBI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+     {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+     {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+     {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+@@ -141,9 +148,16 @@ static const OpcodeEntry arm_opcode_table[] = {
+     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
+     {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+     {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
+-    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+-    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
+-    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
++    {"AND", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL}, // AND #imm,<ea> is ANDI
++    {"OR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},  // OR #imm,<ea> is ORI
++    {"EOR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_BWL}, // EOR #imm,<ea> is EORI
++    // Immediate forms: placeholders; codegen.c runs them as AND/OR/EOR/ADD/SUB
++    // (emit_code maps them to the base entry), the types here only restrict the syntax.
++    {"ANDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"ORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"EORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
++    {"ADDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
++    {"SUBI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+     {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+     {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
+     {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+diff --git a/tests/arm/logic_sizes.asm b/tests/arm/logic_sizes.asm
+new file mode 100644
+index 0000000..82beb7a
+--- /dev/null
++++ b/tests/arm/logic_sizes.asm
+@@ -0,0 +1,10 @@
++; EXIT: 0
++; The .b/.w ADD/SUB/AND/OR/EOR/CLR must leave the other bits of the register alone
++; (ARM had a byte-merge bug that moved bits 8-15 into 24-31), and the immediate
++; forms must work on ARM too. The checks are the shared test sections.
++start:
++        include "../sections/15_logic_sizes.asm"
++        include "../sections/16_logic_immediate.asm"
++        moveq   #0, d0
++        rts
++        include "../common.asm"
+diff --git a/tests/diff/.gitignore b/tests/diff/.gitignore
+new file mode 100644
+index 0000000..c18dd8d
+--- /dev/null
++++ b/tests/diff/.gitignore
+@@ -0,0 +1 @@
++__pycache__/
+diff --git a/tests/diff/diff.py b/tests/diff/diff.py
+new file mode 100644
+index 0000000..8732b0b
+--- /dev/null
++++ b/tests/diff/diff.py
+@@ -0,0 +1,198 @@
++#!/usr/bin/env python3
++"""Differential test of 68K logic/shift/rotate instructions.
++
++The same source is (a) assembled by mini-asm for elf / arm / x86(PE, under wine)
++and (b) by GNU as for real m68k (qemu-m68k).  Each program runs a table of
++cases; after every case a subroutine records the result register and the
++N/Z/V/C flags (read through Bcc, which does not change flags; X can't be
++read this way) into a buffer, and the buffer is written to stdout.
++All outputs must be identical.
++"""
++import os, subprocess, sys, itertools, tempfile, struct
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++MA = os.environ.get("MINI_ASM", os.path.join(HERE, "..", "..", "mini-asm"))
++TARGETS = os.environ.get("TARGETS", "elf,arm,pe").split(",")
++WORK = tempfile.mkdtemp(prefix="difft")
++WINE_ENV = dict(os.environ, WINEDEBUG="-all")
++
++VALUES = [0, 1, 0x80, 0x7F, 0xFF, 0x8000, 0x7FFF, 0xFFFF, 0x7FFFFFFF,
++          0x80000000, 0xFFFFFFFF, 0x12345678, 0xA5C3E1F7]
++REG_COUNTS = [0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128, 255, 0x1000001]
++
++CAP = """
++cap     bpl     cap_n
++        addq.l  #1, a2
++cap_n   bne     cap_z
++        addq.l  #2, a2
++cap_z   bvc     cap_v
++        addq.l  #4, a2
++cap_v   bcc     cap_c
++        addq.l  #8, a2
++cap_c   move.l  d1, (a1)+
++        move.l  a2, d3
++        move.l  d3, (a1)+
++        move.l  #0, a2
++        rts
++capm    bpl     capm_n
++        addq.l  #1, a2
++capm_n  bne     capm_z
++        addq.l  #2, a2
++capm_z  bvc     capm_v
++        addq.l  #4, a2
++capm_v  bcc     capm_c
++        addq.l  #8, a2
++capm_c  move.l  (a0), d1
++        move.l  d1, (a1)+
++        move.l  a2, d3
++        move.l  d3, (a1)+
++        move.l  #0, a2
++        rts
++"""
++
++def build(cases, kind):
++    """cases: list of (setup lines, instruction lines).  kind: 'mini' or 'ref'."""
++    n = len(cases)
++    nbytes = 8 * n
++    out = ["start:  lea     results, a1", "        move.l  #0, a2"]
++    for c in cases:
++        setup, instr = c[0], c[1]
++        out += ["        " + s for s in setup]
++        out += ["        " + s for s in instr]
++        out.append("        bsr     " + (c[2] if len(c) > 2 else "cap"))
++    out.append("        bra     done")
++    out.append(CAP)
++    if kind == "mini":
++        out += ["done    lea     results, a0", "        move.l  #1, d1",
++                "        move.l  #%d, d2" % nbytes, "        move.l  #2, d0", "        trap    #0",
++                "        moveq   #0, d0", "        rts"]
++    else:
++        out += ["done    move.l  #4, d0", "        move.l  #1, d1", "        move.l  #results, d2",
++                "        move.l  #%d, d3" % nbytes, "        trap    #0",
++                "        moveq   #0, d1", "        move.l  #1, d0", "        trap    #0"]
++    lines = (nbytes + 31) // 32
++    out.append("results dc.l    0,0,0,0,0,0,0,0")
++    out += ["        dc.l    0,0,0,0,0,0,0,0"] * (lines - 1)
++    out.append("cell    dc.l    0")
++    return "\n".join(out) + "\n"
++
++def sh(cmd, **kw):
++    return subprocess.run(cmd, capture_output=True, **kw)
++
++def run_ref(src, name):
++    asm = os.path.join(WORK, name + ".asm"); s = os.path.join(WORK, name + ".s")
++    o = os.path.join(WORK, name + ".o"); exe = os.path.join(WORK, name + ".ref")
++    open(asm, "w").write(src)
++    open(s, "w").write(subprocess.run([sys.executable, os.path.join(HERE, "to_ref.py")], input=src.encode(),
++                                      capture_output=True).stdout.decode())
++    r = sh(["m68k-linux-gnu-as", "-mri", "-m68000", "-o", o, s])
++    if r.returncode: return None, "reference assembly failed: " + r.stderr.decode()[:300]
++    sh(["m68k-linux-gnu-ld", "-N", "-o", exe, o])
++    r = sh(["qemu-m68k", exe], timeout=60)
++    return r.stdout, "reference exit %d" % r.returncode
++
++def run_target(src, name, t):
++    asm = os.path.join(WORK, name + "." + t + ".asm"); exe = os.path.join(WORK, name + "." + t)
++    open(asm, "w").write(src)
++    tt = {"elf": "elf", "arm": "arm", "pe": "x86"}[t]
++    r = sh([MA, "-t", tt, "-o", exe, asm])
++    if r.returncode:
++        err = [l for l in (r.stdout + r.stderr).decode().splitlines() if l.startswith("Error")]
++        return None, "assembly failed: " + (err[0] if err else "?")
++    if t == "arm": cmd = ["qemu-arm", exe]
++    elif t == "pe": cmd = ["wine", exe]
++    else: cmd = [exe]
++    r = sh(cmd, timeout=120, env=WINE_ENV if t == "pe" else None)
++    return r.stdout, "exit %d" % r.returncode
++
++def describe(case, ref8, got8):
++    r1, rm = struct.unpack(">II", ref8); g1, gm = struct.unpack(">II", got8)
++    fl = lambda m: "".join(c if m & b else "-" for c, b in zip("NZVC", (1, 2, 4, 8)))
++    ins = " ; ".join(case[1])
++    vals = " ".join(x.split("#")[1].split(",")[0] for x in case[0] if "#" in x)
++    return "%-22s [%s]  ref %08x %s   got %08x %s" % (ins, vals, r1, fl(rm), g1, fl(gm))
++
++def check(name, cases, show=6):
++    ref, rinfo = run_ref(build(cases, "ref"), name)
++    if ref is None or len(ref) != 8 * len(cases):
++        print("%-22s REFERENCE PROBLEM: %s (%s bytes)" % (name, rinfo, None if ref is None else len(ref))); return 0, len(TARGETS)
++    bad_targets = 0
++    for t in TARGETS:
++        got, info = run_target(build(cases, "mini"), name, t)
++        if got is None:
++            print("%-22s %-4s %s" % (name, t, info)); bad_targets += 1; continue
++        if got == ref:
++            print("%-22s %-4s ok (%d cases)" % (name, t, len(cases))); continue
++        bad_targets += 1
++        if len(got) != len(ref):
++            print("%-22s %-4s output length %d, expected %d (%s)" % (name, t, len(got), len(ref), info)); continue
++        diffs = [i for i in range(len(cases)) if got[8*i:8*i+8] != ref[8*i:8*i+8]]
++        print("%-22s %-4s %d of %d cases differ" % (name, t, len(diffs), len(cases)))
++        for i in diffs[:show]:
++            print("      " + describe(cases[i], ref[8*i:8*i+8], got[8*i:8*i+8]))
++    return len(TARGETS) - bad_targets, len(TARGETS)
++
++def shift_cases(mn, sz, form):
++    cases = []
++    for v in VALUES:
++        if form == "imm":
++            for c in range(1, 9):
++                cases.append((["move.l  #$%x, d1" % v], ["%s.%s  #%d, d1" % (mn, sz, c)]))
++        else:
++            for c in REG_COUNTS:
++                cases.append((["move.l  #$%x, d1" % v, "move.l  #$%x, d2" % c], ["%s.%s  d2, d1" % (mn, sz)]))
++    return cases
++
++def unary_cases(mn, sz):
++    return [(["move.l  #$%x, d1" % v], ["%s.%s  d1" % (mn, sz)]) for v in VALUES]
++
++def binary_cases(mn, sz):
++    return [(["move.l  #$%x, d1" % a, "move.l  #$%x, d2" % b], ["%s.%s  d2, d1" % (mn, sz)])
++            for a in VALUES for b in VALUES]
++
++if __name__ == "__main__":
++    which = sys.argv[1:] or ["unary", "binary", "shift", "mem", "misc"]
++    tot = ok = 0
++    groups = []
++    if "unary" in which:
++        for mn in ("not", "neg", "clr", "tst"):
++            for sz in "bwl": groups.append(("%s.%s" % (mn, sz), unary_cases(mn, sz)))
++    if "mem" in which:
++        L = lambda v: ["lea     cell, a0", "move.l  #$%x, (a0)" % v]
++        for mn in ("not", "neg", "clr", "tst"):
++            for sz in "bwl":
++                groups.append(("%s.%s (a0)" % (mn, sz), [(L(v), ["%s.%s  (a0)" % (mn, sz)], "capm") for v in VALUES]))
++        for mn in ("and", "or", "eor"):
++            for sz in "bwl":
++                groups.append(("%s.%s d2,(a0)" % (mn, sz), [(L(a) + ["move.l  #$%x, d2" % b], ["%s.%s  d2, (a0)" % (mn, sz)], "capm") for a in VALUES for b in VALUES]))
++        for mn in ("and", "or"):
++            for sz in "bwl":
++                groups.append(("%s.%s (a0),d1" % (mn, sz), [(L(a) + ["move.l  #$%x, d1" % b], ["%s.%s  (a0), d1" % (mn, sz)]) for a in VALUES for b in VALUES]))
++        # (memory shifts/rotates are checked by memshift_model.py: qemu-m68k's memory-shift
++        #  code treats LSR as ASR and never sets V for ASL, so it can't be the oracle there)
++    if "imm" in which:
++        IMMS = {"b": [0, 1, 0x7F, 0x80, 0xFF], "w": [0, 1, 0x7F, 0x80, 0xFF, 0x7FFF, 0x8000, 0xFFFF],
++                "l": [0, 1, 0xFF, 0x7FFF, 0x8000, 0xFFFF, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0x12345678]}
++        L = lambda v: ["lea     cell, a0", "move.l  #$%x, (a0)" % v]
++        for mn in ("andi", "ori", "eori", "and", "or", "eor", "addi", "subi"):
++            for sz in "bwl":
++                groups.append(("%s.%s #imm,d1" % (mn, sz), [(["move.l  #$%x, d1" % v], ["%s.%s  #$%x, d1" % (mn, sz, i)])
++                                                            for v in VALUES for i in IMMS[sz]]))
++        for mn in ("andi", "ori", "eori", "and", "or", "eor"):
++            for sz in "bwl":
++                groups.append(("%s.%s #imm,(a0)" % (mn, sz), [(L(v), ["%s.%s  #$%x, (a0)" % (mn, sz, i)], "capm")
++                                                              for v in VALUES for i in IMMS[sz]]))
++    if "misc" in which:
++        groups.append(("swap", [(["move.l  #$%x, d1" % v], ["swap    d1"]) for v in VALUES]))
++        for sz in "wl": groups.append(("ext.%s" % sz, [(["move.l  #$%x, d1" % v], ["ext.%s  d1" % sz]) for v in VALUES]))
++    if "binary" in which:
++        for mn in (os.environ.get("BIN","and,or,eor").split(",")):
++            for sz in "bwl": groups.append(("%s.%s" % (mn, sz), binary_cases(mn, sz)))
++    if "shift" in which:
++        for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
++            for sz in "bwl":
++                for form in ("imm", "reg"): groups.append(("%s.%s.%s" % (mn, sz, form), shift_cases(mn, sz, form)))
++    for name, cases in groups:
++        a, b = check(name.replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_"), cases); ok += a; tot += b
++    print("---- %d of %d (group, target) runs match real 68K" % (ok, tot))
++    sys.exit(0 if ok == tot else 1)
+diff --git a/tests/diff/memshift_model.py b/tests/diff/memshift_model.py
+new file mode 100644
+index 0000000..4549a47
+--- /dev/null
++++ b/tests/diff/memshift_model.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python3
++"""Memory shifts/rotates (word, by one) checked against the 68000 manual's rules instead of
++qemu-m68k: QEMU 8.2's memory-shift code treats LSR (a0) as ASR and never sets V for ASL."""
++import os, struct, sys
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++import diff
++
++def model(mn, v):
++    w = (v >> 16) & 0xFFFF
++    msb, lsb = (w >> 15) & 1, w & 1
++    V = 0
++    if mn in ("asl", "lsl"):
++        r = (w << 1) & 0xFFFF; C = msb
++        if mn == "asl": V = int(((r >> 15) & 1) != msb)
++    elif mn == "asr":
++        r = (w >> 1) | (w & 0x8000); C = lsb
++    elif mn == "lsr":
++        r = w >> 1; C = lsb
++    elif mn == "rol":
++        r = ((w << 1) | msb) & 0xFFFF; C = msb
++    else:  # ror
++        r = (w >> 1) | (lsb << 15); C = lsb
++    N = (r >> 15) & 1; Z = int(r == 0)
++    mask = N * 1 + Z * 2 + V * 4 + C * 8
++    return struct.pack(">II", (v & 0xFFFF) | (r << 16), mask)
++
++bad = 0
++for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
++    L = lambda v: ["lea     cell, a0", "move.l  #$%x, (a0)" % v]
++    cases = [(L(v), ["%s.w  (a0)" % mn], "capm") for v in diff.VALUES]
++    expect = b"".join(model(mn, v) for v in diff.VALUES)
++    for t in diff.TARGETS:
++        got, info = diff.run_target(diff.build(cases, "mini"), "ms_" + mn, t)
++        ok = got == expect
++        print("%s.w (a0) vs the manual's rules  %-4s %s" % (mn, t, "ok" if ok else "DIFFERS"))
++        bad += not ok
++print("model check:", "all match" if not bad else "%d mismatches" % bad)
++sys.exit(1 if bad else 0)
+diff --git a/tests/diff/run.sh b/tests/diff/run.sh
+new file mode 100644
+index 0000000..1a8b34c
+--- /dev/null
++++ b/tests/diff/run.sh
+@@ -0,0 +1,27 @@
++#!/bin/sh
++# Differential test of the 68K logic, arithmetic and shift instructions against a real 68K:
++# the same source is assembled by mini-asm (elf, arm, and PE under wine when it works) and by
++# GNU as for m68k, run under qemu-m68k, and the recorded results and N/Z/V/C flags must be
++# identical. Needs: m68k-linux-gnu-as / -ld (apt: binutils-m68k-linux-gnu), qemu-m68k and
++# qemu-arm (apt: qemu-user), python3. Run it from the repo root after "make":
++#
++#   sh tests/diff/run.sh            all groups (a few minutes with wine)
++#   TARGETS=elf,arm sh tests/diff/run.sh unary binary
++#                                   groups: unary binary shift mem imm misc
++#
++# The X flag cannot be read without ROXL/ROXR and is not compared. Memory shifts are
++# checked against the manual's rules (memshift_model.py), because qemu-m68k gets those wrong.
++cd "$(dirname "$0")/../.." || exit 1
++for tool in m68k-linux-gnu-as m68k-linux-gnu-ld qemu-m68k python3; do
++    command -v "$tool" >/dev/null 2>&1 || { echo "SKIP   tests/diff   ($tool not installed)"; exit 0; }
++done
++if [ -z "$TARGETS" ]; then
++    TARGETS=elf
++    command -v qemu-arm >/dev/null 2>&1 && TARGETS=$TARGETS,arm
++    if command -v wine >/dev/null 2>&1; then TARGETS=$TARGETS,pe; fi
++fi
++export TARGETS
++status=0
++python3 tests/diff/diff.py "$@" || status=1
++python3 tests/diff/memshift_model.py || status=1
++exit $status
+diff --git a/tests/diff/to_ref.py b/tests/diff/to_ref.py
+new file mode 100644
+index 0000000..d2c1646
+--- /dev/null
++++ b/tests/diff/to_ref.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++"""Turn a mini-asm source into something GNU as (m68k, -mri) accepts:
++   drop ';' comments, drop the colon after a label, remove blanks after commas."""
++import re, sys
++out = []
++for line in sys.stdin:
++    line = line.rstrip("\n")
++    res, inq = [], False
++    for ch in line:
++        if ch == '"':
++            inq = not inq
++        if ch == ';' and not inq:
++            break
++        res.append(ch)
++    line = "".join(res).rstrip()
++    m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*):(.*)$', line)
++    if m:
++        line = m.group(1) + m.group(2)
++    # blanks after commas outside quotes
++    res, inq, i = [], False, 0
++    while i < len(line):
++        ch = line[i]
++        if ch == '"':
++            inq = not inq
++        res.append(ch)
++        if ch == ',' and not inq:
++            while i + 1 < len(line) and line[i + 1] in ' \t':
++                i += 1
++        i += 1
++    out.append("".join(res))
++print("\n".join(out))
+diff --git a/tests/main.asm b/tests/main.asm
+index cd6ba6d..e57bbe2 100644
+--- a/tests/main.asm
++++ b/tests/main.asm
+@@ -18,6 +18,8 @@ start:
+         include "sections/12_endian.asm"
+         include "sections/13_memops.asm"
+         include "sections/14_spilled_an.asm"
++        include "sections/15_logic_sizes.asm"
++        include "sections/16_logic_immediate.asm"
+ 
+         ; ---- all passed ------------------------------------------
+         moveq   #0, d0
+diff --git a/tests/sections/15_logic_sizes.asm b/tests/sections/15_logic_sizes.asm
+new file mode 100644
+index 0000000..e5d31a5
+--- /dev/null
++++ b/tests/sections/15_logic_sizes.asm
+@@ -0,0 +1,50 @@
++        ; ---- 23: .b / .w results leave the rest of the register alone ---
++        ; (ADD/SUB/AND/OR/EOR/CLR on a register; bits 8-15 are the ones a
++        ; careless byte write destroys)
++        moveq   #23, d3
++        moveq   #1, d2
++        move.l  #$12348000, d1
++        add.b   d2, d1              ; low byte 00 + 01
++        cmp.l   #$12348001, d1
++        bne     fail
++        move.l  #$12348000, d1
++        sub.b   d2, d1              ; 00 - 01 = FF, no borrow into bit 8
++        cmp.l   #$123480FF, d1
++        bne     fail
++        moveq   #24, d3
++        move.l  #$1234ABCD, d1
++        move.l  #$0000000F, d2
++        and.b   d2, d1
++        cmp.l   #$1234AB0D, d1
++        bne     fail
++        move.l  #$12348000, d1
++        moveq   #1, d2
++        or.b    d2, d1
++        cmp.l   #$12348001, d1
++        bne     fail
++        move.l  #$1234ABCD, d1
++        move.l  #$000000FF, d2
++        eor.b   d2, d1
++        cmp.l   #$1234AB32, d1
++        bne     fail
++        move.l  #$1234ABCD, d1
++        clr.b   d1
++        cmp.l   #$1234AB00, d1
++        bne     fail
++        moveq   #25, d3
++        move.l  #$1234FFFF, d1
++        moveq   #1, d2
++        add.w   d2, d1              ; FFFF + 1 = 0000, carry stays out of the upper word
++        cmp.l   #$12340000, d1
++        bne     fail
++        sub.w   d2, d1
++        cmp.l   #$1234FFFF, d1
++        bne     fail
++        move.l  #$1234ABCD, d1
++        move.l  #$00000FF0, d2
++        and.w   d2, d1
++        cmp.l   #$12340BC0, d1
++        bne     fail
++        clr.w   d1
++        cmp.l   #$12340000, d1
++        bne     fail
+diff --git a/tests/sections/16_logic_immediate.asm b/tests/sections/16_logic_immediate.asm
+new file mode 100644
+index 0000000..b5a270d
+--- /dev/null
++++ b/tests/sections/16_logic_immediate.asm
+@@ -0,0 +1,67 @@
++        ; ---- 26: AND / OR / EOR with an immediate (ANDI, ORI, EORI) ----
++        moveq   #26, d3
++        move.l  #$FF00FF00, d1
++        andi.l  #$0FF00FF0, d1
++        cmp.l   #$0F000F00, d1
++        bne     fail
++        ori.l   #$000000F0, d1
++        cmp.l   #$0F000FF0, d1
++        bne     fail
++        eori.l  #$0F000FF0, d1
++        bne     fail                ; EORI sets Z when the result is 0
++        move.l  #$80000000, d1
++        ori.l   #1, d1
++        bpl     fail                ; N from the result
++        moveq   #27, d3
++        move.l  #$1234ABCD, d1      ; .b and .w only touch the low part
++        andi.b  #$0F, d1
++        cmp.l   #$1234AB0D, d1
++        bne     fail
++        ori.w   #$8000, d1
++        cmp.l   #$1234AB0D, d1      ; bit 15 of the word is already set (AB0D)
++        bne     fail
++        eori.w  #$FFFF, d1
++        cmp.l   #$123454F2, d1
++        bne     fail
++        moveq   #28, d3
++        move.l  #$00F000F0, d1      ; the plain AND/OR/EOR mnemonics take an immediate too
++        and.l   #$0000FFFF, d1
++        cmp.l   #$000000F0, d1
++        bne     fail
++        or.l    #$0F000000, d1
++        cmp.l   #$0F0000F0, d1
++        bne     fail
++        eor.l   #$0F0000F0, d1
++        bne     fail
++        moveq   #29, d3
++        lea     buf, a0             ; memory destination: big-endian layout
++        move.l  #$11223344, (a0)
++        andi.b  #$F0, (a0)
++        lea     buf, a1
++        addq.l  #2, a1
++        andi.w  #$FF0F, (a1)        ; bytes 2-3: 33 44 -> 33 04
++        move.l  (a0), d1
++        cmp.l   #$10223304, d1
++        bne     fail
++        ori.l   #$000F0F00, (a0)
++        move.l  (a0), d1
++        cmp.l   #$102F3F04, d1
++        bne     fail
++        eori.b  #$FF, (a0)
++        move.l  (a0), d1
++        cmp.l   #$EF2F3F04, d1
++        bne     fail
++        moveq   #30, d3
++        move.l  #100, d1            ; ADDI / SUBI
++        addi.l  #23, d1
++        cmp.l   #123, d1
++        bne     fail
++        subi.l  #124, d1
++        bpl     fail                ; -1 -> N
++        cmp.l   #-1, d1
++        bne     fail
++        move.l  #$1234FFFF, d1
++        addi.w  #1, d1
++        bne     fail                ; word result 0 -> Z
++        cmp.l   #$12340000, d1
++        bne     fail

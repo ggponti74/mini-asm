@@ -51,9 +51,16 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
     {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
     {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
-    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
-    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
-    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
+    {"AND", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},     // AND #imm,<ea> is ANDI
+    {"OR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},      // OR #imm,<ea> is ORI
+    {"EOR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_BWL}, // EOR #imm,<ea> is EORI
+    // Immediate forms: placeholders; codegen.c runs them as AND/OR/EOR/ADD/SUB
+    // (emit_code maps them to the base entry), the types here only restrict the syntax.
+    {"ANDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"ORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"EORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"ADDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+    {"SUBI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
     {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
     {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
     {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
@@ -141,9 +148,16 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
     {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
     {"TST", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
-    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
-    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_MEM, OPERAND_EA_ALT}, SIZES_BWL},
-    {"EOR", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_EA_ALT}, SIZES_BWL},
+    {"AND", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},     // AND #imm,<ea> is ANDI
+    {"OR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},      // OR #imm,<ea> is ORI
+    {"EOR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_EA_ALT}, SIZES_BWL}, // EOR #imm,<ea> is EORI
+    // Immediate forms: placeholders; codegen.c runs them as AND/OR/EOR/ADD/SUB
+    // (emit_code maps them to the base entry), the types here only restrict the syntax.
+    {"ANDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"ORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"EORI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
+    {"ADDI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
+    {"SUBI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, SIZES_BWL},
     {"JMP", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
     {"JSR", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, 0},
     {"ADDQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
