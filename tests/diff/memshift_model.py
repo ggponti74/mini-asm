@@ -34,5 +34,19 @@ for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
         ok = got == expect
         print("%s.w (a0) vs the manual's rules  %-4s %s" % (mn, t, "ok" if ok else "DIFFERS"))
         bad += not ok
+# the same shifts addressed with a displacement: base register b points 4 bytes before / after / at
+# the cell, so 4(b), -4(b) and 0(b) all reach it (b = a0, which is ESI on x86, and a3, which is spilled)
+for b in ("a0", "a3"):
+    for disp, adjust in ((4, "subq.l  #4, %s"), (-4, "addq.l  #4, %s"), (0, None)):
+        for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
+            setup = ["lea     cell, %s" % b] + ([adjust % b] if adjust else []) + ["lea     cell, a5"]
+            cases = [(setup + ["move.l  #$%x, (a5)" % v], ["%s.w  %d(%s)" % (mn, disp, b)], "capx") for v in diff.VALUES]
+            expect = b"".join(model(mn, v) for v in diff.VALUES)
+            for t in diff.TARGETS:
+                got, info = diff.run_target(diff.build(cases, "mini"), "msd_%s_%s_%d" % (mn, b, disp), t)
+                ok = got == expect
+                print("%s.w %d(%s) vs the manual's rules  %-4s %s" % (mn, disp, b, t, "ok" if ok else "DIFFERS"))
+                bad += not ok
+
 print("model check:", "all match" if not bad else "%d mismatches" % bad)
 sys.exit(1 if bad else 0)

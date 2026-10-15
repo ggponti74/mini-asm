@@ -34,6 +34,20 @@ cap_c   move.l  d1, (a1)+
         move.l  d3, (a1)+
         move.l  #0, a2
         rts
+capx    bpl     capx_n
+        addq.l  #1, a2
+capx_n  bne     capx_z
+        addq.l  #2, a2
+capx_z  bvc     capx_v
+        addq.l  #4, a2
+capx_v  bcc     capx_c
+        addq.l  #8, a2
+capx_c  move.l  (a5), d1
+        move.l  d1, (a1)+
+        move.l  a2, d3
+        move.l  d3, (a1)+
+        move.l  #0, a2
+        rts
 capm    bpl     capm_n
         addq.l  #1, a2
 capm_n  bne     capm_z
@@ -50,7 +64,7 @@ capm_c  move.l  (a0), d1
         rts
 """
 
-def build(cases, kind):
+def build(cases, kind, arena=False):
     """cases: list of (setup lines, instruction lines).  kind: 'mini' or 'ref'."""
     n = len(cases)
     nbytes = 8 * n
@@ -74,6 +88,12 @@ def build(cases, kind):
     out.append("results dc.l    0,0,0,0,0,0,0,0")
     out += ["        dc.l    0,0,0,0,0,0,0,0"] * (lines - 1)
     out.append("cell    dc.l    0")
+    if arena:
+        # 512 bytes with a pattern that differs at every address; cellmid is the middle
+        pat = [(i * 7 + 3) & 0xFF for i in range(512)]
+        for half, label in ((0, "arena   "), (256, "cellmid ")):
+            for j in range(0, 256, 16):
+                out.append((label if j == 0 else "        ") + "dc.b    " + ",".join(str(b) for b in pat[half + j:half + j + 16]))
     return "\n".join(out) + "\n"
 
 def sh(cmd, **kw):
@@ -112,13 +132,15 @@ def describe(case, ref8, got8):
     vals = " ".join(x.split("#")[1].split(",")[0] for x in case[0] if "#" in x)
     return "%-22s [%s]  ref %08x %s   got %08x %s" % (ins, vals, r1, fl(rm), g1, fl(gm))
 
+ARENA = False
+
 def check(name, cases, show=6):
-    ref, rinfo = run_ref(build(cases, "ref"), name)
+    ref, rinfo = run_ref(build(cases, "ref", ARENA), name)
     if ref is None or len(ref) != 8 * len(cases):
         print("%-22s REFERENCE PROBLEM: %s (%s bytes)" % (name, rinfo, None if ref is None else len(ref))); return 0, len(TARGETS)
     bad_targets = 0
     for t in TARGETS:
-        got, info = run_target(build(cases, "mini"), name, t)
+        got, info = run_target(build(cases, "mini", ARENA), name, t)
         if got is None:
             print("%-22s %-4s %s" % (name, t, info)); bad_targets += 1; continue
         if got == ref:
@@ -151,7 +173,7 @@ def binary_cases(mn, sz):
             for a in VALUES for b in VALUES]
 
 if __name__ == "__main__":
-    which = sys.argv[1:] or ["unary", "binary", "shift", "mem", "misc"]
+    which = sys.argv[1:] or ["unary", "binary", "shift", "mem", "imm", "misc", "disp"]
     tot = ok = 0
     groups = []
     if "unary" in which:
@@ -182,6 +204,55 @@ if __name__ == "__main__":
             for sz in "bwl":
                 groups.append(("%s.%s #imm,(a0)" % (mn, sz), [(L(v), ["%s.%s  #$%x, (a0)" % (mn, sz, i)], "capm")
                                                               for v in VALUES for i in IMMS[sz]]))
+    if "disp" in which:
+        ARENA = True
+        DS = [0, 1, 2, 4, -1, -2, -4, 127, 128, -128, -129, 200, -200, 252]
+        DS_W = [d for d in DS if d % 2 == 0]
+        for b in ("a0", "a3"):
+            setup = lambda d, b=b: ["lea     cellmid, %s" % b, "lea     %d(%s), a5" % (d, b)]
+            # loads (d1 preset, so a size merge that clobbers bits shows) and LEA
+            for sz in "bwl":
+                ds = DS if sz == "b" else DS_W
+                groups.append(("disp.%s.move.%s.load" % (b, sz), [(setup(d) + ["move.l  #$A5A5A5A5, d1"], ["move.%s  %d(%s), d1" % (sz, d, b)]) for d in ds]))
+            groups.append(("disp.%s.lea" % b, [(setup(d), ["lea     %d(%s), a6" % (d, b), "move.l  (a6), d1"]) for d in DS]))
+            groups.append(("disp.%s.movea.w" % b, [(setup(d), ["move.w  %d(%s), a6" % (d, b), "move.l  a6, d1"]) for d in DS_W]))
+            groups.append(("disp.%s.movea.l" % b, [(setup(d), ["move.l  %d(%s), a6" % (d, b), "move.l  a6, d1"]) for d in DS_W]))
+            # stores (register and immediate source) and the memory read-back through a5
+            for sz in "bwl":
+                ds = DS if sz == "b" else DS_W
+                vals = [0, 0x80, 0x7FFF, 0x8000, 0xFFFFFFFF, 0x12345678]
+                groups.append(("disp.%s.move.%s.store" % (b, sz), [(setup(d) + ["move.l  #$%x, d1" % v], ["move.%s  d1, %d(%s)" % (sz, d, b)], "capx") for d in ds for v in vals]))
+                groups.append(("disp.%s.move.%s.storei" % (b, sz), [(setup(d), ["move.%s  #$5A, %d(%s)" % (sz, d, b)], "capx") for d in ds]))
+            # arithmetic / logic / compare with d(An) as the source or the destination
+            for mn in ("and", "or"):  # (ADD/SUB/CMP take no memory source in mini-asm, with or without a displacement)
+                for sz in "bwl":
+                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
+                    groups.append(("disp.%s.%s.%s.src" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, d1" % v], ["%s.%s  %d(%s), d1" % (mn, sz, d, b)]) for d in ds for v in (0, 0x7F, 0x80, 0xFFFFFFFF, 0x12345678)]))
+            for mn in ("and", "or", "eor"):
+                for sz in "bwl":
+                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
+                    groups.append(("disp.%s.%s.%s.dst" % (b, mn, sz), [(setup(d) + ["move.l  #$12345678, (a5)", "move.l  #$%x, d1" % v], ["%s.%s  d1, %d(%s)" % (mn, sz, d, b)], "capx") for d in ds for v in (0, 0xFF, 0x80, 0xFFFFFFFF)]))
+            # one-operand instructions, quick arithmetic, bit operations, shifts
+            for mn in ("clr", "tst", "not", "neg"):
+                for sz in "bwl":
+                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
+                    groups.append(("disp.%s.%s.%s" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s.%s  %d(%s)" % (mn, sz, d, b)], "capx") for d in ds for v in (0, 0x80, 0x7FFFFFFF, 0xFFFFFFFF)]))
+            for mn in ("addq", "subq"):
+                for sz in "bwl":
+                    ds = [0, 2, 200]
+                    groups.append(("disp.%s.%s.%s" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s.%s  #%d, %d(%s)" % (mn, sz, q, d, b)], "capx") for d in ds for v in (0, 0x7F000000, 0xFFFFFFFF) for q in (1, 8)]))
+            for mn in ("btst", "bset", "bclr", "bchg"):
+                groups.append(("disp.%s.%s" % (b, mn), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s  #%d, %d(%s)" % (mn, bit, d, b)], "capx") for d in (0, 1, -4, 200) for v in (0, 0xFFFFFFFF, 0xA5000000) for bit in (0, 3, 7)]))
+            # (memory shifts d(An) are checked by memshift_model.py: qemu-m68k mistakes ASR for LSR
+            #  whenever bit 3 of the EA field is set, which d(An) always does)
+        # memory to memory, both operands with displacements (two bases, and the same base twice)
+        for sz in "bwl":
+            groups.append(("disp.move.%s.mem2mem" % sz, [(["lea     cellmid, a0", "lea     cellmid, a4", "lea     %d(a4), a5" % d2], ["move.%s  %d(a0), %d(a4)" % (sz, d1, d2)], "capx") for d1 in (0, 4, -8, 200) for d2 in (0, 8, -16, 128)]))
+            groups.append(("disp.move.%s.mem2mem_same" % sz, [(["lea     cellmid, a3", "lea     %d(a3), a5" % d2], ["move.%s  %d(a3), %d(a3)" % (sz, d1, d2)], "capx") for d1 in (0, 4, -8) for d2 in (0, 8, -16)]))
+        # An as the source or target of its own displacement
+        groups.append(("disp.alias", [(["lea     cellmid, a0"], ["move.l  a0, %d(a0)" % d, "move.l  %d(a0), d2" % d, "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)] +
+                                  [(["lea     cellmid, a0"], ["move.l  a0, %d(a0)" % d, "move.l  %d(a0), a0" % d, "move.l  a0, d2", "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)] +
+                                  [(["lea     cellmid, a3"], ["move.l  a3, %d(a3)" % d, "move.l  %d(a3), a3" % d, "move.l  a3, d2", "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)]))
     if "misc" in which:
         groups.append(("swap", [(["move.l  #$%x, d1" % v], ["swap    d1"]) for v in VALUES]))
         for sz in "wl": groups.append(("ext.%s" % sz, [(["move.l  #$%x, d1" % v], ["ext.%s  d1" % sz]) for v in VALUES]))
@@ -192,6 +263,7 @@ if __name__ == "__main__":
         for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
             for sz in "bwl":
                 for form in ("imm", "reg"): groups.append(("%s.%s.%s" % (mn, sz, form), shift_cases(mn, sz, form)))
+    ARENA = "disp" in which
     for name, cases in groups:
         a, b = check(name.replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_"), cases); ok += a; tot += b
     print("---- %d of %d (group, target) runs match real 68K" % (ok, tot))

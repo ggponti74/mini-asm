@@ -1,0 +1,290 @@
+diff --git a/tests/diff/.gitignore b/tests/diff/.gitignore
+new file mode 100644
+index 0000000..c18dd8d
+--- /dev/null
++++ b/tests/diff/.gitignore
+@@ -0,0 +1 @@
++__pycache__/
+diff --git a/tests/diff.py b/tests/diff/diff.py
+similarity index 60%
+rename from tests/diff.py
+rename to tests/diff/diff.py
+index 71858df..fe4a4cf 100644
+--- a/tests/diff.py
++++ b/tests/diff/diff.py
+@@ -34,6 +34,20 @@ cap_c   move.l  d1, (a1)+
+         move.l  d3, (a1)+
+         move.l  #0, a2
+         rts
++capx    bpl     capx_n
++        addq.l  #1, a2
++capx_n  bne     capx_z
++        addq.l  #2, a2
++capx_z  bvc     capx_v
++        addq.l  #4, a2
++capx_v  bcc     capx_c
++        addq.l  #8, a2
++capx_c  move.l  (a5), d1
++        move.l  d1, (a1)+
++        move.l  a2, d3
++        move.l  d3, (a1)+
++        move.l  #0, a2
++        rts
+ capm    bpl     capm_n
+         addq.l  #1, a2
+ capm_n  bne     capm_z
+@@ -50,7 +64,7 @@ capm_c  move.l  (a0), d1
+         rts
+ """
+ 
+-def build(cases, kind):
++def build(cases, kind, arena=False):
+     """cases: list of (setup lines, instruction lines).  kind: 'mini' or 'ref'."""
+     n = len(cases)
+     nbytes = 8 * n
+@@ -74,6 +88,12 @@ def build(cases, kind):
+     out.append("results dc.l    0,0,0,0,0,0,0,0")
+     out += ["        dc.l    0,0,0,0,0,0,0,0"] * (lines - 1)
+     out.append("cell    dc.l    0")
++    if arena:
++        # 512 bytes with a pattern that differs at every address; cellmid is the middle
++        pat = [(i * 7 + 3) & 0xFF for i in range(512)]
++        for half, label in ((0, "arena   "), (256, "cellmid ")):
++            for j in range(0, 256, 16):
++                out.append((label if j == 0 else "        ") + "dc.b    " + ",".join(str(b) for b in pat[half + j:half + j + 16]))
+     return "\n".join(out) + "\n"
+ 
+ def sh(cmd, **kw):
+@@ -112,13 +132,15 @@ def describe(case, ref8, got8):
+     vals = " ".join(x.split("#")[1].split(",")[0] for x in case[0] if "#" in x)
+     return "%-22s [%s]  ref %08x %s   got %08x %s" % (ins, vals, r1, fl(rm), g1, fl(gm))
+ 
++ARENA = False
++
+ def check(name, cases, show=6):
+-    ref, rinfo = run_ref(build(cases, "ref"), name)
++    ref, rinfo = run_ref(build(cases, "ref", ARENA), name)
+     if ref is None or len(ref) != 8 * len(cases):
+         print("%-22s REFERENCE PROBLEM: %s (%s bytes)" % (name, rinfo, None if ref is None else len(ref))); return 0, len(TARGETS)
+     bad_targets = 0
+     for t in TARGETS:
+-        got, info = run_target(build(cases, "mini"), name, t)
++        got, info = run_target(build(cases, "mini", ARENA), name, t)
+         if got is None:
+             print("%-22s %-4s %s" % (name, t, info)); bad_targets += 1; continue
+         if got == ref:
+@@ -151,7 +173,7 @@ def binary_cases(mn, sz):
+             for a in VALUES for b in VALUES]
+ 
+ if __name__ == "__main__":
+-    which = sys.argv[1:] or ["unary", "binary", "shift", "mem", "misc"]
++    which = sys.argv[1:] or ["unary", "binary", "shift", "mem", "imm", "misc", "disp"]
+     tot = ok = 0
+     groups = []
+     if "unary" in which:
+@@ -182,6 +204,55 @@ if __name__ == "__main__":
+             for sz in "bwl":
+                 groups.append(("%s.%s #imm,(a0)" % (mn, sz), [(L(v), ["%s.%s  #$%x, (a0)" % (mn, sz, i)], "capm")
+                                                               for v in VALUES for i in IMMS[sz]]))
++    if "disp" in which:
++        ARENA = True
++        DS = [0, 1, 2, 4, -1, -2, -4, 127, 128, -128, -129, 200, -200, 252]
++        DS_W = [d for d in DS if d % 2 == 0]
++        for b in ("a0", "a3"):
++            setup = lambda d, b=b: ["lea     cellmid, %s" % b, "lea     %d(%s), a5" % (d, b)]
++            # loads (d1 preset, so a size merge that clobbers bits shows) and LEA
++            for sz in "bwl":
++                ds = DS if sz == "b" else DS_W
++                groups.append(("disp.%s.move.%s.load" % (b, sz), [(setup(d) + ["move.l  #$A5A5A5A5, d1"], ["move.%s  %d(%s), d1" % (sz, d, b)]) for d in ds]))
++            groups.append(("disp.%s.lea" % b, [(setup(d), ["lea     %d(%s), a6" % (d, b), "move.l  (a6), d1"]) for d in DS]))
++            groups.append(("disp.%s.movea.w" % b, [(setup(d), ["move.w  %d(%s), a6" % (d, b), "move.l  a6, d1"]) for d in DS_W]))
++            groups.append(("disp.%s.movea.l" % b, [(setup(d), ["move.l  %d(%s), a6" % (d, b), "move.l  a6, d1"]) for d in DS_W]))
++            # stores (register and immediate source) and the memory read-back through a5
++            for sz in "bwl":
++                ds = DS if sz == "b" else DS_W
++                vals = [0, 0x80, 0x7FFF, 0x8000, 0xFFFFFFFF, 0x12345678]
++                groups.append(("disp.%s.move.%s.store" % (b, sz), [(setup(d) + ["move.l  #$%x, d1" % v], ["move.%s  d1, %d(%s)" % (sz, d, b)], "capx") for d in ds for v in vals]))
++                groups.append(("disp.%s.move.%s.storei" % (b, sz), [(setup(d), ["move.%s  #$5A, %d(%s)" % (sz, d, b)], "capx") for d in ds]))
++            # arithmetic / logic / compare with d(An) as the source or the destination
++            for mn in ("and", "or"):  # (ADD/SUB/CMP take no memory source in mini-asm, with or without a displacement)
++                for sz in "bwl":
++                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
++                    groups.append(("disp.%s.%s.%s.src" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, d1" % v], ["%s.%s  %d(%s), d1" % (mn, sz, d, b)]) for d in ds for v in (0, 0x7F, 0x80, 0xFFFFFFFF, 0x12345678)]))
++            for mn in ("and", "or", "eor"):
++                for sz in "bwl":
++                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
++                    groups.append(("disp.%s.%s.%s.dst" % (b, mn, sz), [(setup(d) + ["move.l  #$12345678, (a5)", "move.l  #$%x, d1" % v], ["%s.%s  d1, %d(%s)" % (mn, sz, d, b)], "capx") for d in ds for v in (0, 0xFF, 0x80, 0xFFFFFFFF)]))
++            # one-operand instructions, quick arithmetic, bit operations, shifts
++            for mn in ("clr", "tst", "not", "neg"):
++                for sz in "bwl":
++                    ds = [0, 1, 4, -4, 200] if sz == "b" else [0, 2, 4, -4, 200]
++                    groups.append(("disp.%s.%s.%s" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s.%s  %d(%s)" % (mn, sz, d, b)], "capx") for d in ds for v in (0, 0x80, 0x7FFFFFFF, 0xFFFFFFFF)]))
++            for mn in ("addq", "subq"):
++                for sz in "bwl":
++                    ds = [0, 2, 200]
++                    groups.append(("disp.%s.%s.%s" % (b, mn, sz), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s.%s  #%d, %d(%s)" % (mn, sz, q, d, b)], "capx") for d in ds for v in (0, 0x7F000000, 0xFFFFFFFF) for q in (1, 8)]))
++            for mn in ("btst", "bset", "bclr", "bchg"):
++                groups.append(("disp.%s.%s" % (b, mn), [(setup(d) + ["move.l  #$%x, (a5)" % v], ["%s  #%d, %d(%s)" % (mn, bit, d, b)], "capx") for d in (0, 1, -4, 200) for v in (0, 0xFFFFFFFF, 0xA5000000) for bit in (0, 3, 7)]))
++            # (memory shifts d(An) are checked by memshift_model.py: qemu-m68k mistakes ASR for LSR
++            #  whenever bit 3 of the EA field is set, which d(An) always does)
++        # memory to memory, both operands with displacements (two bases, and the same base twice)
++        for sz in "bwl":
++            groups.append(("disp.move.%s.mem2mem" % sz, [(["lea     cellmid, a0", "lea     cellmid, a4", "lea     %d(a4), a5" % d2], ["move.%s  %d(a0), %d(a4)" % (sz, d1, d2)], "capx") for d1 in (0, 4, -8, 200) for d2 in (0, 8, -16, 128)]))
++            groups.append(("disp.move.%s.mem2mem_same" % sz, [(["lea     cellmid, a3", "lea     %d(a3), a5" % d2], ["move.%s  %d(a3), %d(a3)" % (sz, d1, d2)], "capx") for d1 in (0, 4, -8) for d2 in (0, 8, -16)]))
++        # An as the source or target of its own displacement
++        groups.append(("disp.alias", [(["lea     cellmid, a0"], ["move.l  a0, %d(a0)" % d, "move.l  %d(a0), d2" % d, "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)] +
++                                  [(["lea     cellmid, a0"], ["move.l  a0, %d(a0)" % d, "move.l  %d(a0), a0" % d, "move.l  a0, d2", "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)] +
++                                  [(["lea     cellmid, a3"], ["move.l  a3, %d(a3)" % d, "move.l  %d(a3), a3" % d, "move.l  a3, d2", "lea     cellmid, a5", "move.l  a5, d5", "sub.l    d5, d2", "move.l  d2, d1"]) for d in (0, 4, -8, 200)]))
+     if "misc" in which:
+         groups.append(("swap", [(["move.l  #$%x, d1" % v], ["swap    d1"]) for v in VALUES]))
+         for sz in "wl": groups.append(("ext.%s" % sz, [(["move.l  #$%x, d1" % v], ["ext.%s  d1" % sz]) for v in VALUES]))
+@@ -192,7 +263,8 @@ if __name__ == "__main__":
+         for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
+             for sz in "bwl":
+                 for form in ("imm", "reg"): groups.append(("%s.%s.%s" % (mn, sz, form), shift_cases(mn, sz, form)))
++    ARENA = "disp" in which
+     for name, cases in groups:
+         a, b = check(name.replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_"), cases); ok += a; tot += b
+     print("---- %d of %d (group, target) runs match real 68K" % (ok, tot))
+-    sys.exit(0 if ok == tot else 1)
+\ No newline at end of file
++    sys.exit(0 if ok == tot else 1)
+diff --git a/tests/trap/mem_shift_model.py b/tests/diff/memshift_model.py
+similarity index 59%
+rename from tests/trap/mem_shift_model.py
+rename to tests/diff/memshift_model.py
+index 3dbf77f..460b93b 100644
+--- a/tests/trap/mem_shift_model.py
++++ b/tests/diff/memshift_model.py
+@@ -34,5 +34,19 @@ for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
+         ok = got == expect
+         print("%s.w (a0) vs the manual's rules  %-4s %s" % (mn, t, "ok" if ok else "DIFFERS"))
+         bad += not ok
++# the same shifts addressed with a displacement: base register b points 4 bytes before / after / at
++# the cell, so 4(b), -4(b) and 0(b) all reach it (b = a0, which is ESI on x86, and a3, which is spilled)
++for b in ("a0", "a3"):
++    for disp, adjust in ((4, "subq.l  #4, %s"), (-4, "addq.l  #4, %s"), (0, None)):
++        for mn in ("asl", "asr", "lsl", "lsr", "rol", "ror"):
++            setup = ["lea     cell, %s" % b] + ([adjust % b] if adjust else []) + ["lea     cell, a5"]
++            cases = [(setup + ["move.l  #$%x, (a5)" % v], ["%s.w  %d(%s)" % (mn, disp, b)], "capx") for v in diff.VALUES]
++            expect = b"".join(model(mn, v) for v in diff.VALUES)
++            for t in diff.TARGETS:
++                got, info = diff.run_target(diff.build(cases, "mini"), "msd_%s_%s_%d" % (mn, b, disp), t)
++                ok = got == expect
++                print("%s.w %d(%s) vs the manual's rules  %-4s %s" % (mn, disp, b, t, "ok" if ok else "DIFFERS"))
++                bad += not ok
++
+ print("model check:", "all match" if not bad else "%d mismatches" % bad)
+-sys.exit(1 if bad else 0)
+\ No newline at end of file
++sys.exit(1 if bad else 0)
+diff --git a/tests/diff/run.sh b/tests/diff/run.sh
+new file mode 100644
+index 0000000..1a8b34c
+--- /dev/null
++++ b/tests/diff/run.sh
+@@ -0,0 +1,27 @@
++#!/bin/sh
++# Differential test of the 68K logic, arithmetic and shift instructions against a real 68K:
++# the same source is assembled by mini-asm (elf, arm, and PE under wine when it works) and by
++# GNU as for m68k, run under qemu-m68k, and the recorded results and N/Z/V/C flags must be
++# identical. Needs: m68k-linux-gnu-as / -ld (apt: binutils-m68k-linux-gnu), qemu-m68k and
++# qemu-arm (apt: qemu-user), python3. Run it from the repo root after "make":
++#
++#   sh tests/diff/run.sh            all groups (a few minutes with wine)
++#   TARGETS=elf,arm sh tests/diff/run.sh unary binary
++#                                   groups: unary binary shift mem imm misc
++#
++# The X flag cannot be read without ROXL/ROXR and is not compared. Memory shifts are
++# checked against the manual's rules (memshift_model.py), because qemu-m68k gets those wrong.
++cd "$(dirname "$0")/../.." || exit 1
++for tool in m68k-linux-gnu-as m68k-linux-gnu-ld qemu-m68k python3; do
++    command -v "$tool" >/dev/null 2>&1 || { echo "SKIP   tests/diff   ($tool not installed)"; exit 0; }
++done
++if [ -z "$TARGETS" ]; then
++    TARGETS=elf
++    command -v qemu-arm >/dev/null 2>&1 && TARGETS=$TARGETS,arm
++    if command -v wine >/dev/null 2>&1; then TARGETS=$TARGETS,pe; fi
++fi
++export TARGETS
++status=0
++python3 tests/diff/diff.py "$@" || status=1
++python3 tests/diff/memshift_model.py || status=1
++exit $status
+diff --git a/tests/trap/to_ref.py b/tests/diff/to_ref.py
+similarity index 97%
+rename from tests/trap/to_ref.py
+rename to tests/diff/to_ref.py
+index 58c70d3..d2c1646 100644
+--- a/tests/trap/to_ref.py
++++ b/tests/diff/to_ref.py
+@@ -28,4 +28,4 @@ for line in sys.stdin:
+                 i += 1
+         i += 1
+     out.append("".join(res))
+-print("\n".join(out))
+\ No newline at end of file
++print("\n".join(out))
+diff --git a/tests/errors/disp_jmp.asm b/tests/errors/disp_jmp.asm
+new file mode 100644
+index 0000000..4cbd36c
+--- /dev/null
++++ b/tests/errors/disp_jmp.asm
+@@ -0,0 +1,4 @@
++; EXPECT: Error in .*disp_jmp\.asm at line 3: d\(An\) isn.t supported with this instruction yet
++        lea     buf, a0
++        jmp     4(a0)
++buf     dc.l    0
+diff --git a/tests/errors/disp_malformed.asm b/tests/errors/disp_malformed.asm
+new file mode 100644
+index 0000000..6752acd
+--- /dev/null
++++ b/tests/errors/disp_malformed.asm
+@@ -0,0 +1,2 @@
++; EXPECT: Error in .*disp_malformed\.asm at line 2: operand 1 .4\(d0\). is malformed .*d\(An\)
++        move.l  4(d0), d1
+diff --git a/tests/errors/disp_postinc.asm b/tests/errors/disp_postinc.asm
+new file mode 100644
+index 0000000..c2a0c4a
+--- /dev/null
++++ b/tests/errors/disp_postinc.asm
+@@ -0,0 +1,2 @@
++; EXPECT: Error in .*disp_postinc\.asm at line 2: operand 1 .4\(a0\)\+. is malformed
++        move.l  4(a0)+, d1
+diff --git a/tests/errors/disp_range.asm b/tests/errors/disp_range.asm
+new file mode 100644
+index 0000000..ea42019
+--- /dev/null
++++ b/tests/errors/disp_range.asm
+@@ -0,0 +1,4 @@
++; EXPECT: Error in .*disp_range\.asm at line 3: displacement 40000 does not fit in 16 bits
++        lea     buf, a0
++        move.l  40000(a0), d1
++buf     dc.l    0
+diff --git a/tests/errors/disp_same_register.asm b/tests/errors/disp_same_register.asm
+new file mode 100644
+index 0000000..00a8f5c
+--- /dev/null
++++ b/tests/errors/disp_same_register.asm
+@@ -0,0 +1,4 @@
++; EXPECT: Error in .*disp_same_register\.asm at line 3: d\(An\) can.t be combined with \(An\)\+ or -\(An\) of the same register
++        lea     buf, a3
++        move.l  (a3)+, 4(a3)
++buf     dc.l    0,0
+diff --git a/tests/errors/disp_undefined_equ.asm b/tests/errors/disp_undefined_equ.asm
+new file mode 100644
+index 0000000..b785bde
+--- /dev/null
++++ b/tests/errors/disp_undefined_equ.asm
+@@ -0,0 +1,4 @@
++; EXPECT: Error in .*disp_undefined_equ\.asm at line 3: undefined EQU constant .NOPE.
++        lea     buf, a0
++        move.l  NOPE(a0), d1
++buf     dc.l    0
+diff --git a/tests/errors/displacement.asm b/tests/trap/displacement.asm
+similarity index 100%
+rename from tests/errors/displacement.asm
+rename to tests/trap/displacement.asm
+diff --git a/tests/trap/run.sh b/tests/trap/run.sh
+deleted file mode 100644
+index e69de29..0000000
