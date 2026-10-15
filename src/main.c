@@ -329,7 +329,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       {
         fprintf(stderr,
                 "Error in %s at line %zu: operand %zu '%s' is malformed (address "
-                "register modes are (An), (An)+ and -(An), no spaces inside)\n",
+                "register modes are (An), (An)+, -(An) and d(An), no spaces inside)\n",
                 g_src_file,
                 line_num, i + 1, ops[i].value.label);
         ok = 0;
@@ -359,6 +359,29 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
             break;
           }
           ops[i].value.imm = value;
+        }
+        continue;
+      }
+      if (ops[i].type == OPERAND_DISP)
+      {
+        if (ops[i].symbol && pass == 2)
+        {
+          int32_t value;
+          if (!symtab_find_equ(ops[i].symbol, &value))
+          {
+            fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
+                    line_num, ops[i].symbol);
+            ok = 0;
+            break;
+          }
+          ops[i].disp = value;
+        }
+        if ((!ops[i].symbol || pass == 2) && (ops[i].disp < -32768 || ops[i].disp > 32767))
+        {
+          fprintf(stderr, "Error in %s at line %zu: displacement %d does not fit in 16 bits (-32768..32767)\n",
+                  g_src_file, line_num, ops[i].disp);
+          ok = 0;
+          break;
         }
         continue;
       }

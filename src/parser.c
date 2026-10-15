@@ -99,6 +99,32 @@ static int parse_indirect(const char *tok, OperandType *type, int *reg) {
   return 1;
 }
 
+// Recognizes the displacement mode  d(An):  a number (decimal, $hex, 0xhex, optional
+// sign) or an EQU constant name, then "(An)" -- no spaces anywhere in the token.
+// Returns 0 if `tok` isn't an attempt at one (no '(' after a first character),
+// 1 and sets *disp / *symbol / *reg on success, -1 if malformed.
+static int parse_displacement(const char *tok, int32_t *disp, const char **symbol, int *reg) {
+  const char *open = strchr(tok, '(');
+  if (!open || open == tok)
+    return 0;
+  if (open[1] == '\0' || open[2] == '\0' || open[3] != ')' || open[4] != '\0')
+    return -1;
+  char name[3] = {open[1], open[2], '\0'};
+  int r;
+  if (!parse_register(name, &r) || r < 8)
+    return -1;
+  char prefix[48];
+  size_t n = (size_t)(open - tok);
+  if (n >= sizeof prefix)
+    return -1;
+  memcpy(prefix, tok, n);
+  prefix[n] = '\0';
+  if (!parse_immediate(prefix, disp, symbol))
+    return -1;
+  *reg = r;
+  return 1;
+}
+
 // Simple error reporting
 static void report_error(size_t line, size_t col, const char *msg) {
   fprintf(stderr, "Error in %s at line %zu, column %zu: %s\n", g_src_file, line, col, msg);
@@ -241,7 +267,9 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
 
     // classify operand
     int reg;
+    int disp_kind;
     OperandType mem_type;
+    ops[count].disp = 0;
     int ind = parse_indirect(token, &mem_type, &reg);
     if (ind == 1) {
       ops[count].type = mem_type;
@@ -252,6 +280,14 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     } else if (parse_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
+    } else if ((disp_kind = parse_displacement(token, &ops[count].disp, &ops[count].symbol, &reg)) != 0) {
+      if (disp_kind == 1) {
+        ops[count].type = OPERAND_DISP;
+        ops[count].value.reg = reg;
+      } else {
+        ops[count].type = OPERAND_BAD;
+        ops[count].value.label = copy_string(token);
+      }
     } else if (token[0] == '#') {
       ops[count].type = OPERAND_IMMEDIATE;
         ops[count].value.imm = 0;

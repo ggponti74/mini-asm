@@ -18,7 +18,7 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"NOP", 0x90, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0}, // x86 "NOP"
     // MOVE also takes memory operands through an address register: (An), (An)+, -(An)
     {"MOVE", 0x89, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REG_OR_MEM}, SIZES_BWL}, // x86 "MOV"
-    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, SIZES_L},       // x86 "LEA r32, [disp32]"
+    {"LEA", 0x8D, 1, 1, 2, {OPERAND_CONTROL, OPERAND_REGISTER}, SIZES_L},     // LEA label|(An)|d(An),An
     // ADD: opcode byte here is only a placeholder; codegen.c picks 81 /0 (imm32)
     // or 01 /r (reg) depending on the source operand kind.
     {"ADD", 0x01, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
@@ -113,7 +113,7 @@ static const OpcodeEntry arm_opcode_table[] = {
     // Opcode words below are placeholders: codegen.c emits the real ARM
     // instruction sequences (the 68K registers live in the register block).
     {"MOVE", 0xE0D1F002, 4, 1, 2, {OPERAND_EA_SRC, OPERAND_REG_OR_MEM}, SIZES_BWL},
-    {"LEA", 0x8D, 1, 1, 2, {OPERAND_LABEL, OPERAND_REGISTER}, 0},
+    {"LEA", 0x8D, 1, 1, 2, {OPERAND_CONTROL, OPERAND_REGISTER}, 0},
     {"ADD", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
     {"SUB", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_BWL},
     {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
@@ -186,7 +186,7 @@ static const OpcodeEntry arm_opcode_table[] = {
 
 bool operand_is_memory(OperandType t)
 {
-    return t == OPERAND_IND || t == OPERAND_POSTINC || t == OPERAND_PREDEC;
+    return t == OPERAND_IND || t == OPERAND_POSTINC || t == OPERAND_PREDEC || t == OPERAND_DISP;
 }
 
 bool operand_matches(OperandType expected, OperandType actual)
@@ -201,7 +201,7 @@ bool operand_matches(OperandType expected, OperandType actual)
     if (expected == OPERAND_EA_ALT)
         return actual == OPERAND_REGISTER || operand_is_memory(actual);
     if (expected == OPERAND_CONTROL)
-        return actual == OPERAND_LABEL || actual == OPERAND_IND;
+        return actual == OPERAND_LABEL || actual == OPERAND_IND || actual == OPERAND_DISP;
     if (expected == OPERAND_OPT_REG)
         return actual == OPERAND_REGISTER;
     return expected == actual;

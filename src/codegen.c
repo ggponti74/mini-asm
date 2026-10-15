@@ -311,7 +311,7 @@ static bool emit_x86_branch(const OpcodeEntry *entry, const Operand *operands,
 // live in the emulated-register block (see "A1-A7" below), and only get one
 // while emit_x86_two_operand() has a scratch register standing in for them
 // (g_subst holds that register's code + 1, 0 = none). Otherwise -1.
-static int g_subst[16];
+static int g_subst[18]; // 9..15: A1-A7 stand-ins; 16, 17: effective-address temporaries of d(An)
 
 static int x86_reg_code(int reg)
 {
@@ -319,7 +319,7 @@ static int x86_reg_code(int reg)
         return reg;
     if (reg == 8)
         return 6; // A0 -> ESI
-    if (reg >= 9 && reg <= 15)
+    if ((reg >= 9 && reg <= 15) || reg == 16 || reg == 17)
         return g_subst[reg] - 1;
     return -1;
 }
@@ -785,6 +785,20 @@ static bool emit_x86_move_imm(const Operand *operands, OpSize size, OutputBuffer
 static bool emit_x86_lea(const Operand *operands, OutputBuffer *out)
 {
     const Operand *addr = &operands[0], *reg = &operands[1];
+    if (addr->type == OPERAND_IND && reg->type == OPERAND_REGISTER && reg->value.reg >= 8)
+    {
+        // LEA (An),Am (and d(An),Am, which the displacement wrapper turned into this):
+        // Am = An, a plain register copy.
+        int s = x86_reg_code(addr->value.reg), d = x86_reg_code(reg->value.reg);
+        if (s < 0 || d < 0)
+            return false;
+        if (s != d)
+        {
+            buffer_write(out, 0x89); // mov d,s
+            buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        }
+        return true;
+    }
     if (addr->type != OPERAND_IMMEDIATE || reg->type != OPERAND_REGISTER)
         return false;
     // Like the real 68K, LEA targets an address register (A0-A7) only.
@@ -2243,6 +2257,155 @@ static int emit_x86_one_operand(const OpcodeEntry *entry, Operand *operand,
     return 1;
 }
 
+// ---- d(An): displacement addressing on x86 ----------------------------------
+// The memory encoders only know [base] (see write_modrm_mem), so a d(An) operand is
+// turned into a plain (T) operand: T is a scratch register (EAX..EBX, saved with
+// push/pop like the A1-A7 stand-ins) that holds the effective address An + d for the
+// duration of the instruction, computed with LEA so no flag changes. The operand is
+// rewritten to an indirect through a pseudo register (16 or 17) that g_subst maps to
+// T, so the instruction body can't confuse the address with An itself, even when An
+// is another operand of the same instruction (MOVE.L A0,4(A0) stores the old A0;
+// MOVEA.L 4(A0),A0 loads through the old A0). The 68K evaluates a source operand's
+// address (and its side effect) before the destination's, which this can't copy
+// when the same An is also used with (An)+ / -(An): that combination is rejected.
+// Supported where A1-A7 stand-ins are (spill_capable) plus LEA; JMP/JSR aren't.
+#define ERR_DISP_UNSUPPORTED "d(An) isn't supported with this instruction yet (LEA d(An),A0 first, then use (A0))"
+#define ERR_DISP_SAMEREG "d(An) can't be combined with (An)+ or -(An) of the same register in one instruction"
+#define ERR_DISP_ESP "D4 maps to ESP on this target, so it can't be combined with d(An) yet"
+
+static int emit_x86_disp(const OpcodeEntry *entry, Operand *operands, OpSize size,
+                         OutputBuffer *out)
+{
+    int count = (int)entry->operand_count;
+    if (!spill_capable(entry->mnemonic))
+    {
+        fail(ERR_DISP_UNSUPPORTED);
+        return 0;
+    }
+    int ea_of[2] = {-1, -1}, n = 0; // operand index of each d(An)
+    for (int i = 0; i < count; i++)
+        if (operands[i].type == OPERAND_DISP)
+            ea_of[n++] = i;
+
+    bool used[8] = {false};
+    for (int i = 0; i < count; i++)
+    {
+        const Operand *o = &operands[i];
+        if (o->type == OPERAND_REGISTER && o->value.reg == 4)
+        {
+            fail(ERR_DISP_ESP);
+            return 0;
+        }
+        if (o->type == OPERAND_REGISTER || operand_is_memory(o->type))
+        {
+            // D6 and A0 are both ESI: with an A0-based address the two can't be told apart
+            if (o->type == OPERAND_REGISTER && o->value.reg == 6)
+                for (int k = 0; k < n; k++)
+                    if (operands[ea_of[k]].value.reg == 8)
+                    {
+                        fail(ERR_MEM_ALIAS);
+                        return 0;
+                    }
+            // the same An with a side effect elsewhere in the instruction
+            if ((o->type == OPERAND_POSTINC || o->type == OPERAND_PREDEC))
+                for (int k = 0; k < n; k++)
+                    if (operands[ea_of[k]].value.reg == o->value.reg)
+                    {
+                        fail(ERR_DISP_SAMEREG);
+                        return 0;
+                    }
+        }
+        if (o->type == OPERAND_REGISTER)
+        {
+            int c = x86_reg_code(o->value.reg);
+            if (c >= 0 && c < 8)
+                used[c] = true;
+        }
+    }
+
+    int scratch[2];
+    for (int k = 0; k < n; k++)
+    {
+        int t = 0;
+        while (t < 4 && used[t])
+            t++;
+        if (t == 4)
+        {
+            fail("no free scratch register for d(An) in this instruction");
+            return 0;
+        }
+        used[t] = true;
+        scratch[k] = t;
+    }
+
+    size_t start = out->size;
+    Operand saved[2] = {operands[0], operands[count - 1]};
+    (void)saved;
+    Operand original[2];
+    for (int i = 0; i < count; i++)
+        original[i] = operands[i];
+    for (int k = 0; k < n; k++)
+    {
+        Operand *o = &operands[ea_of[k]];
+        int base = o->value.reg;
+        int t = scratch[k];
+        buffer_write(out, (uint8_t)(0x50 + t)); // push T
+        int32_t d = o->disp;
+        // A displacement named by an EQU is still 0 in pass 1, so its encoding must not depend
+        // on the value: the widest form is used for it in both passes.
+        bool fixed = o->symbol != NULL;
+        if (base == 8)
+        { // A0 = ESI: lea T,[esi+d]
+            if (!fixed && (d == 0 || (d >= -128 && d <= 127)))
+            {
+                buffer_write(out, 0x8D);
+                buffer_write(out, (uint8_t)((d == 0 ? 0x00 : 0x40) | (t << 3) | 6));
+                if (d != 0)
+                    buffer_write(out, (uint8_t)(int8_t)d);
+            }
+            else
+            {
+                buffer_write(out, 0x8D);
+                buffer_write(out, (uint8_t)(0x80 | (t << 3) | 6));
+                write_le(out, (uint32_t)d, 4);
+            }
+        }
+        else
+        { // A1-A7: mov T,[slot]; lea T,[T+d]
+            write_slot_access(out, 0x8B, t, base);
+            if (d != 0 || fixed)
+            {
+                bool small = !fixed && d >= -128 && d <= 127;
+                buffer_write(out, 0x8D);
+                buffer_write(out, (uint8_t)((small ? 0x40 : 0x80) | (t << 3) | t));
+                if (small)
+                    buffer_write(out, (uint8_t)(int8_t)d);
+                else
+                    write_le(out, (uint32_t)d, 4);
+            }
+        }
+        g_subst[16 + k] = t + 1;
+        o->type = OPERAND_IND;
+        o->value.reg = 16 + k;
+    }
+
+    int r = count == 2 ? emit_x86_two_operand(entry, operands, size, out)
+                       : emit_x86_one_operand(entry, &operands[0], size, out);
+
+    for (int k = 0; k < n; k++)
+        g_subst[16 + k] = 0;
+    for (int i = 0; i < count; i++)
+        operands[i] = original[i];
+    if (r != 1)
+    {
+        out->size = start; // drop the partial sequence
+        return 0;
+    }
+    for (int k = n - 1; k >= 0; k--)
+        buffer_write(out, (uint8_t)(0x58 + scratch[k])); // pop T
+    return 1;
+}
+
 static void arm_write_word(OutputBuffer *out, uint32_t word)
 {
     buffer_write(out, (uint8_t)word);
@@ -2346,21 +2509,40 @@ static int arm_bytes(OpSize size)
     return 4;
 }
 
-static bool arm_pointer_load(OutputBuffer *out, const Operand *memory,
-                             unsigned physical)
-{
-    if (!operand_is_memory(memory->type))
-        return false;
-    arm_load_vreg(out, physical, (unsigned)memory->value.reg);
-    return true;
-}
-
 static void arm_pointer_adjust(OutputBuffer *out, unsigned base, int bytes)
 {
     unsigned opcode = bytes < 0 ? 2 : 4;
     uint32_t amount = (uint32_t)(bytes < 0 ? -bytes : bytes);
     if (!arm_dp_imm(out, opcode, false, base, base, amount))
         fail("internal ARM error: pointer adjustment is not encodable");
+}
+
+// base += d for a d(An) operand: add/sub with an immediate when ARM can encode it,
+// otherwise the displacement goes through r12 (free between the register-block accesses).
+// No flags are set.
+static void arm_pointer_add_disp(OutputBuffer *out, unsigned base, int32_t disp, bool fixed_size)
+{
+    // fixed_size: the displacement is an EQU name, still 0 in pass 1, so the code has to be the
+    // same length whatever the value (always the literal form)
+    if (disp == 0 && !fixed_size)
+        return;
+    unsigned opcode = disp < 0 ? 2 : 4; // sub / add
+    uint32_t amount = disp < 0 ? 0u - (uint32_t)disp : (uint32_t)disp;
+    if (!fixed_size && arm_dp_imm(out, opcode, false, base, base, amount))
+        return;
+    arm_load_literal(out, 12, amount);
+    arm_write_word(out, arm_dp_reg_word(opcode, false, base, base, 12));
+}
+
+static bool arm_pointer_load(OutputBuffer *out, const Operand *memory,
+                             unsigned physical)
+{
+    if (!operand_is_memory(memory->type))
+        return false;
+    arm_load_vreg(out, physical, (unsigned)memory->value.reg);
+    if (memory->type == OPERAND_DISP)
+        arm_pointer_add_disp(out, physical, memory->disp, memory->symbol != NULL);
+    return true;
 }
 
 // rev / rev16 rd,rd (ARMv6+): the byte swaps between a register and 68K
@@ -2876,6 +3058,13 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
 
 static bool arm_emit_lea(const Operand *operands, OutputBuffer *out)
 {
+    if ((operands[0].type == OPERAND_IND || operands[0].type == OPERAND_DISP) &&
+        operands[1].type == OPERAND_REGISTER && operands[1].value.reg >= 8)
+    {
+        arm_pointer_load(out, &operands[0], 0); // r0 = An (+ d)
+        arm_store_vreg(out, 0, (unsigned)operands[1].value.reg);
+        return true;
+    }
     if (operands[0].type != OPERAND_IMMEDIATE ||
         operands[1].type != OPERAND_REGISTER || operands[1].value.reg < 8)
         return fail("LEA requires a label and an address register");
@@ -3690,6 +3879,12 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         int r = emit_arm_instruction(entry, operands, size, out);
         if (r >= 0)
             return r ? 0 : -1;
+    }
+    if (arch && strcmp(arch, "x86") == 0 && entry->operand_count <= 2)
+    {
+        for (size_t i = 0; i < entry->operand_count; i++)
+            if (operands[i].type == OPERAND_DISP)
+                return emit_x86_disp(entry, operands, size, out) == 1 ? 0 : -1;
     }
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count == 2)
     {

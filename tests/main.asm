@@ -20,10 +20,10 @@ start:
         include "sections/14_spilled_an.asm"
         include "sections/15_logic_sizes.asm"
         include "sections/16_logic_immediate.asm"
+        include "sections/17_displacement.asm"
 
         ; ---- all passed ------------------------------------------
         moveq   #0, d0
         rts
 
         include "common.asm"
-        

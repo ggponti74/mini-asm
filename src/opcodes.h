@@ -17,6 +17,7 @@ typedef enum {
     OPERAND_IND,       // address register indirect:  (An)
     OPERAND_POSTINC,   // post-increment:             (An)+
     OPERAND_PREDEC,    // pre-decrement:              -(An)
+    OPERAND_DISP,      // displacement:               d(An), d = -32768..32767 (a number or an EQU)
     OPERAND_EA_SRC,    // table-only: register, immediate or memory operand
     OPERAND_REG_OR_MEM,// table-only: register or memory operand
     OPERAND_EA_ALT,    // table-only: register or memory destination
@@ -27,7 +28,7 @@ typedef enum {
     OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
 } OperandType;
 
-// True for the three address-register memory modes: (An), (An)+, -(An).
+// True for the address-register memory modes: (An), (An)+, -(An) and d(An).
 bool operand_is_memory(OperandType t);
 
 // Operation size from a .b/.w/.l suffix. SIZE_UNSPEC means the mnemonic had

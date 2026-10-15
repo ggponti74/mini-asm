@@ -23,7 +23,8 @@ void strip_comment(char *line);
 // Operand structure
 typedef struct {
     OperandType type;
-    const char *symbol; // symbolic #immediate, resolved from an EQU constant
+    const char *symbol; // symbolic #immediate (or d(An) displacement), resolved from an EQU constant
+    int32_t disp;       // OPERAND_DISP: the displacement (the register is in value.reg)
     union {
         int reg;          // register index (e.g., D0 = 0, A0 = 8, etc.)
         int32_t imm;      // immediate value
