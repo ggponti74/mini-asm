@@ -877,16 +877,32 @@ static bool emit_x86_addsub(const Operand *operands, OpSize size, bool is_sub,
     return false;
 }
 
+// The arithmetic/logic group shares one x86 encoding scheme: base opcode 00 ADD, 08 OR,
+// 20 AND, 28 SUB, 30 XOR, 38 CMP, "/digit" 0 1 4 5 6 7 in the 80/81 immediate group.
+// (CMP, CMPA and CMPI only compare: they never store a result.)
+static int x86_alu_base(const char *m)
+{
+    if (strcmp(m, "ADD") == 0)
+        return 0x00;
+    if (strcmp(m, "OR") == 0)
+        return 0x08;
+    if (strcmp(m, "AND") == 0)
+        return 0x20;
+    if (strcmp(m, "SUB") == 0)
+        return 0x28;
+    if (strcmp(m, "EOR") == 0)
+        return 0x30;
+    return 0x38; // CMP, CMPA, CMPI
+}
+
+static bool x86_alu_compares(const char *m)
+{
+    return strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0;
+}
+
 static int x86_logic_opcode(const char *mnemonic, bool byte, bool memory_to_reg)
 {
-    int base;
-    if (strcmp(mnemonic, "AND") == 0)
-        base = 0x20;
-    else if (strcmp(mnemonic, "OR") == 0)
-        base = 0x08;
-    else
-        base = 0x30;
-    return base + (byte ? 0 : 1) + (memory_to_reg ? 2 : 0);
+    return x86_alu_base(mnemonic) + (byte ? 0 : 1) + (memory_to_reg ? 2 : 0);
 }
 
 // AND/OR/EOR #imm,<ea> (ANDI/ORI/EORI): the 80/81 group, /4 AND, /1 OR, /6 XOR.
@@ -899,12 +915,13 @@ static bool emit_x86_logic_imm(const OpcodeEntry *entry, int32_t imm, const Oper
         return fail("the immediate does not fit in a byte");
     if (size == SIZE_W && (imm < -32768 || imm > 65535))
         return fail("the immediate does not fit in a word");
-    int ext = strcmp(entry->mnemonic, "AND") == 0 ? 4 : strcmp(entry->mnemonic, "OR") == 0 ? 1 : 6;
+    int ext = x86_alu_base(entry->mnemonic) >> 3; // 80/81 group: ADD 0 OR 1 AND 4 SUB 5 XOR 6 CMP 7
+    bool compare = x86_alu_compares(entry->mnemonic);
     int bytes = size == SIZE_B ? 1 : size == SIZE_W ? 2 : 4;
     if (dst->type == OPERAND_REGISTER)
     {
         if (dst->value.reg >= 8)
-            return fail("AND/OR/EOR with an immediate need a data register or memory destination");
+            return fail("an immediate needs a data register or memory destination");
         int d = x86_reg_code(dst->value.reg);
         if (size == SIZE_B && d > 3)
             return fail(ERR_BYTE_REG);
@@ -940,8 +957,11 @@ static bool emit_x86_logic_imm(const OpcodeEntry *entry, int32_t imm, const Oper
         buffer_write(out, 0x81);
         buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | t));
         write_le(out, (uint32_t)imm, bytes);
-        write_swap(out, t, size);
-        write_store(out, t, base, size);
+        if (!compare)
+        {
+            write_swap(out, t, size);
+            write_store(out, t, base, size);
+        }
         write_pop(out, t);
     }
     mem_post(out, dst->type, base, op_bytes(size));
@@ -974,10 +994,21 @@ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
     bool dst_mem = operand_is_memory(dst->type);
     if (src_mem == dst_mem)
         return false;
+    bool compare = x86_alu_compares(entry->mnemonic);
+    if (compare && dst_mem)
+        return fail("CMP can't compare into memory (use CMPI #imm,<ea>, or CMP <ea>,Dn)");
     const Operand *regop = src_mem ? dst : src;
-    if (regop->type != OPERAND_REGISTER || regop->value.reg >= 8)
-        return fail("AND/OR/EOR memory operations need a data register");
+    // CMP/CMPA <ea>,An compares all 32 bits of An (a .w source is sign-extended first)
+    bool cmpa = compare && src_mem && regop->type == OPERAND_REGISTER && regop->value.reg >= 8;
+    if (regop->type != OPERAND_REGISTER || (regop->value.reg >= 8 && !cmpa))
+        return fail(regop->type == OPERAND_REGISTER && regop->value.reg >= 8
+                        ? "ADD/SUB need a data register (ADDA/SUBA aren't implemented)"
+                        : "memory operations need a data register");
+    if (cmpa && size == SIZE_B)
+        return fail("comparing with an address register can't be byte-sized (CMPA has no .b)");
     int r = x86_reg_code(regop->value.reg);
+    if (r < 0)
+        return false;
     if (size == SIZE_B && r > 3)
         return fail(ERR_BYTE_REG);
     const Operand *mem = src_mem ? src : dst;
@@ -1003,7 +1034,14 @@ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
         write_push(out, t);
         write_load(out, t, base, size);
         write_swap(out, t, size);
-        if (size == SIZE_W)
+        bool wide = cmpa && size == SIZE_W; // sign-extend, then a full 32-bit compare
+        if (wide)
+        {
+            buffer_write(out, 0x0F);
+            buffer_write(out, 0xBF); // movsx t, t16
+            buffer_write(out, (uint8_t)(0xC0 | (t << 3) | t));
+        }
+        if (size == SIZE_W && !wide)
             buffer_write(out, X86_OPSIZE_PREFIX);
         buffer_write(out, (uint8_t)x86_logic_opcode(entry->mnemonic, false, false));
         if (src_mem)
@@ -2089,6 +2127,10 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
         return emit_x86_moveq(operands, out) ? 1 : 0;
     if (strcmp(m, "LEA") == 0)
         return emit_x86_lea(operands, out) ? 1 : 0;
+    if ((strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 || strcmp(m, "CMP") == 0 ||
+         strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0) &&
+        (operand_is_memory(operands[0].type) || operand_is_memory(operands[1].type)))
+        return emit_x86_logic(entry, operands, size, out) ? 1 : 0;
     if (strcmp(m, "ADD") == 0)
         return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUB") == 0)
@@ -2967,6 +3009,32 @@ static bool arm_emit_addsub(const Operand *operands, OpSize size, bool is_sub,
                             OutputBuffer *out)
 {
     const Operand *src = &operands[0], *dst = &operands[1];
+    if (operand_is_memory(dst->type))
+    {
+        // ADD/SUB Dn|#imm,<mem>: load the source, then read-modify-write the memory
+        // (the same shape as AND/OR/EOR to memory; ARM keeps the flags in 68K form)
+        if (operand_is_memory(src->type))
+            return false;
+        if (size == SIZE_UNSPEC)
+            size = DEFAULT_OPSIZE;
+        if (src->type == OPERAND_IMMEDIATE)
+        {
+            if (!imm_fits(src->value.imm, size))
+                return fail("immediate value doesn't fit the operation size");
+        }
+        else if (src->type != OPERAND_REGISTER || src->value.reg >= 8)
+        {
+            return fail("ADD/SUB to memory need a data register or an immediate source");
+        }
+        arm_load_source(out, src, size, 1, 2);
+        arm_mem_begin(out, dst, 2, size);
+        arm_mem_transfer(out, true, 0, 2, size);
+        if (!arm_write_sized_result(out, 0, 1, 3, is_sub ? 2 : 4, size))
+            return false;
+        arm_mem_transfer(out, false, 0, 2, size);
+        arm_mem_finish(out, dst, 2, size);
+        return true;
+    }
     if (dst->type != OPERAND_REGISTER)
         return false;
     if (dst->value.reg > 7)
@@ -2985,7 +3053,7 @@ static bool arm_emit_addsub(const Operand *operands, OpSize size, bool is_sub,
             return fail(is_sub ? "byte-sized SUB can't use an address register as the source"
                                : "byte-sized ADD can't use an address register as the source");
     }
-    else
+    else if (!operand_is_memory(src->type))
     {
         return false;
     }
@@ -3006,6 +3074,32 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
                          OutputBuffer *out)
 {
     const Operand *src = &operands[0], *dst = &operands[1];
+    if (operand_is_memory(dst->type))
+    {
+        // CMPI #imm,<mem>: compare the memory value with the immediate, store nothing
+        if (src->type != OPERAND_IMMEDIATE) // (CMP #imm,<ea> is CMPI)
+            return fail("CMP can't compare into memory (use CMPI #imm,<ea>, or CMP <ea>,Dn)");
+        if (size == SIZE_UNSPEC)
+            size = DEFAULT_OPSIZE;
+        if (!imm_fits(src->value.imm, size))
+            return fail("immediate value doesn't fit the operation size");
+        arm_load_literal(out, 1, (uint32_t)src->value.imm);
+        arm_mem_begin(out, dst, 4, size);
+        arm_mem_transfer(out, true, 0, 4, size);
+        arm_mem_finish(out, dst, 4, size);
+        if (size == SIZE_L)
+        {
+            arm_write_word(out, arm_dp_reg_word(10, true, 0, 0, 1)); // cmp r0,r1
+        }
+        else
+        {
+            unsigned shift = size == SIZE_B ? 24 : 16;
+            arm_mov_shift(out, 2, 0, false, shift);
+            arm_mov_shift(out, 3, 1, false, shift);
+            arm_write_word(out, arm_dp_reg_word(10, true, 0, 2, 3)); // cmp r2,r3
+        }
+        return arm_invert_carry_flag(out);
+    }
     if (dst->type != OPERAND_REGISTER)
         return false;
     bool addr_cmp = dst->value.reg >= 8;
@@ -3029,7 +3123,7 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
         if (size == SIZE_B && src->value.reg >= 8)
             return fail("byte-sized CMP can't use an address register as the source");
     }
-    else
+    else if (!operand_is_memory(src->type))
     {
         return false;
     }
@@ -3855,6 +3949,13 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
 
     if (strcmp(entry->mnemonic, "TRAP") == 0)
         return emit_trap(operands, out) ? 0 : -1;
+
+    if (entry->operand_count == 2 && operand_is_memory(operands[0].type) &&
+        operand_is_memory(operands[1].type) &&
+        (strcmp(entry->mnemonic, "ADD") == 0 || strcmp(entry->mnemonic, "SUB") == 0 ||
+         strcmp(entry->mnemonic, "CMP") == 0 || strcmp(entry->mnemonic, "AND") == 0 ||
+         strcmp(entry->mnemonic, "OR") == 0))
+        return fail("one operand must be a data register: the 68K can't do this with two memory operands") ? 0 : -1;
 
     // ANDI/ORI/EORI/ADDI/SUBI share the code of AND/OR/EOR/ADD/SUB, which take an
     // immediate source (the table row of the I-form already made sure it is one).
