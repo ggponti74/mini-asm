@@ -1150,6 +1150,42 @@ static bool emit_x86_adda(const Operand *operands, OpSize size, bool is_sub, Out
     return true;
 }
 
+// CMPM (Ay)+,(Ax)+: compare the memory at Ax with the memory at Ay (Ax - Ay, the flags are CMP's),
+// then both pointers move on by the operand size. The source is fetched first, so with Ay == Ax the
+// second operand sits right behind the first, as on the 68K. Two scratch registers hold the
+// byte-swapped values; the pointer updates (LEA) don't touch the flags, and the CMP comes last.
+static bool emit_x86_cmpm(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (src->type != OPERAND_POSTINC || dst->type != OPERAND_POSTINC)
+        return false;
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    int bs = x86_reg_code(src->value.reg), bd = x86_reg_code(dst->value.reg);
+    if (bs < 0 || bd < 0 || !plain_base(bs) || !plain_base(bd))
+        return fail(ERR_MEM_PTR);
+    uint32_t taken = (1u << bs) | (1u << bd);
+    int t1 = pick_scratch(taken);
+    int t2 = t1 < 0 ? -1 : pick_scratch(taken | (1u << t1));
+    if (t1 < 0 || t2 < 0)
+        return fail(ERR_NO_SCRATCH);
+    write_push(out, t1);
+    write_push(out, t2);
+    write_load(out, t1, bs, size);
+    write_swap(out, t1, size);
+    mem_post(out, src->type, bs, op_bytes(size));
+    write_load(out, t2, bd, size);
+    write_swap(out, t2, size);
+    mem_post(out, dst->type, bd, op_bytes(size));
+    if (size == SIZE_W)
+        buffer_write(out, X86_OPSIZE_PREFIX);
+    buffer_write(out, size == SIZE_B ? 0x38 : 0x39); // cmp t2, t1: t2 - t1
+    buffer_write(out, (uint8_t)(0xC0 | (t1 << 3) | t2));
+    write_pop(out, t2);
+    write_pop(out, t1);
+    return true;
+}
+
 static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
                             OpSize size, OutputBuffer *out)
 {
@@ -2195,7 +2231,7 @@ static bool spill_capable(const char *m)
            strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
            strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
-           strcmp(m, "SUBQ") == 0 || is_bitop_mnemonic(m);
+           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || is_bitop_mnemonic(m);
 }
 
 // mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
@@ -2222,6 +2258,8 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
          strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0) &&
         (operand_is_memory(operands[0].type) || operand_is_memory(operands[1].type)))
         return emit_x86_logic(entry, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "CMPM") == 0)
+        return emit_x86_cmpm(operands, size, out) ? 1 : 0;
     if (strcmp(m, "ADDA") == 0)
         return emit_x86_adda(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUBA") == 0)
@@ -3245,6 +3283,35 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
     return arm_invert_carry_flag(out);
 }
 
+// CMPM (Ay)+,(Ax)+: compare the memory at Ax with the memory at Ay (Ax - Ay), then both pointers
+// move on by the operand size; the source is fetched first (Ay == Ax works as on the 68K).
+static bool arm_emit_cmpm(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (src->type != OPERAND_POSTINC || dst->type != OPERAND_POSTINC)
+        return false;
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    arm_mem_begin(out, src, 2, size);
+    arm_mem_transfer(out, true, 1, 2, size);
+    arm_mem_finish(out, src, 2, size);
+    arm_mem_begin(out, dst, 2, size);
+    arm_mem_transfer(out, true, 0, 2, size);
+    arm_mem_finish(out, dst, 2, size);
+    if (size == SIZE_L)
+    {
+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 0, 1)); // cmp r0,r1
+    }
+    else
+    {
+        unsigned shift = size == SIZE_B ? 24 : 16;
+        arm_mov_shift(out, 2, 0, false, shift);
+        arm_mov_shift(out, 3, 1, false, shift);
+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 2, 3)); // cmp r2,r3
+    }
+    return arm_invert_carry_flag(out);
+}
+
 // ADDA / SUBA <ea>,An: An = An +/- source (a .w source is sign-extended), no flags change.
 static bool arm_emit_adda(const Operand *operands, OpSize size, bool is_sub, OutputBuffer *out)
 {
@@ -4023,6 +4090,8 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
         return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
     if (strcmp(m, "DBRA") == 0)
         return arm_emit_dbra(operands, out) ? 1 : 0;
+    if (strcmp(m, "CMPM") == 0)
+        return arm_emit_cmpm(operands, size, out) ? 1 : 0;
     if (strcmp(m, "ADDA") == 0)
         return arm_emit_adda(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUBA") == 0)
