@@ -836,8 +836,8 @@ static bool emit_x86_addsub(const Operand *operands, OpSize size, bool is_sub,
     // Like the real 68K, these target a data register (A-register targets
     // would be ADDA/SUBA, different instructions).
     if (dst->value.reg > 7)
-        return fail(is_sub ? "SUB needs a data register (D0-D7) destination"
-                           : "ADD needs a data register (D0-D7) destination");
+        return fail(is_sub ? "SUB needs a data register (D0-D7) destination (SUBA for address registers)"
+                           : "ADD needs a data register (D0-D7) destination (ADDA for address registers)");
     int d = x86_reg_code(dst->value.reg);
     if (d < 0)
         return false;
@@ -1002,7 +1002,7 @@ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
     bool cmpa = compare && src_mem && regop->type == OPERAND_REGISTER && regop->value.reg >= 8;
     if (regop->type != OPERAND_REGISTER || (regop->value.reg >= 8 && !cmpa))
         return fail(regop->type == OPERAND_REGISTER && regop->value.reg >= 8
-                        ? "ADD/SUB need a data register (ADDA/SUBA aren't implemented)"
+                        ? "ADD/SUB need a data register (use ADDA/SUBA for address registers)"
                         : "memory operations need a data register");
     if (cmpa && size == SIZE_B)
         return fail("comparing with an address register can't be byte-sized (CMPA has no .b)");
@@ -1057,6 +1057,96 @@ static bool emit_x86_logic(const OpcodeEntry *entry, const Operand *operands,
         write_pop(out, t);
     }
     mem_post(out, mem->type, base, op_bytes(size));
+    return true;
+}
+
+// ADDA / SUBA <ea>,An: An = An +/- source, the source sign-extended from a word for .w, and NO
+// flags change (the 68K leaves CCR alone, x86 ADD/SUB would not), so the add/sub is bracketed
+// by pushfd/popfd. Because of the push, D4 (ESP) can't be the source. A .w register or memory
+// source goes through a scratch register: movsx t,src16, then the add. (An is a real register:
+// A0 = ESI, or the stand-in the spill wrapper picked for A1-A7.)
+static bool emit_x86_adda(const Operand *operands, OpSize size, bool is_sub, OutputBuffer *out)
+{
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER || dst->value.reg < 8)
+        return fail(is_sub ? "SUBA needs an address register destination (use SUB for data registers)"
+                           : "ADDA needs an address register destination (use ADD for data registers)");
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    if (size == SIZE_B)
+        return fail("ADDA/SUBA have no byte size");
+    int d = x86_reg_code(dst->value.reg);
+    if (d < 0)
+        return false;
+    int ext = is_sub ? 5 : 0;            // 81 /0 add, 81 /5 sub (immediate group)
+    uint8_t rm_op = is_sub ? 0x29 : 0x01; // add/sub r/m32, r32
+
+    if (src->type == OPERAND_IMMEDIATE)
+    {
+        if (!imm_fits(src->value.imm, size))
+            return fail("immediate value doesn't fit the operation size");
+        uint32_t v = size == SIZE_W ? (uint32_t)(int32_t)(int16_t)src->value.imm
+                                    : (uint32_t)src->value.imm;
+        buffer_write(out, 0x9C); // pushfd
+        buffer_write(out, 0x81);
+        buffer_write(out, (uint8_t)(0xC0 | (ext << 3) | d));
+        write_le(out, v, 4);
+        buffer_write(out, 0x9D); // popfd
+        return true;
+    }
+    if (src->type == OPERAND_REGISTER)
+    {
+        int s = x86_reg_code(src->value.reg);
+        if (s < 0)
+            return false;
+        if (s == 4)
+            return fail("D4 maps to ESP on this target, so it can't be the source of ADDA/SUBA");
+        if (size == SIZE_W)
+        {
+            int t = pick_scratch((1u << d) | (s <= 3 ? 1u << s : 0));
+            if (t < 0)
+                return fail(ERR_NO_SCRATCH);
+            write_push(out, t);
+            buffer_write(out, 0x0F);
+            buffer_write(out, 0xBF); // movsx t, s16
+            buffer_write(out, (uint8_t)(0xC0 | (t << 3) | s));
+            buffer_write(out, 0x9C);
+            buffer_write(out, rm_op);
+            buffer_write(out, (uint8_t)(0xC0 | (t << 3) | d));
+            buffer_write(out, 0x9D);
+            write_pop(out, t);
+            return true;
+        }
+        buffer_write(out, 0x9C);
+        buffer_write(out, rm_op);
+        buffer_write(out, (uint8_t)(0xC0 | (s << 3) | d));
+        buffer_write(out, 0x9D);
+        return true;
+    }
+    if (!operand_is_memory(src->type))
+        return false;
+    int base = x86_reg_code(src->value.reg);
+    if (!plain_base(base))
+        return fail(ERR_MEM_PTR);
+    int t = pick_scratch((1u << base) | (1u << d));
+    if (t < 0)
+        return fail(ERR_NO_SCRATCH);
+    mem_pre(out, src->type, base, op_bytes(size));
+    write_push(out, t);
+    write_load(out, t, base, size);
+    write_swap(out, t, size);
+    if (size == SIZE_W)
+    {
+        buffer_write(out, 0x0F);
+        buffer_write(out, 0xBF); // movsx t, t16
+        buffer_write(out, (uint8_t)(0xC0 | (t << 3) | t));
+    }
+    buffer_write(out, 0x9C);
+    buffer_write(out, rm_op);
+    buffer_write(out, (uint8_t)(0xC0 | (t << 3) | d));
+    buffer_write(out, 0x9D);
+    write_pop(out, t);
+    mem_post(out, src->type, base, op_bytes(size));
     return true;
 }
 
@@ -2081,7 +2171,8 @@ static bool is_move_or_lea(const char *m)
 static bool x86_writes_destination(const char *m)
 {
     return is_move_or_lea(m) || strcmp(m, "ADD") == 0 ||
-           strcmp(m, "SUB") == 0 || strcmp(m, "CLR") == 0 ||
+           strcmp(m, "SUB") == 0 || strcmp(m, "ADDA") == 0 ||
+           strcmp(m, "SUBA") == 0 || strcmp(m, "CLR") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
            strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
            strcmp(m, "SUBQ") == 0;
@@ -2100,7 +2191,7 @@ static bool is_bitop_mnemonic(const char *m)
 static bool spill_capable(const char *m)
 {
     return is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
-           strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0 ||
+           strcmp(m, "ADDA") == 0 || strcmp(m, "SUBA") == 0 || strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0 ||
            strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
            strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
@@ -2131,6 +2222,10 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
          strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0) &&
         (operand_is_memory(operands[0].type) || operand_is_memory(operands[1].type)))
         return emit_x86_logic(entry, operands, size, out) ? 1 : 0;
+    if (strcmp(m, "ADDA") == 0)
+        return emit_x86_adda(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUBA") == 0)
+        return emit_x86_adda(operands, size, true, out) ? 1 : 0;
     if (strcmp(m, "ADD") == 0)
         return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUB") == 0)
@@ -3038,8 +3133,8 @@ static bool arm_emit_addsub(const Operand *operands, OpSize size, bool is_sub,
     if (dst->type != OPERAND_REGISTER)
         return false;
     if (dst->value.reg > 7)
-        return fail(is_sub ? "SUB needs a data register (D0-D7) destination"
-                           : "ADD needs a data register (D0-D7) destination");
+        return fail(is_sub ? "SUB needs a data register (D0-D7) destination (SUBA for address registers)"
+                           : "ADD needs a data register (D0-D7) destination (ADDA for address registers)");
     if (size == SIZE_UNSPEC)
         size = DEFAULT_OPSIZE;
     if (src->type == OPERAND_IMMEDIATE)
@@ -3148,6 +3243,29 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
         arm_write_word(out, arm_dp_reg_word(10, true, 0, 2, 3)); // cmp r2,r3
     }
     return arm_invert_carry_flag(out);
+}
+
+// ADDA / SUBA <ea>,An: An = An +/- source (a .w source is sign-extended), no flags change.
+static bool arm_emit_adda(const Operand *operands, OpSize size, bool is_sub, OutputBuffer *out)
+{
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER || dst->value.reg < 8 || dst->value.reg >= 16)
+        return fail(is_sub ? "SUBA needs an address register destination (use SUB for data registers)"
+                           : "ADDA needs an address register destination (use ADD for data registers)");
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    if (size == SIZE_B)
+        return fail("ADDA/SUBA have no byte size");
+    if (src->type == OPERAND_IMMEDIATE && !imm_fits(src->value.imm, size))
+        return fail("immediate value doesn't fit the operation size");
+    if (!arm_load_source(out, src, size, 1, 2))
+        return false;
+    if (size == SIZE_W)
+        arm_sign_extend_word(out, 1, 1);
+    arm_load_vreg(out, 0, (unsigned)dst->value.reg);
+    arm_write_word(out, arm_dp_reg_word(is_sub ? 2 : 4, false, 0, 0, 1)); // add/sub r0,r0,r1 (no S)
+    arm_store_vreg(out, 0, (unsigned)dst->value.reg);
+    return true;
 }
 
 static bool arm_emit_lea(const Operand *operands, OutputBuffer *out)
@@ -3905,6 +4023,10 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
         return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
     if (strcmp(m, "DBRA") == 0)
         return arm_emit_dbra(operands, out) ? 1 : 0;
+    if (strcmp(m, "ADDA") == 0)
+        return arm_emit_adda(operands, size, false, out) ? 1 : 0;
+    if (strcmp(m, "SUBA") == 0)
+        return arm_emit_adda(operands, size, true, out) ? 1 : 0;
     if (strcmp(m, "ADD") == 0)
         return arm_emit_addsub(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUB") == 0)
