@@ -28,10 +28,10 @@ static const OpcodeEntry x86_opcode_table[] = {
     // unsigned (MULU/DIVU) and signed (MULS/DIVS) instructions, and only in
     // the .w form (16x16->32 multiply, 32/16->16r:16q divide). Opcode bytes
     // here are placeholders; codegen.c emits a multi-instruction sequence.
-    {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    {"MULU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"MULS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"DIVU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"DIVS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
     // BRA/BSR: opcode byte is a placeholder; codegen.c picks EB (short jmp),
     // E9 (jmp rel32) or E8 (call rel32).
     {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
@@ -119,10 +119,10 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"LEA", 0x8D, 1, 1, 2, {OPERAND_CONTROL, OPERAND_REGISTER}, 0},
     {"ADD", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
     {"SUB", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
-    {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
-    {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+    {"MULU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"MULS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"DIVU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+    {"DIVS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
     {"CMP", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
     {"CMPA", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
     {"ADDA", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},

@@ -1634,6 +1634,45 @@ static bool emit_x86_div(const Operand *operands, OpSize size, bool is_signed,
     return true;
 }
 
+// MULU/MULS/DIVU/DIVS <mem>,Dn (.w): the word is loaded (byte-swapped) into a scratch register
+// that then serves as the source register of the register forms above, so the multiply/divide
+// code and its flags are exactly the same. The scratch is saved/restored around it, and the
+// pointer update of (An)+ / -(An) (LEA, no flags) happens after the flags were set.
+static bool emit_x86_muldiv_mem(const char *m, const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    const Operand *src = &operands[0], *dst = &operands[1];
+    if (dst->type != OPERAND_REGISTER || dst->value.reg > 7)
+        return fail("MULU/MULS/DIVU/DIVS need a data register (D0-D7) destination");
+    if (size != SIZE_UNSPEC && size != SIZE_W)
+        return fail("MULU/MULS/DIVU/DIVS only exist as .w");
+    int d = x86_reg_code(dst->value.reg);
+    if (d < 0)
+        return false;
+    if (d == X86_ESP)
+        return fail(ERR_ESP_REG);
+    int base = x86_reg_code(src->value.reg);
+    if (!plain_base(base))
+        return fail(ERR_MEM_PTR);
+    int t = pick_scratch((1u << d) | (1u << base)); // EAX..EBX: the word swap needs a byte register
+    if (t < 0)
+        return fail(ERR_NO_SCRATCH);
+    mem_pre(out, src->type, base, 2);
+    write_push(out, t);
+    write_load(out, t, base, SIZE_W);
+    write_swap(out, t, SIZE_W);
+    Operand reg_src = *src;
+    reg_src.type = OPERAND_REGISTER;
+    reg_src.value.reg = t; // D0..D3 are x86 registers 0..3
+    Operand ops[2] = {reg_src, *dst};
+    bool is_signed = strcmp(m, "MULS") == 0 || strcmp(m, "DIVS") == 0;
+    bool ok = m[0] == 'M' ? emit_x86_mul(ops, size, is_signed, out) : emit_x86_div(ops, size, is_signed, out);
+    if (!ok)
+        return false;
+    write_pop(out, t);
+    mem_post(out, src->type, base, 2);
+    return true;
+}
+
 // ---- bit manipulation: NOT NEG SWAP EXT, BTST/BSET/BCLR/BCHG, shifts/rotates
 // Everything here follows the 68K flag rules (X is not modelled, as elsewhere):
 //   NOT          N,Z from the result, V=C=0
@@ -2231,7 +2270,9 @@ static bool spill_capable(const char *m)
            strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
            strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
-           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || is_bitop_mnemonic(m);
+           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || strcmp(m, "MULU") == 0 ||
+           strcmp(m, "MULS") == 0 || strcmp(m, "DIVU") == 0 || strcmp(m, "DIVS") == 0 ||
+           is_bitop_mnemonic(m);
 }
 
 // mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
@@ -2268,6 +2309,9 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
         return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUB") == 0)
         return emit_x86_addsub(operands, size, true, out) ? 1 : 0;
+    if ((strcmp(m, "MULU") == 0 || strcmp(m, "MULS") == 0 || strcmp(m, "DIVU") == 0 ||
+         strcmp(m, "DIVS") == 0) && operand_is_memory(operands[0].type))
+        return emit_x86_muldiv_mem(m, operands, size, out) ? 1 : 0;
     if (strcmp(m, "MULU") == 0)
         return emit_x86_mul(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "MULS") == 0)
@@ -3491,7 +3535,7 @@ static bool arm_emit_muldiv(const char *m, const Operand *operands,
         if (src->value.reg >= 8)
             return fail("MULU/MULS/DIVU/DIVS can't take an address register as the source");
     }
-    else
+    else if (!operand_is_memory(src->type))
     {
         return false;
     }

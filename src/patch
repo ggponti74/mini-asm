@@ -1,313 +1,317 @@
 diff --git a/src/codegen.c b/src/codegen.c
-index f39903e..d9fe1f0 100644
+index d9fe1f0..9a77c95 100644
 --- a/src/codegen.c
 +++ b/src/codegen.c
-@@ -1150,6 +1150,42 @@ static bool emit_x86_adda(const Operand *operands, OpSize size, bool is_sub, Out
+@@ -1634,6 +1634,45 @@ static bool emit_x86_div(const Operand *operands, OpSize size, bool is_signed,
      return true;
  }
  
-+// CMPM (Ay)+,(Ax)+: compare the memory at Ax with the memory at Ay (Ax - Ay, the flags are CMP's),
-+// then both pointers move on by the operand size. The source is fetched first, so with Ay == Ax the
-+// second operand sits right behind the first, as on the 68K. Two scratch registers hold the
-+// byte-swapped values; the pointer updates (LEA) don't touch the flags, and the CMP comes last.
-+static bool emit_x86_cmpm(const Operand *operands, OpSize size, OutputBuffer *out)
++// MULU/MULS/DIVU/DIVS <mem>,Dn (.w): the word is loaded (byte-swapped) into a scratch register
++// that then serves as the source register of the register forms above, so the multiply/divide
++// code and its flags are exactly the same. The scratch is saved/restored around it, and the
++// pointer update of (An)+ / -(An) (LEA, no flags) happens after the flags were set.
++static bool emit_x86_muldiv_mem(const char *m, const Operand *operands, OpSize size, OutputBuffer *out)
 +{
 +    const Operand *src = &operands[0], *dst = &operands[1];
-+    if (src->type != OPERAND_POSTINC || dst->type != OPERAND_POSTINC)
++    if (dst->type != OPERAND_REGISTER || dst->value.reg > 7)
++        return fail("MULU/MULS/DIVU/DIVS need a data register (D0-D7) destination");
++    if (size != SIZE_UNSPEC && size != SIZE_W)
++        return fail("MULU/MULS/DIVU/DIVS only exist as .w");
++    int d = x86_reg_code(dst->value.reg);
++    if (d < 0)
 +        return false;
-+    if (size == SIZE_UNSPEC)
-+        size = DEFAULT_OPSIZE;
-+    int bs = x86_reg_code(src->value.reg), bd = x86_reg_code(dst->value.reg);
-+    if (bs < 0 || bd < 0 || !plain_base(bs) || !plain_base(bd))
++    if (d == X86_ESP)
++        return fail(ERR_ESP_REG);
++    int base = x86_reg_code(src->value.reg);
++    if (!plain_base(base))
 +        return fail(ERR_MEM_PTR);
-+    uint32_t taken = (1u << bs) | (1u << bd);
-+    int t1 = pick_scratch(taken);
-+    int t2 = t1 < 0 ? -1 : pick_scratch(taken | (1u << t1));
-+    if (t1 < 0 || t2 < 0)
++    int t = pick_scratch((1u << d) | (1u << base)); // EAX..EBX: the word swap needs a byte register
++    if (t < 0)
 +        return fail(ERR_NO_SCRATCH);
-+    write_push(out, t1);
-+    write_push(out, t2);
-+    write_load(out, t1, bs, size);
-+    write_swap(out, t1, size);
-+    mem_post(out, src->type, bs, op_bytes(size));
-+    write_load(out, t2, bd, size);
-+    write_swap(out, t2, size);
-+    mem_post(out, dst->type, bd, op_bytes(size));
-+    if (size == SIZE_W)
-+        buffer_write(out, X86_OPSIZE_PREFIX);
-+    buffer_write(out, size == SIZE_B ? 0x38 : 0x39); // cmp t2, t1: t2 - t1
-+    buffer_write(out, (uint8_t)(0xC0 | (t1 << 3) | t2));
-+    write_pop(out, t2);
-+    write_pop(out, t1);
++    mem_pre(out, src->type, base, 2);
++    write_push(out, t);
++    write_load(out, t, base, SIZE_W);
++    write_swap(out, t, SIZE_W);
++    Operand reg_src = *src;
++    reg_src.type = OPERAND_REGISTER;
++    reg_src.value.reg = t; // D0..D3 are x86 registers 0..3
++    Operand ops[2] = {reg_src, *dst};
++    bool is_signed = strcmp(m, "MULS") == 0 || strcmp(m, "DIVS") == 0;
++    bool ok = m[0] == 'M' ? emit_x86_mul(ops, size, is_signed, out) : emit_x86_div(ops, size, is_signed, out);
++    if (!ok)
++        return false;
++    write_pop(out, t);
++    mem_post(out, src->type, base, 2);
 +    return true;
 +}
 +
- static bool emit_x86_clrtst(const char *mnemonic, const Operand *operand,
-                             OpSize size, OutputBuffer *out)
- {
-@@ -2195,7 +2231,7 @@ static bool spill_capable(const char *m)
+ // ---- bit manipulation: NOT NEG SWAP EXT, BTST/BSET/BCLR/BCHG, shifts/rotates
+ // Everything here follows the 68K flag rules (X is not modelled, as elsewhere):
+ //   NOT          N,Z from the result, V=C=0
+@@ -2231,7 +2270,9 @@ static bool spill_capable(const char *m)
             strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
             strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
             strcmp(m, "EOR") == 0 || strcmp(m, "ADDQ") == 0 ||
--           strcmp(m, "SUBQ") == 0 || is_bitop_mnemonic(m);
-+           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || is_bitop_mnemonic(m);
+-           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || is_bitop_mnemonic(m);
++           strcmp(m, "SUBQ") == 0 || strcmp(m, "CMPM") == 0 || strcmp(m, "MULU") == 0 ||
++           strcmp(m, "MULS") == 0 || strcmp(m, "DIVU") == 0 || strcmp(m, "DIVS") == 0 ||
++           is_bitop_mnemonic(m);
  }
  
  // mov t,[slot] (opcode 8B) or mov [slot],t (opcode 89), ModRM = 00 ttt 101
-@@ -2222,6 +2258,8 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
-          strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0) &&
-         (operand_is_memory(operands[0].type) || operand_is_memory(operands[1].type)))
-         return emit_x86_logic(entry, operands, size, out) ? 1 : 0;
-+    if (strcmp(m, "CMPM") == 0)
-+        return emit_x86_cmpm(operands, size, out) ? 1 : 0;
-     if (strcmp(m, "ADDA") == 0)
-         return emit_x86_adda(operands, size, false, out) ? 1 : 0;
-     if (strcmp(m, "SUBA") == 0)
-@@ -3245,6 +3283,35 @@ static bool arm_emit_cmp(const Operand *operands, OpSize size, CmpKind kind,
-     return arm_invert_carry_flag(out);
- }
- 
-+// CMPM (Ay)+,(Ax)+: compare the memory at Ax with the memory at Ay (Ax - Ay), then both pointers
-+// move on by the operand size; the source is fetched first (Ay == Ax works as on the 68K).
-+static bool arm_emit_cmpm(const Operand *operands, OpSize size, OutputBuffer *out)
-+{
-+    const Operand *src = &operands[0], *dst = &operands[1];
-+    if (src->type != OPERAND_POSTINC || dst->type != OPERAND_POSTINC)
-+        return false;
-+    if (size == SIZE_UNSPEC)
-+        size = DEFAULT_OPSIZE;
-+    arm_mem_begin(out, src, 2, size);
-+    arm_mem_transfer(out, true, 1, 2, size);
-+    arm_mem_finish(out, src, 2, size);
-+    arm_mem_begin(out, dst, 2, size);
-+    arm_mem_transfer(out, true, 0, 2, size);
-+    arm_mem_finish(out, dst, 2, size);
-+    if (size == SIZE_L)
-+    {
-+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 0, 1)); // cmp r0,r1
-+    }
-+    else
-+    {
-+        unsigned shift = size == SIZE_B ? 24 : 16;
-+        arm_mov_shift(out, 2, 0, false, shift);
-+        arm_mov_shift(out, 3, 1, false, shift);
-+        arm_write_word(out, arm_dp_reg_word(10, true, 0, 2, 3)); // cmp r2,r3
-+    }
-+    return arm_invert_carry_flag(out);
-+}
-+
- // ADDA / SUBA <ea>,An: An = An +/- source (a .w source is sign-extended), no flags change.
- static bool arm_emit_adda(const Operand *operands, OpSize size, bool is_sub, OutputBuffer *out)
- {
-@@ -4023,6 +4090,8 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
-         return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
-     if (strcmp(m, "DBRA") == 0)
-         return arm_emit_dbra(operands, out) ? 1 : 0;
-+    if (strcmp(m, "CMPM") == 0)
-+        return arm_emit_cmpm(operands, size, out) ? 1 : 0;
-     if (strcmp(m, "ADDA") == 0)
-         return arm_emit_adda(operands, size, false, out) ? 1 : 0;
-     if (strcmp(m, "SUBA") == 0)
+@@ -2268,6 +2309,9 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
+         return emit_x86_addsub(operands, size, false, out) ? 1 : 0;
+     if (strcmp(m, "SUB") == 0)
+         return emit_x86_addsub(operands, size, true, out) ? 1 : 0;
++    if ((strcmp(m, "MULU") == 0 || strcmp(m, "MULS") == 0 || strcmp(m, "DIVU") == 0 ||
++         strcmp(m, "DIVS") == 0) && operand_is_memory(operands[0].type))
++        return emit_x86_muldiv_mem(m, operands, size, out) ? 1 : 0;
+     if (strcmp(m, "MULU") == 0)
+         return emit_x86_mul(operands, size, false, out) ? 1 : 0;
+     if (strcmp(m, "MULS") == 0)
+@@ -3491,7 +3535,7 @@ static bool arm_emit_muldiv(const char *m, const Operand *operands,
+         if (src->value.reg >= 8)
+             return fail("MULU/MULS/DIVU/DIVS can't take an address register as the source");
+     }
+-    else
++    else if (!operand_is_memory(src->type))
+     {
+         return false;
+     }
 diff --git a/src/opcodes.c b/src/opcodes.c
-index 0cffb36..8b0946d 100644
+index 8b0946d..79197b4 100644
 --- a/src/opcodes.c
 +++ b/src/opcodes.c
-@@ -49,6 +49,7 @@ static const OpcodeEntry x86_opcode_table[] = {
-     {"CMPA", 0x39, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-     {"ADDA", 0x01, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-     {"SUBA", 0x29, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-+    {"CMPM", 0x39, 1, 1, 2, {OPERAND_POSTINC, OPERAND_POSTINC}, SIZES_BWL},
-     {"CMPI", 0x39, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
-     {"MOVEQ", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_REGISTER}, 0},
-     {"CLR", 0x00, 1, 1, 1, {OPERAND_EA_ALT, OPERAND_NONE}, SIZES_BWL},
-@@ -126,6 +127,7 @@ static const OpcodeEntry arm_opcode_table[] = {
+@@ -28,10 +28,10 @@ static const OpcodeEntry x86_opcode_table[] = {
+     // unsigned (MULU/DIVU) and signed (MULS/DIVS) instructions, and only in
+     // the .w form (16x16->32 multiply, 32/16->16r:16q divide). Opcode bytes
+     // here are placeholders; codegen.c emits a multi-instruction sequence.
+-    {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
++    {"MULU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"MULS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"DIVU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"DIVS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+     // BRA/BSR: opcode byte is a placeholder; codegen.c picks EB (short jmp),
+     // E9 (jmp rel32) or E8 (call rel32).
+     {"BRA", 0xE9, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
+@@ -119,10 +119,10 @@ static const OpcodeEntry arm_opcode_table[] = {
+     {"LEA", 0x8D, 1, 1, 2, {OPERAND_CONTROL, OPERAND_REGISTER}, 0},
+     {"ADD", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
+     {"SUB", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
+-    {"MULU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"MULS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"DIVU", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
+-    {"DIVS", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, SIZES_W},
++    {"MULU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"MULS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"DIVU", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
++    {"DIVS", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W},
+     {"CMP", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_ALT}, SIZES_BWL},
      {"CMPA", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
      {"ADDA", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-     {"SUBA", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_REGISTER}, SIZES_W | SIZES_L},
-+    {"CMPM", 0x00, 1, 1, 2, {OPERAND_POSTINC, OPERAND_POSTINC}, SIZES_BWL},
-     {"CMPI", 0x00, 1, 1, 2, {OPERAND_IMMEDIATE, OPERAND_EA_ALT}, SIZES_BWL},
-     {"BRA", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-     {"BSR", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-diff --git a/tests/diff/groups_cmpm.py b/tests/diff/groups_cmpm.py
+diff --git a/tests/diff/groups_muldiv.py b/tests/diff/groups_muldiv.py
 new file mode 100644
-index 0000000..365a263
+index 0000000..a2b0839
 --- /dev/null
-+++ b/tests/diff/groups_cmpm.py
-@@ -0,0 +1,51 @@
++++ b/tests/diff/groups_muldiv.py
+@@ -0,0 +1,89 @@
 +#!/usr/bin/env python3
-+"""CMPM (Ay)+,(Ax)+ against a real 68K (see diff.py): the flags of Ax - Ay for every size and many
-+values, with the two pointers in different registers (a0 is a real register on x86, the others are
-+spilled), the same register for both operands, and a check that both pointers advance by the size."""
++"""MULU / MULS / DIVU / DIVS against a real 68K (see diff.py): register, immediate and memory
++sources, the flags, DIV overflow (V set, the destination left alone), and a check that
++(An)+ / -(An) move the pointer by 2. Division by zero is not here: it raises an exception on
++a 68K and SIGFPE in mini-asm's executables. When DIV overflows the 68000 leaves N and Z
++undefined, so the capture routine capd records only V in that case."""
 +import os, sys
 +sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 +import diff
 +
-+diff.ARENA = True  # `arena` and `cellmid` are the two 256-byte halves of the data area
++diff.ARENA = True
++diff.CAP += """
++capd    bvs     capd_v
++        bpl     capd_n
++        addq.l  #1, a2
++capd_n  bne     capd_z
++        addq.l  #2, a2
++capd_z  bcc     capd_s
++        addq.l  #8, a2
++capd_s  bra     capd_st
++capd_v  addq.l  #4, a2
++capd_st move.l  d1, (a1)+
++        move.l  a2, d3
++        move.l  d3, (a1)+
++        move.l  #0, a2
++        rts
++"""
 +
-+FULL = diff.VALUES
-+FEW = [0, 0x7F, 0x80, 0xFFFFFFFF, 0x12345678]
-+PAIRS = [("a0", "a3", FULL), ("a3", "a0", FULL), ("a3", "a4", FEW), ("a4", "a3", FEW)]
++DEST = [0, 1, 0x7FFF, 0x8000, 0xFFFF, 0x10000, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0x12345678, 0xFFFF0000, 0x00010001]
++SRC = [1, 2, 3, 0x7F, 0x80, 0x7FFF, 0x8000, 0xFFFF, 0x1234, 0xFFFE, 0xABCD0003, 0x1234FFFF]
++MULSRC = SRC + [0, 0xFFFF0000]
++FEW_D = [0, 1, 0x8000, 0xFFFF, 0x80000000, 0x12345678, 0xFFFF0000]
++FEW_S = [1, 3, 0x7FFF, 0x8000, 0xFFFF, 0xABCD0003]
++MODES = [("ind", "(%s)", 0), ("post", "(%s)+", 0), ("pre", "-(%s)", 2), ("disp", "-2(%s)", 2)]
 +
-+def distinct(ay, ax, sv, dv):
-+    # the source long lives at cellmid, the destination long at arena
-+    return ["lea     cellmid, a5", "move.l  #$%x, (a5)" % sv, "lea     arena, a5", "move.l  #$%x, (a5)" % dv,
-+            "lea     cellmid, %s" % ay, "lea     arena, %s" % ax, "moveq   #0, d1"]
++def skip(mn, dv, sv):
++    # DIVS of $80000000 by -1 overflows; qemu-m68k executes it as a host idiv and dies with SIGFPE,
++    # so that one case has its own group below (checked against the manual instead)
++    return mn == "divs" and dv == 0x80000000 and (sv & 0xFFFF) == 0xFFFF
 +
-+def same(a, sv, dv):
-+    # one register for both: the source is at arena, the destination right behind it
-+    return ["lea     arena, a5", "move.l  #$%x, (a5)" % sv, "move.l  #$%x, 4(a5)" % dv,
-+            "lea     arena, %s" % a, "moveq   #0, d1"]
++def only(name):
++    pat = os.environ.get("ONLY")
++    return not pat or pat in name
++
++def mem_setup(base, off, sv):
++    # a word with the source value at `cell`; the base register is parked `off` bytes past it
++    return ["lea     cell, a5", "move.l  #$%x0000, (a5)" % (sv & 0xFFFF), "lea     cell, %s" % base] + (["addq.l  #2, %s" % base] if off else [])
 +
 +groups = []
-+for sz in "bwl":
-+    for ay, ax, vals in PAIRS:
-+        groups.append(("cmpm.%s.%s.%s" % (sz, ay, ax),
-+                       [(distinct(ay, ax, sv, dv), ["cmpm.%s  (%s)+, (%s)+" % (sz, ay, ax)]) for sv in vals for dv in vals]))
-+    for a in ("a0", "a3"):
-+        groups.append(("cmpm.%s.same.%s" % (sz, a),
-+                       [(same(a, sv, dv), ["cmpm.%s  (%s)+, (%s)+" % (sz, a, a)]) for sv in FEW for dv in FEW]))
-+    # both pointers must have moved by the size (a delta from each start; the flags don't matter here)
-+    for ay, ax, vals in PAIRS[:3]:
-+        tail = ["lea     cellmid, a5", "move.l  %s, d2" % ay, "move.l  a5, d5", "sub.l   d5, d2",
-+                "lea     arena, a5", "move.l  %s, d1" % ax, "move.l  a5, d5", "sub.l   d5, d1",
-+                "asl.l   #8, d2", "add.l   d2, d1"]
-+        groups.append(("cmpm.%s.%s.%s.ptr" % (sz, ay, ax),
-+                       [(distinct(ay, ax, 0x01020304, 0x05060708), ["cmpm.%s  (%s)+, (%s)+" % (sz, ay, ax)] + tail)]))
-+    for a in ("a0", "a3"):
-+        tail = ["lea     arena, a5", "move.l  %s, d1" % a, "move.l  a5, d5", "sub.l   d5, d1"]
-+        groups.append(("cmpm.%s.same.%s.ptr" % (sz, a),
-+                       [(same(a, 0x01020304, 0x05060708), ["cmpm.%s  (%s)+, (%s)+" % (sz, a, a)] + tail)]))
++for mn in ("mulu", "muls", "divu", "divs"):
++    cap = "capd" if mn.startswith("div") else "cap"
++    srcs = MULSRC if mn.startswith("mul") else SRC
++    groups.append(("%s.dn" % mn, [(["move.l  #$%x, d1" % dv, "move.l  #$%x, d2" % sv], ["%s  d2, d1" % mn], cap) for dv in DEST for sv in srcs if not skip(mn, dv, sv)]))
++    groups.append(("%s.imm" % mn, [(["move.l  #$%x, d1" % dv], ["%s  #$%x, d1" % (mn, sv & 0xFFFF)], cap) for dv in DEST for sv in srcs if not skip(mn, dv, sv)]))
++    groups.append(("%s.same" % mn, [(["move.l  #$%x, d1" % dv], ["%s  d1, d1" % mn], cap) for dv in DEST if (mn.startswith("mul") or (dv & 0xFFFF))]))
++    groups.append(("%s.d3d4" % mn, [(["move.l  #$%x, d3" % dv, "move.l  #$%x, d7" % sv], ["%s  d7, d3" % mn, "move.l  d3, d1"], cap) for dv in FEW_D for sv in FEW_S if not skip(mn, dv, sv)]))
++    for base in ("a0", "a3"):
++        for mname, tmpl, off in MODES:
++            groups.append(("%s.%s.%s" % (mn, base, mname),
++                           [(mem_setup(base, off, sv) + ["move.l  #$%x, d1" % dv], ["%s  %s, d1" % (mn, tmpl % base)], cap) for dv in FEW_D for sv in FEW_S + [0xFFFF0003] if not skip(mn, dv, sv)]))
++        for mname, tmpl, off in MODES[1:3]:
++            tail = ["lea     cell, a5", "move.l  %s, d2" % base, "move.l  a5, d5", "sub.l   d5, d2", "move.l  d2, d1"]
++            groups.append(("%s.%s.%s.ptr" % (mn, base, mname), [(mem_setup(base, off, 3) + ["move.l  #$10, d1"], ["%s  %s, d1" % (mn, tmpl % base)] + tail)]))
++
++def intmin_check():
++    """DIVS $80000000 / -1: the quotient (+2^31) doesn't fit, so V is set and D1 stays as it was."""
++    import struct
++    expect = struct.pack(">II", 0x80000000, 4)  # d1 unchanged; capd records V alone on an overflow
++    ok = 0
++    for form in ("d2, d1", "#$ffff, d1"):
++        cases = [(["move.l  #$80000000, d1", "move.l  #$FFFF, d2"], ["divs  " + form], "capd")]
++        for t in diff.TARGETS:
++            got, info = diff.run_target(diff.build(cases, "mini", True), "divs_intmin", t)
++            good = got == expect
++            print("divs %-12s INT_MIN / -1 per the manual  %-4s %s" % (form, t, "ok" if good else "DIFFERS (%r)" % (got,)))
++            ok += good
++    return ok, 2 * len(diff.TARGETS)
 +
 +if __name__ == "__main__":
 +    ok = tot = 0
++    if only("intmin"):
++        a, b = intmin_check(); ok += a; tot += b
 +    for name, cases in groups:
++        if not only(name):
++            continue
 +        a, b = diff.check(name, cases)
 +        ok += a; tot += b
 +    print("---- %d of %d (group, target) runs match real 68K" % (ok, tot))
 +    sys.exit(0 if ok == tot else 1)
-diff --git a/tests/errors/cmpm_operands.asm b/tests/errors/cmpm_operands.asm
+diff --git a/tests/errors/muldiv_address_source.asm b/tests/errors/muldiv_address_source.asm
 new file mode 100644
-index 0000000..f73d088
+index 0000000..742673d
 --- /dev/null
-+++ b/tests/errors/cmpm_operands.asm
++++ b/tests/errors/muldiv_address_source.asm
 @@ -0,0 +1,2 @@
-+; EXPECT: Error in .*cmpm_operands\.asm at line 2: operand 1 has the wrong type for CMPM
-+        cmpm.l  (a0), (a1)+
-diff --git a/tests/errors/cmpm_registers.asm b/tests/errors/cmpm_registers.asm
++; EXPECT: Error in .*muldiv_address_source\.asm at line 2: MULU/MULS/DIVU/DIVS can.t take an address register as the source
++        muls    a0, d1
+diff --git a/tests/errors/muldiv_long.asm b/tests/errors/muldiv_long.asm
 new file mode 100644
-index 0000000..ba87d3e
+index 0000000..c30a89b
 --- /dev/null
-+++ b/tests/errors/cmpm_registers.asm
-@@ -0,0 +1,2 @@
-+; EXPECT: Error in .*cmpm_registers\.asm at line 2: operand 1 has the wrong type for CMPM
-+        cmpm.w  d1, d2
-diff --git a/tests/sections/20_cmpm.asm b/tests/sections/20_cmpm.asm
++++ b/tests/errors/muldiv_long.asm
+@@ -0,0 +1,4 @@
++; EXPECT: Error in .*muldiv_long\.asm at line 3, column 1: this instruction does not accept that size
++        lea     buf, a0
++        divs.l  (a0), d1
++buf     dc.l    0
+diff --git a/tests/sections/21_muldiv_memory.asm b/tests/sections/21_muldiv_memory.asm
 new file mode 100644
-index 0000000..7b6fa7d
+index 0000000..f30e75a
 --- /dev/null
-+++ b/tests/sections/20_cmpm.asm
-@@ -0,0 +1,91 @@
-+        ; ---- 60: CMPM: equal values, both pointers advance by the size --
-+        moveq   #60, d3
++++ b/tests/sections/21_muldiv_memory.asm
+@@ -0,0 +1,71 @@
++        ; ---- 70: MULU / MULS with a memory source ----------------------
++        moveq   #70, d3
 +        lea     buf, a0
-+        move.l  #$01020304, (a0)
-+        lea     buf2, a1
-+        move.l  #$01020304, (a1)
-+        cmpm.l  (a0)+, (a1)+
-+        bne     fail                    ; equal: Z
-+        lea     buf, a2
-+        addq.l  #4, a2
-+        cmp.l   a2, a0
++        move.l  #$00030002, (a0)        ; the words at +0 and +2: 0003 and 0002
++        move.l  #$FFFF0005, d1          ; only the low word, 5, counts
++        mulu    (a0), d1                ; 5 * 3
++        cmp.l   #15, d1
 +        bne     fail
-+        lea     buf2, a2
-+        addq.l  #4, a2
-+        cmp.l   a2, a1
++        mulu    2(a0), d1               ; 15 * 2
++        cmp.l   #30, d1
 +        bne     fail
-+        ; ---- 61: the flags are those of (Ax) - (Ay) ---------------------
-+        moveq   #61, d3
-+        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #5, (a0)                ; Ay: the source
-+        move.l  #7, (a1)                ; Ax: the destination, 7 - 5 = 2
-+        cmpm.l  (a0)+, (a1)+
-+        beq     fail
-+        bcs     fail
-+        bmi     fail
-+        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #7, (a0)
-+        move.l  #5, (a1)                ; 5 - 7 = -2: borrow and negative
-+        cmpm.l  (a0)+, (a1)+
-+        bcc     fail
++        move.l  #$FFFE0000, (a0)        ; the word at +0 is FFFE = -2
++        move.l  #7, d1
++        muls    (a0), d1                ; 7 * -2
 +        bpl     fail
++        cmp.l   #-14, d1
++        bne     fail
++        move.l  #$FFFF0000, (a0)        ; the word FFFF
++        move.l  #$0000FFFF, d1
++        mulu    (a0), d1                ; FFFF * FFFF = FFFE0001
++        bpl     fail
++        cmp.l   #$FFFE0001, d1
++        bne     fail
++        ; ---- 71: DIVU / DIVS with a memory source -----------------------
++        moveq   #71, d3
 +        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #$FFFFFFFF, (a0)
-+        move.l  #$7FFFFFFF, (a1)        ; 7FFFFFFF - FFFFFFFF overflows
-+        cmpm.l  (a0)+, (a1)+
++        move.l  #$00070000, (a0)        ; the word 0007
++        move.l  #100, d1
++        divu    (a0), d1                ; 100 / 7 = 14 remainder 2
++        cmp.l   #$0002000E, d1
++        bne     fail
++        move.l  #-100, d1
++        divs    (a0), d1                ; -100 / 7 = -14 remainder -2
++        bpl     fail
++        cmp.l   #$FFFEFFF2, d1
++        bne     fail
++        move.l  #$00010000, (a0)        ; the word 0001
++        move.l  #$00020000, d1
++        divu    (a0), d1                ; the quotient 20000 doesn't fit 16 bits: V set, D1 unchanged
 +        bvc     fail
-+        bpl     fail
-+        ; ---- 62: .b and .w compare only their own size ------------------
-+        moveq   #62, d3
-+        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #$FF000000, (a0)
-+        move.l  #$FE000000, (a1)
-+        cmpm.b  (a0)+, (a1)+            ; FE - FF = -1
-+        bcc     fail
-+        bpl     fail
-+        lea     buf, a2
-+        addq.l  #1, a2
-+        cmp.l   a2, a0                  ; one byte
++        cmp.l   #$00020000, d1
++        bne     fail
++        ; ---- 72: (An)+, -(An), d(An) and the pointer moves by 2 ----------
++        moveq   #72, d3
++        lea     buf2, a0
++        move.l  #$00020003, (a0)        ; the words 0002 and 0003
++        move.l  #10, d1
++        mulu    (a0)+, d1               ; 10 * 2
++        mulu    (a0)+, d1               ; 20 * 3
++        cmp.l   #60, d1
 +        bne     fail
 +        lea     buf2, a2
-+        addq.l  #1, a2
-+        cmp.l   a2, a1
-+        bne     fail
-+        cmpm.b  (a0)+, (a1)+            ; 00 - 00
-+        bne     fail
-+        lea     buf, a0
-+        lea     buf2, a1
-+        move.l  #$00018000, (a0)
-+        move.l  #$00018000, (a1)
-+        cmpm.w  (a0)+, (a1)+            ; 0001 - 0001
-+        bne     fail
-+        cmpm.w  (a0)+, (a1)+            ; 8000 - 8000
-+        bne     fail
-+        lea     buf, a2
 +        addq.l  #4, a2
 +        cmp.l   a2, a0                  ; two words
 +        bne     fail
-+        ; ---- 63: the same register for both operands ---------------------
-+        moveq   #63, d3
-+        lea     buf, a0
-+        move.l  #$01010202, (a0)        ; bytes 01 01 02 02
-+        cmpm.b  (a0)+, (a0)+            ; 01 against 01
++        muls    -(a0), d1               ; 60 * 3, from buf2+2
++        cmp.l   #180, d1
 +        bne     fail
-+        lea     buf, a2
-+        addq.l  #2, a2
-+        cmp.l   a2, a0
++        divu    -2(a0), d1              ; 180 / 2, from buf2+0
++        cmp.l   #90, d1
 +        bne     fail
-+        cmpm.b  (a0)+, (a0)+            ; 02 against 02
++        lea     buf2, a3                ; the same with A3
++        move.l  #4, d1
++        mulu    (a3)+, d1               ; 4 * 2
++        divs    (a3)+, d1               ; 8 / 3 = 2 remainder 2
++        cmp.l   #$00020002, d1
 +        bne     fail
-+        lea     buf, a0
-+        cmpm.w  (a0)+, (a0)+            ; the word 0202 minus the word 0101
-+        beq     fail
-+        bcs     fail
-+        lea     buf, a2
++        lea     buf2, a2
 +        addq.l  #4, a2
-+        cmp.l   a2, a0
++        cmp.l   a2, a3
 +        bne     fail
-diff --git a/tests/trap/cmpm.asm b/tests/trap/cmpm.asm
+diff --git a/tests/trap/muldiv_memory.asm b/tests/trap/muldiv_memory.asm
 new file mode 100644
-index 0000000..f16b49d
+index 0000000..aa10e39
 --- /dev/null
-+++ b/tests/trap/cmpm.asm
++++ b/tests/trap/muldiv_memory.asm
 @@ -0,0 +1,7 @@
 +; EXIT: 0
-+; CMPM on every target (the checks are shared with the test sections).
++; MULU/MULS/DIVU/DIVS with memory sources on every target (checks shared with the test sections).
 +start:
-+        include "../sections/20_cmpm.asm"
++        include "../sections/21_muldiv_memory.asm"
 +        moveq   #0, d0
 +        rts
 +        include "../common.asm"
