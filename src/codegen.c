@@ -1395,6 +1395,332 @@ static bool emit_x86_dbra(const Operand *operands, OutputBuffer *out)
     return true;
 }
 
+static void write_slot_access(OutputBuffer *out, uint8_t opcode, int t, int reg);
+
+// ---- Scc / DBcc / EXG / PEA (x86) --------------------------------------------
+// The 68K N,Z,V,C flags live in the x86 SF,ZF,OF,CF with the same meaning (see
+// k_bcc), so every 68K condition is one x86 condition code.
+//
+// Scc <ea>        byte = 0xFF if the condition holds, else 0x00; flags unchanged.
+//                 SETcc gives 01/00 and NEG turns 01 into FF but changes the flags,
+//                 so the sequence runs between pushfd and popfd:
+//                   register: pushfd; setcc r8; neg r8; popfd        (D0-D3 only)
+//                   memory:   pushfd; setcc [m]; neg byte [m]; popfd
+//                 ST and SF are plain stores of FF / 00.
+// DBcc Dn,label   if the condition holds: fall through (Dn untouched); else
+//                 Dn.w -= 1 and branch unless Dn.w became -1. Flags unchanged.
+//                 DBT therefore never does anything (one NOP); DBF/DBRA is the
+//                 older loop-only form above.
+//                   pushfd; jcc done; dec Dn.w; cmp Dn.w,-1; je done; popfd;
+//                   jmp target; done: popfd                          (18 bytes)
+#define COND_TRUE (-2)
+#define COND_FALSE (-3)
+
+// Condition suffix ("EQ", "HI", "T", "F", ...) -> x86 condition code,
+// COND_TRUE / COND_FALSE, or -1 when it isn't a condition.
+static int cond_suffix_x86_cc(const char *suffix, bool allow_ra)
+{
+    if (strcmp(suffix, "T") == 0)
+        return COND_TRUE;
+    if (strcmp(suffix, "F") == 0 || (allow_ra && strcmp(suffix, "RA") == 0))
+        return COND_FALSE;
+    if (strlen(suffix) < 2 || strlen(suffix) > 3)
+        return -1;
+    char name[8];
+    snprintf(name, sizeof name, "B%s", suffix);
+    return bcc_x86_cc(name);
+}
+
+static bool emit_x86_scc(const char *mnemonic, const Operand *operand, OpSize size,
+                         OutputBuffer *out)
+{
+    int cc = cond_suffix_x86_cc(mnemonic + 1, false);
+    if (cc == -1)
+        return false;
+    if (size != SIZE_UNSPEC && size != SIZE_B)
+        return fail("Scc is byte-sized only");
+    bool constant = cc == COND_TRUE || cc == COND_FALSE;
+    uint8_t value = cc == COND_TRUE ? 0xFF : 0x00;
+    if (operand->type == OPERAND_REGISTER)
+    {
+        if (operand->value.reg >= 8)
+            return fail("Scc needs a data register or memory destination");
+        int r = x86_reg_code(operand->value.reg);
+        if (r < 0)
+            return false;
+        if (r > 3)
+            return fail(ERR_BYTE_REG);
+        if (constant)
+        {
+            buffer_write(out, (uint8_t)(0xB0 + r)); // mov r8,imm8 (no flag change)
+            buffer_write(out, value);
+            return true;
+        }
+        buffer_write(out, 0x9C); // pushfd
+        buffer_write(out, 0x0F);
+        buffer_write(out, (uint8_t)(0x90 + cc)); // setcc r8
+        buffer_write(out, (uint8_t)(0xC0 | r));
+        buffer_write(out, 0xF6); // neg r8
+        buffer_write(out, (uint8_t)(0xD8 | r));
+        buffer_write(out, 0x9D); // popfd
+        return true;
+    }
+    if (!operand_is_memory(operand->type))
+        return false;
+    int base = x86_reg_code(operand->value.reg);
+    if (!plain_base(base))
+        return fail(ERR_MEM_PTR);
+    mem_pre(out, operand->type, base, 1);
+    if (constant)
+    {
+        buffer_write(out, 0xC6); // mov byte [m],imm8
+        write_modrm_mem(out, 0, base);
+        buffer_write(out, value);
+    }
+    else
+    {
+        buffer_write(out, 0x9C); // pushfd
+        buffer_write(out, 0x0F);
+        buffer_write(out, (uint8_t)(0x90 + cc)); // setcc byte [m]
+        write_modrm_mem(out, 0, base);
+        buffer_write(out, 0xF6); // neg byte [m]
+        write_modrm_mem(out, 3, base);
+        buffer_write(out, 0x9D); // popfd
+    }
+    mem_post(out, operand->type, base, 1);
+    return true;
+}
+
+static bool emit_x86_dbcc(const char *mnemonic, const Operand *operands, OutputBuffer *out)
+{
+    int cc = cond_suffix_x86_cc(mnemonic + 2, true);
+    if (cc == -1)
+        return false;
+    const Operand *reg = &operands[0], *target = &operands[1];
+    if (reg->type != OPERAND_REGISTER || reg->value.reg >= 8 ||
+        target->type != OPERAND_IMMEDIATE)
+        return fail("DBcc requires a data register and a label");
+    if (cc == COND_FALSE)
+        return emit_x86_dbra(operands, out);
+    if (cc == COND_TRUE)
+    {
+        buffer_write(out, 0x90); // the condition always holds: no decrement, no branch
+        return true;
+    }
+    int r = x86_reg_code(reg->value.reg);
+    if (r == 4)
+        return fail("DBcc can't use D4 on this target");
+    int32_t rel = g_final_pass
+                      ? (int32_t)((uint32_t)target->value.imm - (g_pc + 17))
+                      : 0;
+    buffer_write(out, 0x9C); // pushfd
+    buffer_write(out, (uint8_t)(0x70 + cc));
+    buffer_write(out, 14); // jcc done
+    buffer_write(out, 0x66);
+    buffer_write(out, (uint8_t)(0x48 + r)); // dec Dn.w
+    buffer_write(out, 0x66);
+    buffer_write(out, 0x83);
+    buffer_write(out, (uint8_t)(0xF8 | r));
+    buffer_write(out, 0xFF); // cmp Dn.w,-1
+    buffer_write(out, 0x74);
+    buffer_write(out, 6);    // je done
+    buffer_write(out, 0x9D); // popfd
+    buffer_write(out, 0xE9);
+    write_le(out, (uint32_t)rel, 4); // jmp target
+    buffer_write(out, 0x9D);         // done: popfd
+    return true;
+}
+
+// EXG Rx,Ry (long): swaps two registers (Dn/An in any mix); flags unchanged.
+// D0-D7 and A0 are x86 registers (xchg); A1-A7 live in the register block
+// (xchg [slot],r; two block registers go through a pushed EAX).
+static bool emit_x86_exg(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    const Operand *a = &operands[0], *b = &operands[1];
+    if (a->type != OPERAND_REGISTER || b->type != OPERAND_REGISTER)
+        return fail("EXG needs two registers");
+    if (size != SIZE_UNSPEC && size != SIZE_L)
+        return fail("EXG is long-sized only");
+    int ra = a->value.reg, rb = b->value.reg;
+    if (ra == rb)
+    {
+        buffer_write(out, 0x90); // swapping a register with itself changes nothing
+        return true;
+    }
+    if ((ra == 6 && rb == 8) || (ra == 8 && rb == 6))
+        return fail("D6 shares a register with A0 on this target, so EXG can't swap them");
+    bool sa = ra >= 9 && ra <= 15, sb = rb >= 9 && rb <= 15;
+    if (!sa && !sb)
+    {
+        int ca = x86_reg_code(ra), cb = x86_reg_code(rb);
+        if (ca < 0 || cb < 0)
+            return false;
+        buffer_write(out, 0x87); // xchg r/m32,r32
+        buffer_write(out, (uint8_t)(0xC0 | (ca << 3) | cb));
+        return true;
+    }
+    if (sa != sb)
+    {
+        int slot = sa ? ra : rb;
+        int phys = x86_reg_code(sa ? rb : ra);
+        if (phys < 0)
+            return false;
+        write_slot_access(out, 0x87, phys, slot); // xchg [slot],r32
+        return true;
+    }
+    buffer_write(out, 0x50);                 // push eax
+    write_slot_access(out, 0x8B, 0, ra);     // mov eax,[A]
+    write_slot_access(out, 0x87, 0, rb);     // xchg eax,[B]
+    write_slot_access(out, 0x89, 0, ra);     // mov [A],eax
+    buffer_write(out, 0x58);                 // pop eax
+    return true;
+}
+
+// PEA <ea>: A7 -= 4, then the 32-bit effective address is stored at (A7),
+// big-endian like every long in 68K memory. <ea> is a label, (An) or d(An).
+// A7 is just a register-block entry here (nothing sets it up), so the program
+// must load A7 with a stack area first. Flags unchanged. EAX and ECX are
+// saved around the sequence.
+//   t1 = EA; t2 = [A7slot] - 4; [A7slot] = t2; bswap t1; mov [t2],t1
+static bool emit_x86_pea(const Operand *operand, OpSize size, OutputBuffer *out)
+{
+    if (size != SIZE_UNSPEC && size != SIZE_L)
+        return fail("PEA is long-sized only");
+    const int t1 = 0, t2 = 1; // EAX, ECX
+    buffer_write(out, (uint8_t)(0x50 + t1));
+    buffer_write(out, (uint8_t)(0x50 + t2));
+    if (operand->type == OPERAND_IMMEDIATE)
+    {
+        buffer_write(out, (uint8_t)(0xB8 + t1)); // mov t1,imm32
+        write_le(out, (uint32_t)operand->value.imm, 4);
+    }
+    else if (operand->type == OPERAND_IND || operand->type == OPERAND_DISP)
+    {
+        int reg = operand->value.reg;
+        int32_t d = operand->type == OPERAND_DISP ? operand->disp : 0;
+        bool fixed = operand->type == OPERAND_DISP && operand->symbol != NULL;
+        if (reg >= 9 && reg <= 15)
+            write_slot_access(out, 0x8B, t1, reg); // mov t1,[An slot]
+        else
+        {
+            int c = x86_reg_code(reg);
+            if (c < 0)
+                return false;
+            buffer_write(out, 0x89); // mov t1,An
+            buffer_write(out, (uint8_t)(0xC0 | (c << 3) | t1));
+        }
+        if (operand->type == OPERAND_DISP && (d != 0 || fixed))
+        {
+            buffer_write(out, 0x8D); // lea t1,[t1+disp32] (same length in every pass)
+            buffer_write(out, (uint8_t)(0x80 | (t1 << 3) | t1));
+            write_le(out, (uint32_t)d, 4);
+        }
+    }
+    else
+        return fail("PEA takes a label, (An) or d(An)");
+    write_slot_access(out, 0x8B, t2, 15); // mov t2,[A7]
+    write_ptr_adjust(out, t2, -4);        // lea t2,[t2-4]
+    write_slot_access(out, 0x89, t2, 15); // mov [A7],t2
+    buffer_write(out, 0x0F);              // bswap t1
+    buffer_write(out, (uint8_t)(0xC8 + t1));
+    buffer_write(out, 0x89); // mov [t2],t1
+    buffer_write(out, (uint8_t)((t1 << 3) | t2));
+    buffer_write(out, (uint8_t)(0x58 + t2));
+    buffer_write(out, (uint8_t)(0x58 + t1));
+    return true;
+}
+
+
+// LINK An,#d / UNLK An (x86). A7 is a register-block entry (see PEA).
+//   LINK: A7 -= 4; store An (big-endian) at (A7); An = A7; A7 += d (sign-extended 16 bits).
+//   UNLK: A7 = An; An = long at (A7), big-endian; A7 += 4.
+// No flag changes. A7 itself is refused as the register: what the 68K does with
+// LINK A7 / UNLK A7 is a special case I didn't implement. EAX and ECX are saved.
+static bool link_unlk_reg(const Operand *o, const char *what)
+{
+    if (o->type != OPERAND_REGISTER || o->value.reg < 8 || o->value.reg > 14)
+        return fail(o->type == OPERAND_REGISTER && o->value.reg == 15
+                        ? "LINK/UNLK with A7 isn't supported"
+                        : what);
+    return true;
+}
+
+// mov t,An / mov An,t  for A0 (ESI) and the A1-A6 block entries
+static void write_an_to_reg(OutputBuffer *out, int an, int t)
+{
+    if (an >= 9)
+        write_slot_access(out, 0x8B, t, an);
+    else
+    {
+        buffer_write(out, 0x89); // mov t,esi
+        buffer_write(out, (uint8_t)(0xC0 | (6 << 3) | t));
+    }
+}
+
+static void write_reg_to_an(OutputBuffer *out, int an, int t)
+{
+    if (an >= 9)
+        write_slot_access(out, 0x89, t, an);
+    else
+    {
+        buffer_write(out, 0x89); // mov esi,t
+        buffer_write(out, (uint8_t)(0xC0 | (t << 3) | 6));
+    }
+}
+
+static bool emit_x86_link(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    if (size != SIZE_UNSPEC && size != SIZE_W)
+        return fail("LINK is word-sized only");
+    if (!link_unlk_reg(&operands[0], "LINK needs an address register and a displacement, e.g. LINK A6,#-8"))
+        return false;
+    if (operands[1].type != OPERAND_IMMEDIATE)
+        return fail("LINK needs an address register and a displacement, e.g. LINK A6,#-8");
+    int32_t d = operands[1].value.imm;
+    if (d < -32768 || d > 32767)
+        return fail("LINK displacement must fit in 16 bits");
+    int an = operands[0].value.reg;
+    const int t1 = 0, t2 = 1; // EAX, ECX
+    buffer_write(out, (uint8_t)(0x50 + t1));
+    buffer_write(out, (uint8_t)(0x50 + t2));
+    write_slot_access(out, 0x8B, t2, 15); // mov ecx,[A7]
+    write_ptr_adjust(out, t2, -4);        // lea ecx,[ecx-4]
+    write_an_to_reg(out, an, t1);         // mov eax,An
+    buffer_write(out, 0x0F);              // bswap eax
+    buffer_write(out, (uint8_t)(0xC8 + t1));
+    buffer_write(out, 0x89); // mov [ecx],eax
+    buffer_write(out, (uint8_t)((t1 << 3) | t2));
+    write_reg_to_an(out, an, t2);         // An = A7
+    buffer_write(out, 0x8D);              // lea ecx,[ecx+disp32]
+    buffer_write(out, (uint8_t)(0x80 | (t2 << 3) | t2));
+    write_le(out, (uint32_t)d, 4);
+    write_slot_access(out, 0x89, t2, 15); // mov [A7],ecx
+    buffer_write(out, (uint8_t)(0x58 + t2));
+    buffer_write(out, (uint8_t)(0x58 + t1));
+    return true;
+}
+
+static bool emit_x86_unlk(const Operand *operand, OutputBuffer *out)
+{
+    if (!link_unlk_reg(operand, "UNLK needs an address register, e.g. UNLK A6"))
+        return false;
+    int an = operand->value.reg;
+    const int t1 = 0, t2 = 1;
+    buffer_write(out, (uint8_t)(0x50 + t1));
+    buffer_write(out, (uint8_t)(0x50 + t2));
+    write_an_to_reg(out, an, t2); // mov ecx,An
+    buffer_write(out, 0x8B);      // mov eax,[ecx]
+    buffer_write(out, (uint8_t)((t1 << 3) | t2));
+    buffer_write(out, 0x0F);      // bswap eax
+    buffer_write(out, (uint8_t)(0xC8 + t1));
+    write_reg_to_an(out, an, t1); // An = old frame pointer
+    write_ptr_adjust(out, t2, 4); // lea ecx,[ecx+4]
+    write_slot_access(out, 0x89, t2, 15); // mov [A7],ecx
+    buffer_write(out, (uint8_t)(0x58 + t2));
+    buffer_write(out, (uint8_t)(0x58 + t1));
+    return true;
+}
+
 // ---- MULU/MULS/DIVU/DIVS ---------------------------------------------------
 // The 68000 forms are word-sized only:
 //   MULU.W / MULS.W  <ea>,Dn : Dn(32) = Dn.w * <ea>.w   (unsigned / signed)
@@ -2263,9 +2589,14 @@ static bool is_bitop_mnemonic(const char *m)
     return false;
 }
 
+static bool is_scc_mnemonic(const char *m)
+{
+    return m[0] == 'S' && cond_suffix_x86_cc(m + 1, false) != -1;
+}
+
 static bool spill_capable(const char *m)
 {
-    return is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
+    return is_scc_mnemonic(m) || is_move_or_lea(m) || strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
            strcmp(m, "ADDA") == 0 || strcmp(m, "SUBA") == 0 || strcmp(m, "CMP") == 0 || strcmp(m, "CMPA") == 0 || strcmp(m, "CMPI") == 0 ||
            strcmp(m, "CLR") == 0 || strcmp(m, "TST") == 0 ||
            strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
@@ -2332,8 +2663,12 @@ static int x86_dispatch2(const OpcodeEntry *entry, Operand *operands, OpSize siz
         return emit_x86_quick(operands, size, false, out) ? 1 : 0;
     if (strcmp(m, "SUBQ") == 0)
         return emit_x86_quick(operands, size, true, out) ? 1 : 0;
-    if (strcmp(m, "DBRA") == 0)
-        return emit_x86_dbra(operands, out) ? 1 : 0;
+    if (strncmp(m, "DB", 2) == 0 && cond_suffix_x86_cc(m + 2, true) != -1)
+        return emit_x86_dbcc(m, operands, out) ? 1 : 0;
+    if (strcmp(m, "EXG") == 0)
+        return emit_x86_exg(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "LINK") == 0)
+        return emit_x86_link(operands, size, out) ? 1 : 0;
     if (strcmp(m, "BTST") == 0 || strcmp(m, "BSET") == 0 ||
         strcmp(m, "BCLR") == 0 || strcmp(m, "BCHG") == 0)
         return emit_x86_bitop(m, operands, size, out) ? 1 : 0;
@@ -2356,6 +2691,10 @@ static int x86_dispatch1(const OpcodeEntry *entry, Operand *operand, OpSize size
         return emit_x86_ext(operand, size, out) ? 1 : 0;
     if (strcmp(entry->mnemonic, "JMP") == 0 || strcmp(entry->mnemonic, "JSR") == 0)
         return emit_x86_jump(entry->mnemonic, operand, out) ? 1 : 0;
+    if (strcmp(entry->mnemonic, "UNLK") == 0)
+        return emit_x86_unlk(operand, out) ? 1 : 0;
+    if (entry->mnemonic[0] == 'S' && cond_suffix_x86_cc(entry->mnemonic + 1, false) != -1)
+        return emit_x86_scc(entry->mnemonic, operand, size, out) ? 1 : 0;
     return -1;
 }
 
@@ -3432,7 +3771,10 @@ static bool arm_emit_jump(const char *mnemonic, const Operand *operand,
     return true;
 }
 
-static bool arm_emit_dbra(const Operand *operands, OutputBuffer *out)
+// DBRA/DBF: the loop-only form. prefix_bytes is the length of any code a DBcc puts in
+// front of it (the condition test), which the branch distance has to count.
+#define ARM_DBRA_BYTES 80u
+static bool arm_dbra_body(const Operand *operands, OutputBuffer *out, uint32_t prefix_bytes)
 {
     size_t start = out->size;
     unsigned reg = (unsigned)operands[0].value.reg;
@@ -3454,15 +3796,18 @@ static bool arm_emit_dbra(const Operand *operands, OutputBuffer *out)
     arm_write_word(out, 0xE128F003u); // msr cpsr_f,r3
     int64_t delta = g_final_pass
                         ? (int64_t)(uint32_t)operands[1].value.imm -
-                              (int64_t)(g_pc + (uint32_t)(out->size - start) + 8)
+                              (int64_t)(g_pc + prefix_bytes + (uint32_t)(out->size - start) + 8)
                         : 0;
     if ((delta & 3) != 0 || delta < -33554432 || delta > 33554428)
         return fail("ARM DBRA target is outside the encodable range");
     arm_write_word(out, 0xEA000000u |
                             ((uint32_t)(delta >> 2) & 0x00FFFFFFu));
     arm_write_word(out, 0xE128F003u); // restore original flags
+    if (out->size - start != ARM_DBRA_BYTES)
+        return fail("internal ARM error: DBRA sequence length changed");
     return true;
 }
+
 
 // MULU/MULS/DIVU/DIVS (.w): fixed ARM sequences, assembled with GNU as
 // (ARMv6, no hardware divide so they also run on ARM11 cores) and kept as
@@ -3686,6 +4031,214 @@ static bool arm_emit_bcc(const char *m, const Operand *operand, OutputBuffer *ou
         if (strcmp(m, k_arm_bcc[i].mnemonic) == 0)
             return arm_branch_at(out, k_arm_bcc[i].cond, 0, target);
     return false;
+}
+
+
+// ---- ARM: Scc / DBcc / EXG / PEA -------------------------------------------------
+static void arm_mov_small(OutputBuffer *out, unsigned rd, unsigned value);
+static void arm_cond_mov_small(OutputBuffer *out, unsigned cond, unsigned rd, unsigned value);
+// The CPSR holds the 68K flags (see arm_emit_cmp), so conditional MOVs (no S bit)
+// evaluate a 68K condition without disturbing them; HI and LS need two of them.
+
+// r<rd> = 0xFF if the 68K condition `suffix` holds, else 0; flags unchanged.
+static bool arm_scc_value(OutputBuffer *out, const char *suffix, unsigned rd)
+{
+    if (strcmp(suffix, "T") == 0)
+    {
+        arm_mov_small(out, rd, 0xFF);
+        return true;
+    }
+    arm_mov_small(out, rd, 0);
+    if (strcmp(suffix, "F") == 0)
+        return true;
+    if (strcmp(suffix, "HI") == 0)
+    { // C=0 and Z=0
+        arm_cond_mov_small(out, 0x3, rd, 0xFF); // movcc
+        arm_cond_mov_small(out, 0x0, rd, 0);    // moveq
+        return true;
+    }
+    if (strcmp(suffix, "LS") == 0)
+    { // C=1 or Z=1
+        arm_cond_mov_small(out, 0x2, rd, 0xFF); // movcs
+        arm_cond_mov_small(out, 0x0, rd, 0xFF); // moveq
+        return true;
+    }
+    char name[8];
+    if (strlen(suffix) < 2 || strlen(suffix) > 3)
+        return false;
+    snprintf(name, sizeof name, "B%s", suffix);
+    for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
+        if (strcmp(name, k_arm_bcc[i].mnemonic) == 0)
+        {
+            arm_cond_mov_small(out, k_arm_bcc[i].cond, rd, 0xFF);
+            return true;
+        }
+    return false;
+}
+
+static bool arm_is_cond_suffix(const char *suffix, bool allow_ra)
+{
+    if (strcmp(suffix, "T") == 0 || strcmp(suffix, "F") == 0 ||
+        strcmp(suffix, "HI") == 0 || strcmp(suffix, "LS") == 0 ||
+        (allow_ra && strcmp(suffix, "RA") == 0))
+        return true;
+    char name[8];
+    if (strlen(suffix) < 2 || strlen(suffix) > 3)
+        return false;
+    snprintf(name, sizeof name, "B%s", suffix);
+    for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
+        if (strcmp(name, k_arm_bcc[i].mnemonic) == 0)
+            return true;
+    return false;
+}
+
+static bool arm_emit_scc(const char *m, const Operand *operand, OpSize size, OutputBuffer *out)
+{
+    if (size != SIZE_UNSPEC && size != SIZE_B)
+        return fail("Scc is byte-sized only");
+    if (operand->type == OPERAND_REGISTER)
+    {
+        if (operand->value.reg >= 8)
+            return fail("Scc needs a data register or memory destination");
+        arm_load_vreg(out, 0, (unsigned)operand->value.reg);
+        if (!arm_scc_value(out, m + 1, 1))
+            return false;
+        arm_merge_low(out, 0, 1, SIZE_B);
+        arm_store_vreg(out, 0, (unsigned)operand->value.reg);
+        return true;
+    }
+    if (!operand_is_memory(operand->type))
+        return false;
+    arm_mem_begin(out, operand, 1, SIZE_B);
+    if (!arm_scc_value(out, m + 1, 0))
+        return false;
+    arm_mem_transfer(out, false, 0, 1, SIZE_B);
+    arm_mem_finish(out, operand, 1, SIZE_B);
+    return true;
+}
+
+// DBcc: when the condition holds, skip the whole DBRA sequence (Dn untouched, no branch).
+// The test runs first, while the flags are still the program's.
+static bool arm_emit_dbcc(const char *m, const Operand *operands, OutputBuffer *out)
+{
+    const char *suffix = m + 2;
+    if (operands[0].type != OPERAND_REGISTER || operands[0].value.reg >= 8 ||
+        operands[1].type != OPERAND_IMMEDIATE)
+        return fail("DBcc requires a data register and a label");
+    if (strcmp(suffix, "F") == 0 || strcmp(suffix, "RA") == 0)
+        return arm_dbra_body(operands, out, 0);
+    if (strcmp(suffix, "T") == 0)
+    {
+        arm_write_word(out, 0xE1A00000u); // nop: the condition always holds
+        return true;
+    }
+    bool two = strcmp(suffix, "HI") == 0 || strcmp(suffix, "LS") == 0;
+    uint32_t prefix = two ? 8u : 4u;
+    uint32_t end = g_pc + prefix + ARM_DBRA_BYTES;
+    if (strcmp(suffix, "HI") == 0)
+    {                                    // C=0 and Z=0 -> done
+        arm_write_word(out, 0x0A000000u); // beq +0 (skips the next word)
+        if (!arm_branch_at(out, 0x3, 4, end)) // bcc done
+            return false;
+    }
+    else if (strcmp(suffix, "LS") == 0)
+    { // C=1 or Z=1 -> done
+        if (!arm_branch_at(out, 0x0, 0, end) || !arm_branch_at(out, 0x2, 4, end))
+            return false;
+    }
+    else
+    {
+        char name[8];
+        snprintf(name, sizeof name, "B%s", suffix);
+        uint32_t cond = 0xF;
+        for (size_t i = 0; i < sizeof k_arm_bcc / sizeof k_arm_bcc[0]; i++)
+            if (strcmp(name, k_arm_bcc[i].mnemonic) == 0)
+                cond = k_arm_bcc[i].cond;
+        if (cond == 0xF)
+            return false;
+        if (!arm_branch_at(out, cond, 0, end))
+            return false;
+    }
+    return arm_dbra_body(operands, out, prefix);
+}
+
+// EXG: both registers sit in the register block, so load both and store them crossed.
+static bool arm_emit_exg(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    if (operands[0].type != OPERAND_REGISTER || operands[1].type != OPERAND_REGISTER)
+        return fail("EXG needs two registers");
+    if (size != SIZE_UNSPEC && size != SIZE_L)
+        return fail("EXG is long-sized only");
+    unsigned a = (unsigned)operands[0].value.reg, b = (unsigned)operands[1].value.reg;
+    arm_load_vreg(out, 0, a);
+    arm_load_vreg(out, 1, b);
+    arm_store_vreg(out, 0, b);
+    arm_store_vreg(out, 1, a);
+    return true;
+}
+
+// PEA: r0 = EA; A7 -= 4; store r0 big-endian at (A7). No flags change.
+static bool arm_emit_pea(const Operand *operand, OpSize size, OutputBuffer *out)
+{
+    if (size != SIZE_UNSPEC && size != SIZE_L)
+        return fail("PEA is long-sized only");
+    if (operand->type == OPERAND_IMMEDIATE)
+        arm_load_literal(out, 0, (uint32_t)operand->value.imm);
+    else if (operand->type == OPERAND_IND || operand->type == OPERAND_DISP)
+        arm_pointer_load(out, operand, 0);
+    else
+        return fail("PEA takes a label, (An) or d(An)");
+    arm_load_vreg(out, 1, 15);
+    arm_pointer_adjust(out, 1, -4);
+    arm_store_vreg(out, 1, 15);
+    arm_mem_transfer(out, false, 0, 1, SIZE_L);
+    return true;
+}
+
+
+// LINK / UNLK (ARM): same behaviour as the x86 versions above.
+static bool arm_link_unlk_reg(const Operand *o, const char *what)
+{
+    if (o->type != OPERAND_REGISTER || o->value.reg < 8 || o->value.reg > 14)
+        return fail(o->type == OPERAND_REGISTER && o->value.reg == 15
+                        ? "LINK/UNLK with A7 isn't supported"
+                        : what);
+    return true;
+}
+
+static bool arm_emit_link(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    if (size != SIZE_UNSPEC && size != SIZE_W)
+        return fail("LINK is word-sized only");
+    if (!arm_link_unlk_reg(&operands[0], "LINK needs an address register and a displacement, e.g. LINK A6,#-8"))
+        return false;
+    if (operands[1].type != OPERAND_IMMEDIATE)
+        return fail("LINK needs an address register and a displacement, e.g. LINK A6,#-8");
+    int32_t d = operands[1].value.imm;
+    if (d < -32768 || d > 32767)
+        return fail("LINK displacement must fit in 16 bits");
+    unsigned an = (unsigned)operands[0].value.reg;
+    arm_load_vreg(out, 0, 15);
+    arm_pointer_adjust(out, 0, -4);                 // r0 = A7 - 4
+    arm_load_vreg(out, 1, an);
+    arm_mem_transfer(out, false, 1, 0, SIZE_L);     // [r0] = An (big-endian)
+    arm_store_vreg(out, 0, an);                     // An = A7
+    arm_pointer_add_disp(out, 0, d, true);          // r0 += d (always the same length)
+    arm_store_vreg(out, 0, 15);
+    return true;
+}
+
+static bool arm_emit_unlk(const Operand *operand, OutputBuffer *out)
+{
+    if (!arm_link_unlk_reg(operand, "UNLK needs an address register, e.g. UNLK A6"))
+        return false;
+    unsigned an = (unsigned)operand->value.reg;
+    arm_load_vreg(out, 0, an);
+    arm_mem_transfer(out, true, 1, 0, SIZE_L);      // r1 = long at (An)
+    arm_pointer_adjust(out, 0, 4);
+    arm_store_vreg(out, 0, 15);                     // A7 = An + 4
+    arm_store_vreg(out, 1, an);                     // An = old frame pointer
+    return true;
 }
 
 // ---- ARM: bit manipulation (same instructions and flag rules as the x86 code)
@@ -4132,8 +4685,18 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
         return arm_emit_quick(operands, size, true, out) ? 1 : 0;
     if (strcmp(m, "JMP") == 0 || strcmp(m, "JSR") == 0)
         return arm_emit_jump(m, &operands[0], out) ? 1 : 0;
-    if (strcmp(m, "DBRA") == 0)
-        return arm_emit_dbra(operands, out) ? 1 : 0;
+    if (strncmp(m, "DB", 2) == 0 && arm_is_cond_suffix(m + 2, true))
+        return arm_emit_dbcc(m, operands, out) ? 1 : 0;
+    if (strcmp(m, "EXG") == 0)
+        return arm_emit_exg(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "PEA") == 0)
+        return arm_emit_pea(&operands[0], size, out) ? 1 : 0;
+    if (strcmp(m, "LINK") == 0)
+        return arm_emit_link(operands, size, out) ? 1 : 0;
+    if (strcmp(m, "UNLK") == 0)
+        return arm_emit_unlk(&operands[0], out) ? 1 : 0;
+    if (m[0] == 'S' && arm_is_cond_suffix(m + 1, false))
+        return arm_emit_scc(m, &operands[0], size, out) ? 1 : 0;
     if (strcmp(m, "CMPM") == 0)
         return arm_emit_cmpm(operands, size, out) ? 1 : 0;
     if (strcmp(m, "ADDA") == 0)
@@ -4216,6 +4779,8 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         if (r >= 0)
             return r ? 0 : -1;
     }
+    if (arch && strcmp(arch, "x86") == 0 && strcmp(entry->mnemonic, "PEA") == 0)
+        return emit_x86_pea(&operands[0], size, out) ? 0 : -1;
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count <= 2)
     {
         for (size_t i = 0; i < entry->operand_count; i++)
