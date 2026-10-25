@@ -329,7 +329,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       {
         fprintf(stderr,
                 "Error in %s at line %zu: operand %zu '%s' is malformed (address "
-                "register modes are (An), (An)+, -(An) and d(An), no spaces inside)\n",
+                "register modes are (An), (An)+, -(An) and d(An), no spaces inside; register lists look "
+                "like d0-d3/a0/a2-a4, with ascending ranges of one register kind)\n",
                 g_src_file,
                 line_num, i + 1, ops[i].value.label);
         ok = 0;

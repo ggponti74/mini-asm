@@ -10,6 +10,7 @@
 #include "srcloc.h"
 
 static int parse_register(const char *s, int *reg);
+static int parse_reglist(const char *tok, int32_t *mask);
 
 // malloc-based copy (strdup isn't standard C).
 static char *copy_string(const char *s) {
@@ -268,6 +269,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     // classify operand
     int reg;
     int disp_kind;
+    int reglist;
     OperandType mem_type;
     ops[count].disp = 0;
     int ind = parse_indirect(token, &mem_type, &reg);
@@ -280,6 +282,10 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     } else if (parse_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
+    } else if ((reglist = parse_reglist(token, &ops[count].value.imm)) != 0) {
+      ops[count].type = reglist == 1 ? OPERAND_REGLIST : OPERAND_BAD;
+      if (reglist != 1)
+        ops[count].value.label = copy_string(token);
     } else if ((disp_kind = parse_displacement(token, &ops[count].disp, &ops[count].symbol, &reg)) != 0) {
       if (disp_kind == 1) {
         ops[count].type = OPERAND_DISP;
@@ -324,6 +330,47 @@ static int parse_register(const char *s, int *reg) {
     return 1;
   }
   return 0;
+}
+
+// MOVEM register list: registers and ascending ranges of one kind, joined by '/',
+// e.g. "d0-d3/a0/a2-a4". Returns 1 and the mask (bit n = register n, D0-D7 = 0-7,
+// A0-A7 = 8-15), 0 when the token is not a list at all (no '/' or '-' between
+// register names), or -1 for a malformed one.
+static int parse_reglist(const char *tok, int32_t *mask) {
+  int reg;
+  if (!tok[0] || !tok[1] || (tok[2] != '/' && tok[2] != '-') || !(tok[0] == 'D' || tok[0] == 'd' || tok[0] == 'A' || tok[0] == 'a'))
+    return 0;
+  char first[3] = {tok[0], tok[1], '\0'};
+  if (!parse_register(first, &reg))
+    return 0;
+  int32_t m = 0;
+  const char *p = tok;
+  while (*p) {
+    char a[3] = {p[0], p[0] ? p[1] : '\0', '\0'};
+    int lo, hi;
+    if (!a[1] || !parse_register(a, &lo))
+      return -1;
+    hi = lo;
+    p += 2;
+    if (*p == '-') {
+      char b[3] = {p[1], p[1] ? p[2] : '\0', '\0'};
+      if (!b[1] || !parse_register(b, &hi) || (hi >> 3) != (lo >> 3) || hi < lo)
+        return -1;
+      p += 3;
+    }
+    for (int r = lo; r <= hi; r++)
+      m |= 1 << r;
+    if (*p == '/')
+      p++;
+    else if (*p)
+      return -1;
+    else
+      break;
+    if (!*p)
+      return -1;
+  }
+  *mask = m;
+  return 1;
 }
 
 static int is_register_name(const char *s) {

@@ -111,6 +111,7 @@ static const OpcodeEntry x86_opcode_table[] = {
     {"PEA", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, SIZES_L},
     {"LINK", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_IMMEDIATE}, SIZES_W},
     {"UNLK", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"MOVEM", 0x00, 1, 1, 2, {OPERAND_MOVEM_ARG, OPERAND_MOVEM_ARG}, SIZES_W | SIZES_L},
     // Conditional branches (Bcc): opcode bytes are placeholders; codegen.c
     // emits the matching x86 Jcc. BHS = BCC and BLO = BCS (usual aliases).
     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
@@ -252,6 +253,7 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"PEA", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, SIZES_L},
     {"LINK", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_IMMEDIATE}, SIZES_W},
     {"UNLK", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"MOVEM", 0x00, 1, 1, 2, {OPERAND_MOVEM_ARG, OPERAND_MOVEM_ARG}, SIZES_W | SIZES_L},
     // Bit manipulation (same forms as the x86 table above).
     // NOT/NEG <ea>; SWAP Dn; EXT.w/.l Dn
     // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
@@ -291,6 +293,9 @@ bool operand_matches(OperandType expected, OperandType actual)
         return actual == OPERAND_REGISTER || operand_is_memory(actual);
     if (expected == OPERAND_CONTROL)
         return actual == OPERAND_LABEL || actual == OPERAND_IND || actual == OPERAND_DISP;
+    if (expected == OPERAND_MOVEM_ARG)
+        return actual == OPERAND_REGISTER || actual == OPERAND_REGLIST ||
+               operand_is_memory(actual);
     if (expected == OPERAND_OPT_REG)
         return actual == OPERAND_REGISTER;
     return expected == actual;

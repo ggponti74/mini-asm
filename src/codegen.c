@@ -1721,6 +1721,237 @@ static bool emit_x86_unlk(const Operand *operand, OutputBuffer *out)
     return true;
 }
 
+
+// ---- MOVEM -------------------------------------------------------------------
+// MOVEM.w|.l <list>,<ea>   registers to memory: (An), d(An), -(An)
+// MOVEM.w|.l <ea>,<list>   memory to registers: (An), d(An), (An)+
+// Registers are always handled in the order D0-D7, A0-A7 at ascending addresses
+// (for -(An) the block ends at the old An, so the layout is the same). Words are
+// stored as the low 16 bits; a word load sign-extends into the whole register,
+// address registers included. Memory is big-endian. No flags change.
+// The base register may not be in the list for -(An) / (An)+: what the 68K leaves
+// in it differs between models, so it's refused.
+typedef struct
+{
+    bool to_memory;
+    const Operand *mem;
+    unsigned mask; // bit n = register n (D0-D7 = 0-7, A0-A7 = 8-15)
+    int count;
+} MovemArgs;
+
+static bool movem_parse(const Operand *operands, OpSize size, MovemArgs *a)
+{
+    (void)size;
+    bool list0 = operands[0].type == OPERAND_REGISTER || operands[0].type == OPERAND_REGLIST;
+    bool list1 = operands[1].type == OPERAND_REGISTER || operands[1].type == OPERAND_REGLIST;
+    bool mem0 = operand_is_memory(operands[0].type), mem1 = operand_is_memory(operands[1].type);
+    if (!((list0 && mem1) || (mem0 && list1)))
+        return fail("MOVEM needs a register list and a memory operand, e.g. MOVEM.L D0-D3/A0,-(A7)");
+    a->to_memory = list0;
+    const Operand *l = list0 ? &operands[0] : &operands[1];
+    a->mem = list0 ? &operands[1] : &operands[0];
+    a->mask = l->type == OPERAND_REGISTER ? 1u << l->value.reg : (unsigned)l->value.imm;
+    a->count = 0;
+    for (int r = 0; r < 16; r++)
+        if (a->mask & (1u << r))
+            a->count++;
+    if (a->to_memory && a->mem->type == OPERAND_POSTINC)
+        return fail("MOVEM registers to memory can't use (An)+ (use -(An) or (An))");
+    if (!a->to_memory && a->mem->type == OPERAND_PREDEC)
+        return fail("MOVEM memory to registers can't use -(An) (use (An)+ or (An))");
+    if ((a->mem->type == OPERAND_PREDEC || a->mem->type == OPERAND_POSTINC) &&
+        (a->mask & (1u << a->mem->value.reg)))
+        return fail("MOVEM with -(An) or (An)+ can't have An in the register list (the result differs between 68K models)");
+    return true;
+}
+
+// x86: D0-D3, D5, D7 are EAX..EBX, EBP, EDI; A0 and D6 are both ESI; D4 is ESP and is
+// refused; A1-A7 live in the register block. The base address goes in a scratch register
+// P (not in the list), a second one V is used for words and for block registers. All
+// flag changes are undone by one pushfd/popfd around the sequence.
+static bool emit_x86_movem(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    MovemArgs a;
+    if (!movem_parse(operands, size, &a))
+        return false;
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    if (size == SIZE_B)
+        return fail("MOVEM is .w or .l only");
+    int sz = size == SIZE_W ? 2 : 4;
+    int base = a.mem->value.reg;
+    if (a.mask & (1u << 4))
+        return fail("D4 maps to ESP on this target, so MOVEM can't use it");
+    if ((a.mask & (1u << 6)) && (a.mask & (1u << 8)))
+        return fail("D6 and A0 share a register on this target, so MOVEM can't have both in the list");
+    if ((a.mask & (1u << 6)) && base == 8)
+        return fail(ERR_MEM_ALIAS);
+    unsigned avoid = 1u << 4; // ESP
+    bool need_v = size == SIZE_W;
+    for (int r = 0; r < 16; r++)
+    {
+        if (!(a.mask & (1u << r)))
+            continue;
+        if (r >= 9)
+            need_v = true;
+        else
+            avoid |= 1u << x86_reg_code(r);
+    }
+    if (base == 8)
+        avoid |= 1u << 6;
+    static const int order[] = {0, 1, 2, 3, 7, 5, 6};
+    int p = -1, v = -1;
+    for (size_t i = 0; i < sizeof order / sizeof order[0]; i++)
+    {
+        if (avoid & (1u << order[i]))
+            continue;
+        if (p < 0)
+            p = order[i];
+        else if (v < 0)
+        {
+            v = order[i];
+            break;
+        }
+    }
+    if (p < 0 || (need_v && v < 0))
+        return fail("MOVEM: no free scratch register for this register list on this target");
+
+    buffer_write(out, (uint8_t)(0x50 + p));
+    if (need_v)
+        buffer_write(out, (uint8_t)(0x50 + v));
+    buffer_write(out, 0x9C); // pushfd
+
+    // P = base address
+    if (base == 8)
+    {
+        buffer_write(out, 0x89); // mov P,esi
+        buffer_write(out, (uint8_t)(0xC0 | (6 << 3) | p));
+    }
+    else
+        write_slot_access(out, 0x8B, p, base);
+    int32_t delta = 0;
+    bool wide = false; // lea P,[P+disp32], same length in every pass
+    if (a.mem->type == OPERAND_DISP)
+    {
+        delta = a.mem->disp;
+        wide = true;
+    }
+    else if (a.mem->type == OPERAND_PREDEC)
+    {
+        delta = -a.count * sz;
+        wide = true;
+    }
+    if (wide)
+    {
+        buffer_write(out, 0x8D);
+        buffer_write(out, (uint8_t)(0x80 | (p << 3) | p));
+        write_le(out, (uint32_t)delta, 4);
+    }
+
+    int off = 0;
+    for (int r = 0; r < 16; r++)
+    {
+        if (!(a.mask & (1u << r)))
+            continue;
+        bool slot = r >= 9;
+        int phys = slot ? -1 : x86_reg_code(r); // A0 -> ESI
+        uint8_t mem_modrm_p = (uint8_t)(0x40 | p); // [P+disp8], reg field added per use
+        if (a.to_memory)
+        {
+            if (size == SIZE_L && !slot)
+            {
+                buffer_write(out, 0x0F); // bswap r
+                buffer_write(out, (uint8_t)(0xC8 + phys));
+                buffer_write(out, 0x89); // mov [P+off],r
+                buffer_write(out, (uint8_t)(mem_modrm_p | (phys << 3)));
+                buffer_write(out, (uint8_t)off);
+                buffer_write(out, 0x0F); // bswap r
+                buffer_write(out, (uint8_t)(0xC8 + phys));
+                off += sz;
+                continue;
+            }
+            if (slot)
+                write_slot_access(out, 0x8B, v, r); // mov V,[slot]
+            else
+            {
+                buffer_write(out, 0x89); // mov V,r
+                buffer_write(out, (uint8_t)(0xC0 | (phys << 3) | v));
+            }
+            if (size == SIZE_L)
+            {
+                buffer_write(out, 0x0F); // bswap V
+                buffer_write(out, (uint8_t)(0xC8 + v));
+                buffer_write(out, 0x89); // mov [P+off],V
+            }
+            else
+            {
+                buffer_write(out, X86_OPSIZE_PREFIX); // rol V16,8
+                buffer_write(out, 0xC1);
+                buffer_write(out, (uint8_t)(0xC0 | v));
+                buffer_write(out, 8);
+                buffer_write(out, X86_OPSIZE_PREFIX); // mov [P+off],V16
+                buffer_write(out, 0x89);
+            }
+            buffer_write(out, (uint8_t)(mem_modrm_p | (v << 3)));
+            buffer_write(out, (uint8_t)off);
+        }
+        else
+        {
+            if (size == SIZE_L)
+            {
+                int t = slot ? v : phys;
+                buffer_write(out, 0x8B); // mov t,[P+off]
+                buffer_write(out, (uint8_t)(mem_modrm_p | (t << 3)));
+                buffer_write(out, (uint8_t)off);
+                buffer_write(out, 0x0F); // bswap t
+                buffer_write(out, (uint8_t)(0xC8 + t));
+                if (slot)
+                    write_slot_access(out, 0x89, t, r);
+            }
+            else
+            {
+                buffer_write(out, 0x0F); // movzx V,word [P+off]
+                buffer_write(out, 0xB7);
+                buffer_write(out, (uint8_t)(mem_modrm_p | (v << 3)));
+                buffer_write(out, (uint8_t)off);
+                buffer_write(out, X86_OPSIZE_PREFIX); // rol V16,8
+                buffer_write(out, 0xC1);
+                buffer_write(out, (uint8_t)(0xC0 | v));
+                buffer_write(out, 8);
+                int t = slot ? v : phys;
+                buffer_write(out, 0x0F); // movsx t,V16
+                buffer_write(out, 0xBF);
+                buffer_write(out, (uint8_t)(0xC0 | (t << 3) | v));
+                if (slot)
+                    write_slot_access(out, 0x89, t, r);
+            }
+        }
+        off += sz;
+    }
+
+    if (a.mem->type == OPERAND_POSTINC)
+    {
+        buffer_write(out, 0x8D); // lea P,[P+n*sz]
+        buffer_write(out, (uint8_t)(0x40 | (p << 3) | p));
+        buffer_write(out, (uint8_t)(a.count * sz));
+    }
+    if (a.mem->type == OPERAND_PREDEC || a.mem->type == OPERAND_POSTINC)
+    {
+        if (base == 8)
+        {
+            buffer_write(out, 0x89); // mov esi,P
+            buffer_write(out, (uint8_t)(0xC0 | (p << 3) | 6));
+        }
+        else
+            write_slot_access(out, 0x89, p, base);
+    }
+    buffer_write(out, 0x9D); // popfd
+    if (need_v)
+        buffer_write(out, (uint8_t)(0x58 + v));
+    buffer_write(out, (uint8_t)(0x58 + p));
+    return true;
+}
+
 // ---- MULU/MULS/DIVU/DIVS ---------------------------------------------------
 // The 68000 forms are word-sized only:
 //   MULU.W / MULS.W  <ea>,Dn : Dn(32) = Dn.w * <ea>.w   (unsigned / signed)
@@ -4241,6 +4472,50 @@ static bool arm_emit_unlk(const Operand *operand, OutputBuffer *out)
     return true;
 }
 
+
+// MOVEM (ARM): r0 walks the block, r1 carries each value, r2 keeps the start for -(An).
+static bool arm_emit_movem(const Operand *operands, OpSize size, OutputBuffer *out)
+{
+    MovemArgs a;
+    if (!movem_parse(operands, size, &a))
+        return false;
+    if (size == SIZE_UNSPEC)
+        size = DEFAULT_OPSIZE;
+    if (size == SIZE_B)
+        return fail("MOVEM is .w or .l only");
+    int sz = size == SIZE_W ? 2 : 4;
+    unsigned base = (unsigned)a.mem->value.reg;
+    arm_pointer_load(out, a.mem, 0); // r0 = An (+ d)
+    if (a.mem->type == OPERAND_PREDEC)
+    {
+        arm_pointer_adjust(out, 0, -a.count * sz);
+        arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0)); // mov r2,r0
+    }
+    for (unsigned r = 0; r < 16; r++)
+    {
+        if (!(a.mask & (1u << r)))
+            continue;
+        if (a.to_memory)
+        {
+            arm_load_vreg(out, 1, r);
+            arm_mem_transfer(out, false, 1, 0, size);
+        }
+        else
+        {
+            arm_mem_transfer(out, true, 1, 0, size);
+            if (size == SIZE_W)
+                arm_sign_extend_word(out, 1, 1);
+            arm_store_vreg(out, 1, r);
+        }
+        arm_pointer_adjust(out, 0, sz);
+    }
+    if (a.mem->type == OPERAND_PREDEC)
+        arm_store_vreg(out, 2, base);
+    else if (a.mem->type == OPERAND_POSTINC)
+        arm_store_vreg(out, 0, base);
+    return true;
+}
+
 // ---- ARM: bit manipulation (same instructions and flag rules as the x86 code)
 // The CPSR holds the 68K flags (N Z V C; see arm_emit_cmp). Registers r0-r7
 // and r12 are scratch (the 68K registers live in the register block).
@@ -4691,6 +4966,8 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
         return arm_emit_exg(operands, size, out) ? 1 : 0;
     if (strcmp(m, "PEA") == 0)
         return arm_emit_pea(&operands[0], size, out) ? 1 : 0;
+    if (strcmp(m, "MOVEM") == 0)
+        return arm_emit_movem(operands, size, out) ? 1 : 0;
     if (strcmp(m, "LINK") == 0)
         return arm_emit_link(operands, size, out) ? 1 : 0;
     if (strcmp(m, "UNLK") == 0)
@@ -4779,6 +5056,8 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         if (r >= 0)
             return r ? 0 : -1;
     }
+    if (arch && strcmp(arch, "x86") == 0 && strcmp(entry->mnemonic, "MOVEM") == 0)
+        return emit_x86_movem(operands, size, out) ? 0 : -1;
     if (arch && strcmp(arch, "x86") == 0 && strcmp(entry->mnemonic, "PEA") == 0)
         return emit_x86_pea(&operands[0], size, out) ? 0 : -1;
     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count <= 2)
