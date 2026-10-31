@@ -32,7 +32,7 @@ static void print_usage(const char *prog)
           "  -l, --list            list the instructions and directives available\n"
           "                        for the target (no source file needed)\n");
   fprintf(stderr,
-          "      --base <addr>     load address of byte 0 (flat-binary targets only;\n"
+          "  --base <addr>     load address of byte 0 (flat-binary targets only;\n"
           "                        decimal or 0x-hex, default 0)\n");
   fprintf(stderr, "  -h, --help            show this help\n\n");
   fprintf(stderr, "Available targets:\n");
