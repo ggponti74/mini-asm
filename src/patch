@@ -1,461 +1,188 @@
-diff --git a/README.md b/README.md
-index d22256c..bd96ea9 100644
---- a/README.md
-+++ b/README.md
-@@ -27,7 +27,7 @@
-     Relative paths are resolved from the file containing the INCLUDE directive.
- 
-     The instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
--    ADDQ, SUBQ, and DBRA. Use `-l` for the complete target-specific listing.
-+    ADDQ, SUBQ, DBcc (all conditions), Scc, EXG, PEA, LINK, UNLK, and MOVEM. Use `-l` for the complete target-specific listing.
-     Supported effective-address forms are listed per instruction; current
-     memory operands are `(An)`, `(An)+`, and `-(An)`.
-   
-diff --git a/src/codegen.c b/src/codegen.c
-index 8b9e71c..473461a 100644
---- a/src/codegen.c
-+++ b/src/codegen.c
-@@ -1721,6 +1721,237 @@ static bool emit_x86_unlk(const Operand *operand, OutputBuffer *out)
-     return true;
- }
- 
+diff --git a/src/bin_writer.c b/src/bin_writer.c
+new file mode 100644
+index 0000000..0c6957b
+--- /dev/null
++++ b/src/bin_writer.c
+@@ -0,0 +1,21 @@
++#include <stdio.h>
 +
-+// ---- MOVEM -------------------------------------------------------------------
-+// MOVEM.w|.l <list>,<ea>   registers to memory: (An), d(An), -(An)
-+// MOVEM.w|.l <ea>,<list>   memory to registers: (An), d(An), (An)+
-+// Registers are always handled in the order D0-D7, A0-A7 at ascending addresses
-+// (for -(An) the block ends at the old An, so the layout is the same). Words are
-+// stored as the low 16 bits; a word load sign-extends into the whole register,
-+// address registers included. Memory is big-endian. No flags change.
-+// The base register may not be in the list for -(An) / (An)+: what the 68K leaves
-+// in it differs between models, so it's refused.
-+typedef struct
-+{
-+    bool to_memory;
-+    const Operand *mem;
-+    unsigned mask; // bit n = register n (D0-D7 = 0-7, A0-A7 = 8-15)
-+    int count;
-+} MovemArgs;
++#include "bin_writer.h"
 +
-+static bool movem_parse(const Operand *operands, OpSize size, MovemArgs *a)
++void write_bin(const char *filename, const OutputBuffer *buf)
 +{
-+    (void)size;
-+    bool list0 = operands[0].type == OPERAND_REGISTER || operands[0].type == OPERAND_REGLIST;
-+    bool list1 = operands[1].type == OPERAND_REGISTER || operands[1].type == OPERAND_REGLIST;
-+    bool mem0 = operand_is_memory(operands[0].type), mem1 = operand_is_memory(operands[1].type);
-+    if (!((list0 && mem1) || (mem0 && list1)))
-+        return fail("MOVEM needs a register list and a memory operand, e.g. MOVEM.L D0-D3/A0,-(A7)");
-+    a->to_memory = list0;
-+    const Operand *l = list0 ? &operands[0] : &operands[1];
-+    a->mem = list0 ? &operands[1] : &operands[0];
-+    a->mask = l->type == OPERAND_REGISTER ? 1u << l->value.reg : (unsigned)l->value.imm;
-+    a->count = 0;
-+    for (int r = 0; r < 16; r++)
-+        if (a->mask & (1u << r))
-+            a->count++;
-+    if (a->to_memory && a->mem->type == OPERAND_POSTINC)
-+        return fail("MOVEM registers to memory can't use (An)+ (use -(An) or (An))");
-+    if (!a->to_memory && a->mem->type == OPERAND_PREDEC)
-+        return fail("MOVEM memory to registers can't use -(An) (use (An)+ or (An))");
-+    if ((a->mem->type == OPERAND_PREDEC || a->mem->type == OPERAND_POSTINC) &&
-+        (a->mask & (1u << a->mem->value.reg)))
-+        return fail("MOVEM with -(An) or (An)+ can't have An in the register list (the result differs between 68K models)");
-+    return true;
++    if (!buf)
++        return;
++
++    FILE *f = fopen(filename, "wb");
++    if (!f)
++    {
++        perror("fopen");
++        return;
++    }
++    if (buf->size > 0 && fwrite(buf->data, 1, buf->size, f) != buf->size)
++    {
++        perror("fwrite");
++    }
++    fclose(f);
 +}
+diff --git a/src/bin_writer.h b/src/bin_writer.h
+new file mode 100644
+index 0000000..8d66efa
+--- /dev/null
++++ b/src/bin_writer.h
+@@ -0,0 +1,10 @@
++#ifndef BIN_WRITER_H
++#define BIN_WRITER_H
 +
-+// x86: D0-D3, D5, D7 are EAX..EBX, EBP, EDI; A0 and D6 are both ESI; D4 is ESP and is
-+// refused; A1-A7 live in the register block. The base address goes in a scratch register
-+// P (not in the list), a second one V is used for words and for block registers. All
-+// flag changes are undone by one pushfd/popfd around the sequence.
-+static bool emit_x86_movem(const Operand *operands, OpSize size, OutputBuffer *out)
-+{
-+    MovemArgs a;
-+    if (!movem_parse(operands, size, &a))
-+        return false;
-+    if (size == SIZE_UNSPEC)
-+        size = DEFAULT_OPSIZE;
-+    if (size == SIZE_B)
-+        return fail("MOVEM is .w or .l only");
-+    int sz = size == SIZE_W ? 2 : 4;
-+    int base = a.mem->value.reg;
-+    if (a.mask & (1u << 4))
-+        return fail("D4 maps to ESP on this target, so MOVEM can't use it");
-+    if ((a.mask & (1u << 6)) && (a.mask & (1u << 8)))
-+        return fail("D6 and A0 share a register on this target, so MOVEM can't have both in the list");
-+    if ((a.mask & (1u << 6)) && base == 8)
-+        return fail(ERR_MEM_ALIAS);
-+    unsigned avoid = 1u << 4; // ESP
-+    bool need_v = size == SIZE_W;
-+    for (int r = 0; r < 16; r++)
-+    {
-+        if (!(a.mask & (1u << r)))
-+            continue;
-+        if (r >= 9)
-+            need_v = true;
-+        else
-+            avoid |= 1u << x86_reg_code(r);
-+    }
-+    if (base == 8)
-+        avoid |= 1u << 6;
-+    static const int order[] = {0, 1, 2, 3, 7, 5, 6};
-+    int p = -1, v = -1;
-+    for (size_t i = 0; i < sizeof order / sizeof order[0]; i++)
-+    {
-+        if (avoid & (1u << order[i]))
-+            continue;
-+        if (p < 0)
-+            p = order[i];
-+        else if (v < 0)
-+        {
-+            v = order[i];
-+            break;
-+        }
-+    }
-+    if (p < 0 || (need_v && v < 0))
-+        return fail("MOVEM: no free scratch register for this register list on this target");
++#include "codegen.h"
 +
-+    buffer_write(out, (uint8_t)(0x50 + p));
-+    if (need_v)
-+        buffer_write(out, (uint8_t)(0x50 + v));
-+    buffer_write(out, 0x9C); // pushfd
++// Flat binary output, like `objcopy -O binary`: just the assembled bytes,
++// no header, no entry stub, no epilogue, no TRAP dispatcher.
++void write_bin(const char *filename, const OutputBuffer *buf);
 +
-+    // P = base address
-+    if (base == 8)
-+    {
-+        buffer_write(out, 0x89); // mov P,esi
-+        buffer_write(out, (uint8_t)(0xC0 | (6 << 3) | p));
-+    }
-+    else
-+        write_slot_access(out, 0x8B, p, base);
-+    int32_t delta = 0;
-+    bool wide = false; // lea P,[P+disp32], same length in every pass
-+    if (a.mem->type == OPERAND_DISP)
-+    {
-+        delta = a.mem->disp;
-+        wide = true;
-+    }
-+    else if (a.mem->type == OPERAND_PREDEC)
-+    {
-+        delta = -a.count * sz;
-+        wide = true;
-+    }
-+    if (wide)
-+    {
-+        buffer_write(out, 0x8D);
-+        buffer_write(out, (uint8_t)(0x80 | (p << 3) | p));
-+        write_le(out, (uint32_t)delta, 4);
-+    }
-+
-+    int off = 0;
-+    for (int r = 0; r < 16; r++)
-+    {
-+        if (!(a.mask & (1u << r)))
-+            continue;
-+        bool slot = r >= 9;
-+        int phys = slot ? -1 : x86_reg_code(r); // A0 -> ESI
-+        uint8_t mem_modrm_p = (uint8_t)(0x40 | p); // [P+disp8], reg field added per use
-+        if (a.to_memory)
-+        {
-+            if (size == SIZE_L && !slot)
-+            {
-+                buffer_write(out, 0x0F); // bswap r
-+                buffer_write(out, (uint8_t)(0xC8 + phys));
-+                buffer_write(out, 0x89); // mov [P+off],r
-+                buffer_write(out, (uint8_t)(mem_modrm_p | (phys << 3)));
-+                buffer_write(out, (uint8_t)off);
-+                buffer_write(out, 0x0F); // bswap r
-+                buffer_write(out, (uint8_t)(0xC8 + phys));
-+                off += sz;
-+                continue;
-+            }
-+            if (slot)
-+                write_slot_access(out, 0x8B, v, r); // mov V,[slot]
-+            else
-+            {
-+                buffer_write(out, 0x89); // mov V,r
-+                buffer_write(out, (uint8_t)(0xC0 | (phys << 3) | v));
-+            }
-+            if (size == SIZE_L)
-+            {
-+                buffer_write(out, 0x0F); // bswap V
-+                buffer_write(out, (uint8_t)(0xC8 + v));
-+                buffer_write(out, 0x89); // mov [P+off],V
-+            }
-+            else
-+            {
-+                buffer_write(out, X86_OPSIZE_PREFIX); // rol V16,8
-+                buffer_write(out, 0xC1);
-+                buffer_write(out, (uint8_t)(0xC0 | v));
-+                buffer_write(out, 8);
-+                buffer_write(out, X86_OPSIZE_PREFIX); // mov [P+off],V16
-+                buffer_write(out, 0x89);
-+            }
-+            buffer_write(out, (uint8_t)(mem_modrm_p | (v << 3)));
-+            buffer_write(out, (uint8_t)off);
-+        }
-+        else
-+        {
-+            if (size == SIZE_L)
-+            {
-+                int t = slot ? v : phys;
-+                buffer_write(out, 0x8B); // mov t,[P+off]
-+                buffer_write(out, (uint8_t)(mem_modrm_p | (t << 3)));
-+                buffer_write(out, (uint8_t)off);
-+                buffer_write(out, 0x0F); // bswap t
-+                buffer_write(out, (uint8_t)(0xC8 + t));
-+                if (slot)
-+                    write_slot_access(out, 0x89, t, r);
-+            }
-+            else
-+            {
-+                buffer_write(out, 0x0F); // movzx V,word [P+off]
-+                buffer_write(out, 0xB7);
-+                buffer_write(out, (uint8_t)(mem_modrm_p | (v << 3)));
-+                buffer_write(out, (uint8_t)off);
-+                buffer_write(out, X86_OPSIZE_PREFIX); // rol V16,8
-+                buffer_write(out, 0xC1);
-+                buffer_write(out, (uint8_t)(0xC0 | v));
-+                buffer_write(out, 8);
-+                int t = slot ? v : phys;
-+                buffer_write(out, 0x0F); // movsx t,V16
-+                buffer_write(out, 0xBF);
-+                buffer_write(out, (uint8_t)(0xC0 | (t << 3) | v));
-+                if (slot)
-+                    write_slot_access(out, 0x89, t, r);
-+            }
-+        }
-+        off += sz;
-+    }
-+
-+    if (a.mem->type == OPERAND_POSTINC)
-+    {
-+        buffer_write(out, 0x8D); // lea P,[P+n*sz]
-+        buffer_write(out, (uint8_t)(0x40 | (p << 3) | p));
-+        buffer_write(out, (uint8_t)(a.count * sz));
-+    }
-+    if (a.mem->type == OPERAND_PREDEC || a.mem->type == OPERAND_POSTINC)
-+    {
-+        if (base == 8)
-+        {
-+            buffer_write(out, 0x89); // mov esi,P
-+            buffer_write(out, (uint8_t)(0xC0 | (p << 3) | 6));
-+        }
-+        else
-+            write_slot_access(out, 0x89, p, base);
-+    }
-+    buffer_write(out, 0x9D); // popfd
-+    if (need_v)
-+        buffer_write(out, (uint8_t)(0x58 + v));
-+    buffer_write(out, (uint8_t)(0x58 + p));
-+    return true;
-+}
-+
- // ---- MULU/MULS/DIVU/DIVS ---------------------------------------------------
- // The 68000 forms are word-sized only:
- //   MULU.W / MULS.W  <ea>,Dn : Dn(32) = Dn.w * <ea>.w   (unsigned / signed)
-@@ -4241,6 +4472,50 @@ static bool arm_emit_unlk(const Operand *operand, OutputBuffer *out)
-     return true;
- }
- 
-+
-+// MOVEM (ARM): r0 walks the block, r1 carries each value, r2 keeps the start for -(An).
-+static bool arm_emit_movem(const Operand *operands, OpSize size, OutputBuffer *out)
-+{
-+    MovemArgs a;
-+    if (!movem_parse(operands, size, &a))
-+        return false;
-+    if (size == SIZE_UNSPEC)
-+        size = DEFAULT_OPSIZE;
-+    if (size == SIZE_B)
-+        return fail("MOVEM is .w or .l only");
-+    int sz = size == SIZE_W ? 2 : 4;
-+    unsigned base = (unsigned)a.mem->value.reg;
-+    arm_pointer_load(out, a.mem, 0); // r0 = An (+ d)
-+    if (a.mem->type == OPERAND_PREDEC)
-+    {
-+        arm_pointer_adjust(out, 0, -a.count * sz);
-+        arm_write_word(out, arm_dp_reg_word(13, false, 2, 0, 0)); // mov r2,r0
-+    }
-+    for (unsigned r = 0; r < 16; r++)
-+    {
-+        if (!(a.mask & (1u << r)))
-+            continue;
-+        if (a.to_memory)
-+        {
-+            arm_load_vreg(out, 1, r);
-+            arm_mem_transfer(out, false, 1, 0, size);
-+        }
-+        else
-+        {
-+            arm_mem_transfer(out, true, 1, 0, size);
-+            if (size == SIZE_W)
-+                arm_sign_extend_word(out, 1, 1);
-+            arm_store_vreg(out, 1, r);
-+        }
-+        arm_pointer_adjust(out, 0, sz);
-+    }
-+    if (a.mem->type == OPERAND_PREDEC)
-+        arm_store_vreg(out, 2, base);
-+    else if (a.mem->type == OPERAND_POSTINC)
-+        arm_store_vreg(out, 0, base);
-+    return true;
-+}
-+
- // ---- ARM: bit manipulation (same instructions and flag rules as the x86 code)
- // The CPSR holds the 68K flags (N Z V C; see arm_emit_cmp). Registers r0-r7
- // and r12 are scratch (the 68K registers live in the register block).
-@@ -4691,6 +4966,8 @@ static int emit_arm_instruction(const OpcodeEntry *entry, Operand *operands,
-         return arm_emit_exg(operands, size, out) ? 1 : 0;
-     if (strcmp(m, "PEA") == 0)
-         return arm_emit_pea(&operands[0], size, out) ? 1 : 0;
-+    if (strcmp(m, "MOVEM") == 0)
-+        return arm_emit_movem(operands, size, out) ? 1 : 0;
-     if (strcmp(m, "LINK") == 0)
-         return arm_emit_link(operands, size, out) ? 1 : 0;
-     if (strcmp(m, "UNLK") == 0)
-@@ -4779,6 +5056,8 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
-         if (r >= 0)
-             return r ? 0 : -1;
-     }
-+    if (arch && strcmp(arch, "x86") == 0 && strcmp(entry->mnemonic, "MOVEM") == 0)
-+        return emit_x86_movem(operands, size, out) ? 0 : -1;
-     if (arch && strcmp(arch, "x86") == 0 && strcmp(entry->mnemonic, "PEA") == 0)
-         return emit_x86_pea(&operands[0], size, out) ? 0 : -1;
-     if (arch && strcmp(arch, "x86") == 0 && entry->operand_count <= 2)
++#endif // BIN_WRITER_H
 diff --git a/src/main.c b/src/main.c
-index 7b75b53..01bc06f 100644
+index 01bc06f..7af577a 100644
 --- a/src/main.c
 +++ b/src/main.c
-@@ -329,7 +329,8 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
-       {
-         fprintf(stderr,
-                 "Error in %s at line %zu: operand %zu '%s' is malformed (address "
--                "register modes are (An), (An)+, -(An) and d(An), no spaces inside)\n",
-+                "register modes are (An), (An)+, -(An) and d(An), no spaces inside; register lists look "
-+                "like d0-d3/a0/a2-a4, with ascending ranges of one register kind)\n",
-                 g_src_file,
-                 line_num, i + 1, ops[i].value.label);
-         ok = 0;
-diff --git a/src/opcodes.c b/src/opcodes.c
-index 44bff80..6e0d095 100644
---- a/src/opcodes.c
-+++ b/src/opcodes.c
-@@ -111,6 +111,7 @@ static const OpcodeEntry x86_opcode_table[] = {
-     {"PEA", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, SIZES_L},
-     {"LINK", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_IMMEDIATE}, SIZES_W},
-     {"UNLK", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
-+    {"MOVEM", 0x00, 1, 1, 2, {OPERAND_MOVEM_ARG, OPERAND_MOVEM_ARG}, SIZES_W | SIZES_L},
-     // Conditional branches (Bcc): opcode bytes are placeholders; codegen.c
-     // emits the matching x86 Jcc. BHS = BCC and BLO = BCS (usual aliases).
-     {"BHI", 0x00, 1, 1, 1, {OPERAND_LABEL, OPERAND_NONE}, SIZES_BWL},
-@@ -252,6 +253,7 @@ static const OpcodeEntry arm_opcode_table[] = {
-     {"PEA", 0x00, 1, 1, 1, {OPERAND_CONTROL, OPERAND_NONE}, SIZES_L},
-     {"LINK", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_IMMEDIATE}, SIZES_W},
-     {"UNLK", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
-+    {"MOVEM", 0x00, 1, 1, 2, {OPERAND_MOVEM_ARG, OPERAND_MOVEM_ARG}, SIZES_W | SIZES_L},
-     // Bit manipulation (same forms as the x86 table above).
-     // NOT/NEG <ea>; SWAP Dn; EXT.w/.l Dn
-     // BTST/BSET/BCLR/BCHG Dn|#n, Dn (long) or <mem> (byte)
-@@ -291,6 +293,9 @@ bool operand_matches(OperandType expected, OperandType actual)
-         return actual == OPERAND_REGISTER || operand_is_memory(actual);
-     if (expected == OPERAND_CONTROL)
-         return actual == OPERAND_LABEL || actual == OPERAND_IND || actual == OPERAND_DISP;
-+    if (expected == OPERAND_MOVEM_ARG)
-+        return actual == OPERAND_REGISTER || actual == OPERAND_REGLIST ||
-+               operand_is_memory(actual);
-     if (expected == OPERAND_OPT_REG)
-         return actual == OPERAND_REGISTER;
-     return expected == actual;
-diff --git a/src/opcodes.h b/src/opcodes.h
-index 70917d9..717db9f 100644
---- a/src/opcodes.h
-+++ b/src/opcodes.h
-@@ -25,6 +25,8 @@ typedef enum {
-     OPERAND_OPT_REG,   // table-only: a register that may be left out (ASL/LSL/... <mem> has one
-                        // operand, ASL/LSL/... #n,Dn has two); a missing operand reaches codegen
-                        // as OPERAND_NONE
-+    OPERAND_REGLIST,   // register list d0-d3/a0/a2 (MOVEM): bit n of value.imm = register n (D0-D7 = 0-7, A0-A7 = 8-15)
-+    OPERAND_MOVEM_ARG, // table-only: a register, a register list or a memory operand (MOVEM)
-     OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
- } OperandType;
- 
-diff --git a/src/parser.c b/src/parser.c
-index 9c13335..21a5c2b 100644
---- a/src/parser.c
-+++ b/src/parser.c
-@@ -10,6 +10,7 @@
+@@ -8,4 +8,5 @@
+ #include "parser.h"
+ #include "platform.h"
++#include "bin_writer.h"
  #include "srcloc.h"
+ #include "symtab.h"
+@@ -20,5 +21,5 @@
+ static void print_usage(const char *prog)
+ {
+-  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n", prog);
++  fprintf(stderr, "Usage: %s [-t target] [-o output] [--base addr] <source.asm>\n", prog);
+   fprintf(stderr, "       %s [-t target] -l\n\n", prog);
+   fprintf(
+@@ -31,4 +32,7 @@ static void print_usage(const char *prog)
+           "  -l, --list            list the instructions and directives available\n"
+           "                        for the target (no source file needed)\n");
++  fprintf(stderr,
++          "      --base <addr>     load address of byte 0 (flat-binary targets only;\n"
++          "                        decimal or 0x-hex, default 0)\n");
+   fprintf(stderr, "  -h, --help            show this help\n\n");
+   fprintf(stderr, "Available targets:\n");
+@@ -456,4 +460,6 @@ int main(int argc, char *argv[])
+   const char *source_path = NULL;
+   int list_only = 0;
++  int have_base = 0;
++  uint32_t base_override = 0;
  
- static int parse_register(const char *s, int *reg);
-+static int parse_reglist(const char *tok, int32_t *mask);
- 
- // malloc-based copy (strdup isn't standard C).
- static char *copy_string(const char *s) {
-@@ -268,6 +269,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
-     // classify operand
-     int reg;
-     int disp_kind;
-+    int reglist;
-     OperandType mem_type;
-     ops[count].disp = 0;
-     int ind = parse_indirect(token, &mem_type, &reg);
-@@ -280,6 +282,10 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
-     } else if (parse_register(token, &reg)) {
-       ops[count].type = OPERAND_REGISTER;
-       ops[count].value.reg = reg;
-+    } else if ((reglist = parse_reglist(token, &ops[count].value.imm)) != 0) {
-+      ops[count].type = reglist == 1 ? OPERAND_REGLIST : OPERAND_BAD;
-+      if (reglist != 1)
-+        ops[count].value.label = copy_string(token);
-     } else if ((disp_kind = parse_displacement(token, &ops[count].disp, &ops[count].symbol, &reg)) != 0) {
-       if (disp_kind == 1) {
-         ops[count].type = OPERAND_DISP;
-@@ -326,6 +332,47 @@ static int parse_register(const char *s, int *reg) {
-   return 0;
- }
- 
-+// MOVEM register list: registers and ascending ranges of one kind, joined by '/',
-+// e.g. "d0-d3/a0/a2-a4". Returns 1 and the mask (bit n = register n, D0-D7 = 0-7,
-+// A0-A7 = 8-15), 0 when the token is not a list at all (no '/' or '-' between
-+// register names), or -1 for a malformed one.
-+static int parse_reglist(const char *tok, int32_t *mask) {
-+  int reg;
-+  if (!tok[0] || !tok[1] || (tok[2] != '/' && tok[2] != '-') || !(tok[0] == 'D' || tok[0] == 'd' || tok[0] == 'A' || tok[0] == 'a'))
-+    return 0;
-+  char first[3] = {tok[0], tok[1], '\0'};
-+  if (!parse_register(first, &reg))
-+    return 0;
-+  int32_t m = 0;
-+  const char *p = tok;
-+  while (*p) {
-+    char a[3] = {p[0], p[0] ? p[1] : '\0', '\0'};
-+    int lo, hi;
-+    if (!a[1] || !parse_register(a, &lo))
-+      return -1;
-+    hi = lo;
-+    p += 2;
-+    if (*p == '-') {
-+      char b[3] = {p[1], p[1] ? p[2] : '\0', '\0'};
-+      if (!b[1] || !parse_register(b, &hi) || (hi >> 3) != (lo >> 3) || hi < lo)
-+        return -1;
-+      p += 3;
+   for (int i = 1; i < argc; i++)
+@@ -484,4 +490,21 @@ int main(int argc, char *argv[])
+       output_override = argv[++i];
+     }
++    else if (strcmp(argv[i], "--base") == 0)
++    {
++      if (i + 1 >= argc)
++      {
++        fprintf(stderr, "%s: %s requires an argument\n", argv[0], argv[i]);
++        return 1;
++      }
++      char *end = NULL;
++      unsigned long v = strtoul(argv[++i], &end, 0);
++      if (end == argv[i] || *end != '\0' || v > 0xFFFFFFFFul)
++      {
++        fprintf(stderr, "%s: bad --base address '%s'\n", argv[0], argv[i]);
++        return 1;
++      }
++      base_override = (uint32_t)v;
++      have_base = 1;
 +    }
-+    for (int r = lo; r <= hi; r++)
-+      m |= 1 << r;
-+    if (*p == '/')
-+      p++;
-+    else if (*p)
-+      return -1;
-+    else
-+      break;
-+    if (!*p)
-+      return -1;
+     else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0)
+     {
+@@ -515,4 +538,32 @@ int main(int argc, char *argv[])
+   }
+ 
++  // --base only makes sense where the file is the raw code: the executable
++  // formats fix their own load address (the stubs/headers assume it).
++  PlatformTarget target_copy;
++  if (have_base)
++  {
++    if (target->write != write_bin)
++    {
++      fprintf(stderr, "%s: --base is only valid for the flat-binary targets (bin, bin-arm)\n",
++              argv[0]);
++      return 1;
++    }
++    if (target->code_align > 1 && (base_override % target->code_align) != 0)
++    {
++      fprintf(stderr, "%s: --base must be a multiple of %u for target '%s'\n",
++              argv[0], (unsigned)target->code_align, target->name);
++      return 1;
++    }
++    if ((base_override & 3u) != 0)
++    {
++      fprintf(stderr, "%s: --base must be 4-byte aligned (the register block is word-aligned)\n",
++              argv[0]);
++      return 1;
++    }
++    target_copy = *target;
++    target_copy.code_base = base_override;
++    target = &target_copy;
 +  }
-+  *mask = m;
-+  return 1;
-+}
 +
- static int is_register_name(const char *s) {
-   int reg;
-   return parse_register(s, &reg);
-   
+   // Instruction encoding is CPU-specific, not just the container format,
+   // so the target also drives which opcode table parsing/codegen uses.
+@@ -650,4 +701,13 @@ int main(int argc, char *argv[])
+     target->write(output_name, &buf);
+     printf("Wrote %s (target: %s)\n", output_name, target->name);
++    if (target->write == write_bin)
++    {
++      // The register block is not part of the file; whoever loads the
++      // binary must provide 64 zero-initialised writable bytes here.
++      printf("Flat binary: byte 0 = 0x%08X; if the code uses D4-D7/A1-A7, "
++             "%u zeroed bytes of RAM are needed at 0x%08X\n",
++             (unsigned)target->code_base, (unsigned)REGFILE_SIZE,
++             (unsigned)codegen_regfile_base());
++    }
+ 
+ #if defined(MINI_ASM_POSIX_HOST)
+diff --git a/src/platform.c b/src/platform.c
+index a63462c..7c46dc2 100644
+--- a/src/platform.c
++++ b/src/platform.c
+@@ -6,4 +6,5 @@
+ #include "arm_elf_writer.h"
+ #include "elf_writer.h"
++#include "bin_writer.h"
+ #include "core.h"
+ 
+@@ -67,4 +68,25 @@ static const PlatformTarget k_targets[] = {
+         .write = write_elf,
+     },
++    {
++        .name = "bin",
++        .description = "Flat binary, x86 code (no headers/stub; see --base)",
++        .cpu_arch = "x86",
++        .default_ext = ".bin",
++        .needs_exec_bit = false,
++        .code_base = 0x00000000,
++        .has_regfile = true, // block is NOT in the file: reserve 64 zeroed bytes after the code
++        .write = write_bin,
++    },
++    {
++        .name = "bin-arm",
++        .description = "Flat binary, ARM code (no headers/stub; see --base)",
++        .cpu_arch = "arm",
++        .default_ext = ".bin",
++        .needs_exec_bit = false,
++        .code_base = 0x00000000,
++        .has_regfile = true,
++        .code_align = 4,
++        .write = write_bin,
++    },
+ };
+ #define NUM_TARGETS (sizeof(k_targets) / sizeof(k_targets[0]))
+@@ -94,5 +116,5 @@ void platform_print_targets(FILE *out)
+     for (size_t i = 0; i < NUM_TARGETS; i++)
+     {
+-        fprintf(out, "  %-6s %s\n", k_targets[i].name, k_targets[i].description);
++        fprintf(out, "  %-8s %s\n", k_targets[i].name, k_targets[i].description);
+     }
+ }
+\ No newline at end of file

@@ -5,6 +5,7 @@
 #include "pe_writer.h"
 #include "arm_elf_writer.h"
 #include "elf_writer.h"
+#include "bin_writer.h"
 #include "core.h"
 
 // Small portable stand-in for strcasecmp()/_stricmp() so we don't have
@@ -66,6 +67,27 @@ static const PlatformTarget k_targets[] = {
         .dispatcher_off = ELF_EPILOGUE_SIZE,
         .write = write_elf,
     },
+    {
+        .name = "bin",
+        .description = "Flat binary, x86 code (no headers/stub; see --base)",
+        .cpu_arch = "x86",
+        .default_ext = ".bin",
+        .needs_exec_bit = false,
+        .code_base = 0x00000000,
+        .has_regfile = true, // block is NOT in the file: reserve 64 zeroed bytes after the code
+        .write = write_bin,
+    },
+    {
+        .name = "bin-arm",
+        .description = "Flat binary, ARM code (no headers/stub; see --base)",
+        .cpu_arch = "arm",
+        .default_ext = ".bin",
+        .needs_exec_bit = false,
+        .code_base = 0x00000000,
+        .has_regfile = true,
+        .code_align = 4,
+        .write = write_bin,
+    },
 };
 #define NUM_TARGETS (sizeof(k_targets) / sizeof(k_targets[0]))
 
@@ -93,6 +115,6 @@ void platform_print_targets(FILE *out)
 {
     for (size_t i = 0; i < NUM_TARGETS; i++)
     {
-        fprintf(out, "  %-6s %s\n", k_targets[i].name, k_targets[i].description);
+        fprintf(out, "  %-8s %s\n", k_targets[i].name, k_targets[i].description);
     }
 }

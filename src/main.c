@@ -7,6 +7,7 @@
 #include "opcodes.h"
 #include "parser.h"
 #include "platform.h"
+#include "bin_writer.h"
 #include "srcloc.h"
 #include "symtab.h"
 #include "directives.h"
@@ -19,7 +20,7 @@
 
 static void print_usage(const char *prog)
 {
-  fprintf(stderr, "Usage: %s [-t target] [-o output] <source.asm>\n", prog);
+  fprintf(stderr, "Usage: %s [-t target] [-o output] [--base addr] <source.asm>\n", prog);
   fprintf(stderr, "       %s [-t target] -l\n\n", prog);
   fprintf(
       stderr,
@@ -30,6 +31,9 @@ static void print_usage(const char *prog)
   fprintf(stderr,
           "  -l, --list            list the instructions and directives available\n"
           "                        for the target (no source file needed)\n");
+  fprintf(stderr,
+          "      --base <addr>     load address of byte 0 (flat-binary targets only;\n"
+          "                        decimal or 0x-hex, default 0)\n");
   fprintf(stderr, "  -h, --help            show this help\n\n");
   fprintf(stderr, "Available targets:\n");
   platform_print_targets(stderr);
@@ -455,6 +459,8 @@ int main(int argc, char *argv[])
   const char *output_override = NULL;
   const char *source_path = NULL;
   int list_only = 0;
+  int have_base = 0;
+  uint32_t base_override = 0;
 
   for (int i = 1; i < argc; i++)
   {
@@ -482,6 +488,23 @@ int main(int argc, char *argv[])
         return 1;
       }
       output_override = argv[++i];
+    }
+    else if (strcmp(argv[i], "--base") == 0)
+    {
+      if (i + 1 >= argc)
+      {
+        fprintf(stderr, "%s: %s requires an argument\n", argv[0], argv[i]);
+        return 1;
+      }
+      char *end = NULL;
+      unsigned long v = strtoul(argv[++i], &end, 0);
+      if (end == argv[i] || *end != '\0' || v > 0xFFFFFFFFul)
+      {
+        fprintf(stderr, "%s: bad --base address '%s'\n", argv[0], argv[i]);
+        return 1;
+      }
+      base_override = (uint32_t)v;
+      have_base = 1;
     }
     else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0)
     {
@@ -512,6 +535,34 @@ int main(int argc, char *argv[])
   if (!target)
   {
     target = platform_default();
+  }
+
+  // --base only makes sense where the file is the raw code: the executable
+  // formats fix their own load address (the stubs/headers assume it).
+  PlatformTarget target_copy;
+  if (have_base)
+  {
+    if (target->write != write_bin)
+    {
+      fprintf(stderr, "%s: --base is only valid for the flat-binary targets (bin, bin-arm)\n",
+              argv[0]);
+      return 1;
+    }
+    if (target->code_align > 1 && (base_override % target->code_align) != 0)
+    {
+      fprintf(stderr, "%s: --base must be a multiple of %u for target '%s'\n",
+              argv[0], (unsigned)target->code_align, target->name);
+      return 1;
+    }
+    if ((base_override & 3u) != 0)
+    {
+      fprintf(stderr, "%s: --base must be 4-byte aligned (the register block is word-aligned)\n",
+              argv[0]);
+      return 1;
+    }
+    target_copy = *target;
+    target_copy.code_base = base_override;
+    target = &target_copy;
   }
 
   // Instruction encoding is CPU-specific, not just the container format,
@@ -649,6 +700,15 @@ int main(int argc, char *argv[])
 
     target->write(output_name, &buf);
     printf("Wrote %s (target: %s)\n", output_name, target->name);
+    if (target->write == write_bin)
+    {
+      // The register block is not part of the file; whoever loads the
+      // binary must provide 64 zero-initialised writable bytes here.
+      printf("Flat binary: byte 0 = 0x%08X; if the code uses D4-D7/A1-A7, "
+             "%u zeroed bytes of RAM are needed at 0x%08X\n",
+             (unsigned)target->code_base, (unsigned)REGFILE_SIZE,
+             (unsigned)codegen_regfile_base());
+    }
 
 #if defined(MINI_ASM_POSIX_HOST)
     if (target->needs_exec_bit)
