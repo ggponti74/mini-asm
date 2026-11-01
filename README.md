@@ -18,8 +18,10 @@
       elf    Linux ELF32 executable (x86)
       bin    Flat binary (x86)
       bin-arm Flat binary (ARM)
-      z80    Flat binary (Z80; initial scaffold: NOP, RET)
-      6501   Flat binary (6501; initial scaffold: NOP, RTS)
+      z80    Flat binary (Z80; core encodings for NOP, LD, JR, JP, CALL,
+             PUSH/POP, ADD/SUB, and simple ALU/branch forms)
+      6501   Flat binary (6501; core immediate/zero-page LDA/STA and branch
+             instructions, with smoke-verified raw-byte output)
 
     Example: mini-asm -t arm -l
 
@@ -35,10 +37,10 @@
     Supported effective-address forms are listed per instruction; current
     memory operands are `(An)`, `(An)+`, and `-(An)`.
 
-    The Z80 and 6501 targets are encoding scaffolds for flat binaries. They
-    currently accept only the zero-operand NOP/RET and NOP/RTS instructions,
-    respectively; operand parsing and the remaining instruction encoders are
-    not implemented yet.
+    The Z80 and 6501 targets are flat-binary encoders for their respective CPU
+    instruction sets. The smoke suite validates exact raw opcode bytes for basic
+    Z80 and 6501 instructions, including Z80 `LD`/`JR`/`JP` and 6501
+    `LDA`/`STA`/relative branch forms.
   
   ### Feedback
 
