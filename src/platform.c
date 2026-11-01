@@ -88,6 +88,26 @@ static const PlatformTarget k_targets[] = {
         .code_align = 4,
         .write = write_bin,
     },
+    {
+        .name = "z80",
+        .description = "Flat binary, Z80 code (initial scaffold; see --base)",
+        .cpu_arch = "z80",
+        .default_ext = ".bin",
+        .needs_exec_bit = false,
+        .code_base = 0x00000000,
+        .has_regfile = false,
+        .write = write_bin,
+    },
+    {
+        .name = "6501",
+        .description = "Flat binary, 6501 code (initial scaffold; see --base)",
+        .cpu_arch = "6501",
+        .default_ext = ".bin",
+        .needs_exec_bit = false,
+        .code_base = 0x00000000,
+        .has_regfile = false,
+        .write = write_bin,
+    },
 };
 #define NUM_TARGETS (sizeof(k_targets) / sizeof(k_targets[0]))
 

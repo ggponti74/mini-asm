@@ -152,6 +152,22 @@ else
     echo "FAIL   main (x86/PE does not assemble)"; fail=$((fail + 1))
 fi
 
+# 6. initial 8-bit CPU scaffolds: verify exact raw opcode bytes
+printf 'nop\nret\n' > "$TMP/z80.asm"
+if "$ASM" -t z80 -o "$TMP/z80.bin" "$TMP/z80.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/z80.bin" | tr -d ' \n')" = "00c9" ]; then
+    echo "PASS   z80 opcode scaffold"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 opcode scaffold"; fail=$((fail + 1))
+fi
+printf 'nop\nrts\n' > "$TMP/6501.asm"
+if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
+    echo "PASS   6501 opcode scaffold"; pass=$((pass + 1))
+else
+    echo "FAIL   6501 opcode scaffold"; fail=$((fail + 1))
+fi
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]

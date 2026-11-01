@@ -16,6 +16,10 @@
       x86    Windows PE32 console executable (x86)
       arm    Bare-metal/Linux ELF32 executable (ARM)
       elf    Linux ELF32 executable (x86)
+      bin    Flat binary (x86)
+      bin-arm Flat binary (ARM)
+      z80    Flat binary (Z80; initial scaffold: NOP, RET)
+      6501   Flat binary (6501; initial scaffold: NOP, RTS)
 
     Example: mini-asm -t arm -l
 
@@ -26,10 +30,15 @@
     Source files can include other files with `INCLUDE "path/to/file.asm"`.
     Relative paths are resolved from the file containing the INCLUDE directive.
 
-    The instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
+    The 68K-style instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
     ADDQ, SUBQ, and DBRA. Use `-l` for the complete target-specific listing.
     Supported effective-address forms are listed per instruction; current
     memory operands are `(An)`, `(An)+`, and `-(An)`.
+
+    The Z80 and 6501 targets are encoding scaffolds for flat binaries. They
+    currently accept only the zero-operand NOP/RET and NOP/RTS instructions,
+    respectively; operand parsing and the remaining instruction encoders are
+    not implemented yet.
   
   ### Feedback
 

@@ -554,7 +554,7 @@ int main(int argc, char *argv[])
               argv[0], (unsigned)target->code_align, target->name);
       return 1;
     }
-    if ((base_override & 3u) != 0)
+    if (target->has_regfile && (base_override & 3u) != 0)
     {
       fprintf(stderr, "%s: --base must be 4-byte aligned (the register block is word-aligned)\n",
               argv[0]);
@@ -579,9 +579,17 @@ int main(int argc, char *argv[])
     opcodes_print_table(stdout);
     printf("\n");
     directive_print_list(stdout);
-    printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
-    printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
-           "                 see each instruction's operand forms above.\n");
+    if (strcmp(target->cpu_arch, "z80") == 0 ||
+        strcmp(target->cpu_arch, "6501") == 0)
+    {
+      printf("\nOnly zero-operand instructions are currently supported.\n");
+    }
+    else
+    {
+      printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
+      printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
+             "                 see each instruction's operand forms above.\n");
+    }
     return 0;
   }
 
@@ -702,12 +710,20 @@ int main(int argc, char *argv[])
     printf("Wrote %s (target: %s)\n", output_name, target->name);
     if (target->write == write_bin)
     {
-      // The register block is not part of the file; whoever loads the
-      // binary must provide 64 zero-initialised writable bytes here.
-      printf("Flat binary: byte 0 = 0x%08X; if the code uses D4-D7/A1-A7, "
-             "%u zeroed bytes of RAM are needed at 0x%08X\n",
-             (unsigned)target->code_base, (unsigned)REGFILE_SIZE,
-             (unsigned)codegen_regfile_base());
+      if (target->has_regfile)
+      {
+        // The register block is not part of the file; whoever loads the
+        // binary must provide 64 zero-initialised writable bytes here.
+        printf("Flat binary: byte 0 = 0x%08X; if the code uses D4-D7/A1-A7, "
+               "%u zeroed bytes of RAM are needed at 0x%08X\n",
+               (unsigned)target->code_base, (unsigned)REGFILE_SIZE,
+               (unsigned)codegen_regfile_base());
+      }
+      else
+      {
+        printf("Flat binary: byte 0 = 0x%08X\n",
+               (unsigned)target->code_base);
+      }
     }
 
 #if defined(MINI_ASM_POSIX_HOST)

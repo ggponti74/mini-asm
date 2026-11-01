@@ -275,6 +275,16 @@ static const OpcodeEntry arm_opcode_table[] = {
     {"ROR", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_REG}, SIZES_BWL},
 };
 
+static const OpcodeEntry z80_opcode_table[] = {
+    {"NOP", 0x00, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"RET", 0xC9, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+};
+
+static const OpcodeEntry m6501_opcode_table[] = {
+    {"NOP", 0xEA, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"RTS", 0x60, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+};
+
 bool operand_is_memory(OperandType t)
 {
     return t == OPERAND_IND || t == OPERAND_POSTINC || t == OPERAND_PREDEC || t == OPERAND_DISP;
@@ -322,6 +332,20 @@ bool opcodes_select_arch(const char *arch_name)
         g_active_table = x86_opcode_table;
         g_active_count = sizeof(x86_opcode_table) / sizeof(x86_opcode_table[0]);
         g_active_arch_name = "x86";
+        return true;
+    }
+    if (strcmp(arch_name, "z80") == 0)
+    {
+        g_active_table = z80_opcode_table;
+        g_active_count = sizeof(z80_opcode_table) / sizeof(z80_opcode_table[0]);
+        g_active_arch_name = "z80";
+        return true;
+    }
+    if (strcmp(arch_name, "6501") == 0)
+    {
+        g_active_table = m6501_opcode_table;
+        g_active_count = sizeof(m6501_opcode_table) / sizeof(m6501_opcode_table[0]);
+        g_active_arch_name = "6501";
         return true;
     }
     return false;
