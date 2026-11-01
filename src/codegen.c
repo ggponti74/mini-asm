@@ -99,6 +99,528 @@ void codegen_set_context(uint32_t pc, bool final_pass)
 
 static int x86_reg_code(int reg); // defined below
 
+static int z80_reg8_code(const Operand *op)
+{
+    if (!op || op->type != OPERAND_REGISTER)
+        return -1;
+    switch (op->value.reg)
+    {
+    case 0x00: return 0; // B
+    case 0x01: return 1; // C
+    case 0x02: return 2; // D
+    case 0x03: return 3; // E
+    case 0x04: return 4; // H
+    case 0x05: return 5; // L
+    case 0x20: return 6; // (HL)
+    case 0x07: return 7; // A
+    default: return -1;
+    }
+}
+
+static int z80_pair_code(const Operand *op)
+{
+    if (!op || op->type != OPERAND_REGISTER)
+        return -1;
+    switch (op->value.reg)
+    {
+    case 0x11: return 0; // BC
+    case 0x12: return 1; // DE
+    case 0x13: return 2; // HL
+    case 0x14: return 3; // SP
+    case 0x10: return 3; // AF for PUSH/POP
+    default: return -1;
+    }
+}
+
+static bool emit_z80_jr(const Operand *op, OutputBuffer *out)
+{
+    int32_t target = op->value.imm;
+    int32_t rel = target - (int32_t)(g_pc + 2);
+    if (rel < -128 || rel > 127)
+        return fail("Z80 JR target is out of range for a signed 8-bit relative jump");
+    buffer_write(out, 0x18);
+    buffer_write(out, (uint8_t)rel);
+    return true;
+}
+
+static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
+{
+    const Operand *dst = &ops[0];
+    const Operand *src = &ops[1];
+
+    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_IMMEDIATE)
+    {
+        int d = z80_reg8_code(dst);
+        if (d >= 0)
+        {
+            if (d == 6)
+                return fail("LD (HL), n encodes as a different form");
+            buffer_write(out, (uint8_t)(0x06 + (d * 8)));
+            buffer_write(out, (uint8_t)src->value.imm);
+            return true;
+        }
+        int p = z80_pair_code(dst);
+        if (p >= 0)
+        {
+            uint8_t op0 = 0x01; // BC
+            if (p == 1)
+                op0 = 0x11;
+            else if (p == 2)
+                op0 = 0x21;
+            else if (p == 3)
+                op0 = 0x31;
+            buffer_write(out, op0);
+            buffer_write(out, (uint8_t)(src->value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((src->value.imm >> 8) & 0xFF));
+            return true;
+        }
+    }
+
+    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_REGISTER)
+    {
+        int d = z80_reg8_code(dst);
+        int s = z80_reg8_code(src);
+        if (d >= 0 && s >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x40 + (d * 8) + s));
+            return true;
+        }
+        if (dst->value.reg == 0x20 && s >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x70 + s));
+            return true;
+        }
+        if (d >= 0 && src->value.reg == 0x20)
+        {
+            buffer_write(out, (uint8_t)(0x46 + (d * 8)));
+            return true;
+        }
+        if (dst->value.reg == 0x20 && src->value.reg == 0x07)
+        {
+            buffer_write(out, 0x77);
+            return true;
+        }
+    }
+
+    if (dst->type == OPERAND_IMMEDIATE && src->type == OPERAND_REGISTER)
+    {
+        if (src->value.reg == 0x07)
+        {
+            buffer_write(out, 0x32);
+            buffer_write(out, (uint8_t)(src->value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((src->value.imm >> 8) & 0xFF));
+            return true;
+        }
+    }
+
+    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_IMMEDIATE)
+    {
+        int d = z80_reg8_code(dst);
+        if (d == 6)
+        {
+            buffer_write(out, 0x36);
+            buffer_write(out, (uint8_t)src->value.imm);
+            return true;
+        }
+    }
+
+    if (dst->type == OPERAND_IMMEDIATE && src->type == OPERAND_REGISTER)
+    {
+        if (src->value.reg == 0x07)
+        {
+            buffer_write(out, 0x3A);
+            buffer_write(out, (uint8_t)(dst->value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((dst->value.imm >> 8) & 0xFF));
+            return true;
+        }
+    }
+
+    return fail("unsupported Z80 LD form");
+}
+
+static bool emit_z80_alu(const char *mnemonic, const Operand *ops, OutputBuffer *out)
+{
+    const Operand *dst = ops; // only one operand expected in these forms
+    const Operand *src = ops + 1;
+    int d = z80_reg8_code(dst);
+    if (strcmp(mnemonic, "INC") == 0)
+    {
+        if (d >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x04 + (d * 8)));
+            return true;
+        }
+        int p = z80_pair_code(dst);
+        if (p >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x03 + (p * 0x10)));
+            return true;
+        }
+        return fail("unsupported Z80 INC form");
+    }
+    if (strcmp(mnemonic, "DEC") == 0)
+    {
+        if (d >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x05 + (d * 8)));
+            return true;
+        }
+        int p = z80_pair_code(dst);
+        if (p >= 0)
+        {
+            buffer_write(out, (uint8_t)(0x0B + (p * 0x10)));
+            return true;
+        }
+        return fail("unsupported Z80 DEC form");
+    }
+
+    int r = z80_reg8_code(src);
+    if (src->type == OPERAND_IMMEDIATE)
+    {
+        uint8_t base = 0;
+        if (strcmp(mnemonic, "ADD") == 0) base = 0xC6;
+        else if (strcmp(mnemonic, "ADC") == 0) base = 0xCE;
+        else if (strcmp(mnemonic, "SUB") == 0) base = 0xD6;
+        else if (strcmp(mnemonic, "SBC") == 0) base = 0xDE;
+        else if (strcmp(mnemonic, "AND") == 0) base = 0xE6;
+        else if (strcmp(mnemonic, "OR") == 0) base = 0xF6;
+        else if (strcmp(mnemonic, "XOR") == 0) base = 0xEE;
+        else return fail("unsupported Z80 immediate ALU form");
+        buffer_write(out, base);
+        buffer_write(out, (uint8_t)src->value.imm);
+        return true;
+    }
+    if (src->type == OPERAND_REGISTER)
+    {
+        if (strcmp(mnemonic, "ADD") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0x80 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "ADC") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0x88 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "SUB") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0x90 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "SBC") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0x98 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "AND") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0xA0 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "OR") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0xB0 + r));
+            return true;
+        }
+        if (strcmp(mnemonic, "XOR") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
+        {
+            buffer_write(out, (uint8_t)(0xA8 + r));
+            return true;
+        }
+        return fail("unsupported Z80 register ALU form");
+    }
+    return fail("unsupported Z80 ALU form");
+}
+
+static bool emit_z80_pushpop(const char *mnemonic, const Operand *op, OutputBuffer *out)
+{
+    int p = z80_pair_code(op);
+    if (p < 0)
+        return fail("unsupported Z80 PUSH/POP register");
+    if (strcmp(mnemonic, "PUSH") == 0)
+    {
+        static const uint8_t codes[] = {0xC5, 0xD5, 0xE5, 0xF5};
+        buffer_write(out, codes[p]);
+        return true;
+    }
+    if (strcmp(mnemonic, "POP") == 0)
+    {
+        static const uint8_t codes[] = {0xC1, 0xD1, 0xE1, 0xF1};
+        buffer_write(out, codes[p]);
+        return true;
+    }
+    return fail("unsupported Z80 stack op");
+}
+
+static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *op, OutputBuffer *out)
+{
+    if (op->type == OPERAND_IMMEDIATE)
+    {
+        uint8_t opbyte = strcmp(mnemonic, "JP") == 0 ? 0xC3 : 0xCD;
+        buffer_write(out, opbyte);
+        buffer_write(out, (uint8_t)(op->value.imm & 0xFF));
+        buffer_write(out, (uint8_t)((op->value.imm >> 8) & 0xFF));
+        return true;
+    }
+    if (op->type == OPERAND_REGISTER && op->value.reg == 0x13)
+    {
+        buffer_write(out, 0xE9);
+        return true;
+    }
+    return fail("unsupported Z80 JP/CALL form");
+}
+
+static bool emit_z80_ret(const Operand *ops, OutputBuffer *out)
+{
+    (void)ops;
+    buffer_write(out, 0xC9);
+    return true;
+}
+
+static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, OpSize size, OutputBuffer *out)
+{
+    (void)size;
+    const char *m = entry->mnemonic;
+    if (strcmp(m, "NOP") == 0) { buffer_write(out, 0x00); return true; }
+    if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
+    if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, out);
+    if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
+    if (strcmp(m, "JR") == 0) return emit_z80_jr(&operands[0], out);
+    if (strcmp(m, "JP") == 0) return emit_z80_call_or_jp(m, &operands[0], out);
+    if (strcmp(m, "CALL") == 0) return emit_z80_call_or_jp(m, &operands[0], out);
+    if (strcmp(m, "PUSH") == 0 || strcmp(m, "POP") == 0) return emit_z80_pushpop(m, &operands[0], out);
+    if (strcmp(m, "INC") == 0 || strcmp(m, "DEC") == 0) return emit_z80_alu(m, operands, out);
+    if (strcmp(m, "ADD") == 0 || strcmp(m, "ADC") == 0 || strcmp(m, "SUB") == 0 ||
+        strcmp(m, "SBC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
+        strcmp(m, "XOR") == 0)
+        return emit_z80_alu(m, operands, out);
+    if (strcmp(m, "RST") == 0)
+    {
+        int32_t v = operands[0].value.imm;
+        if (v < 0 || v > 0x38 || (v & 7) != 0)
+            return fail("Z80 RST immediate must be a multiple of 8 in the range 0..0x38");
+        buffer_write(out, (uint8_t)(0xC7 | ((v / 8) << 3)));
+        return true;
+    }
+    return fail("unsupported Z80 opcode");
+}
+
+static bool emit_6501_branch(const char *mnemonic, const Operand *op, OutputBuffer *out)
+{
+    int32_t target = op->value.imm;
+    int32_t rel = target - (int32_t)(g_pc + 2);
+    if (rel < -128 || rel > 127)
+        return fail("6501 branch target is out of range for an 8-bit relative jump");
+    uint8_t opcode = 0;
+    if (strcmp(mnemonic, "BRA") == 0) opcode = 0x80;
+    else if (strcmp(mnemonic, "BCC") == 0) opcode = 0x90;
+    else if (strcmp(mnemonic, "BCS") == 0) opcode = 0xB0;
+    else if (strcmp(mnemonic, "BEQ") == 0) opcode = 0xF0;
+    else if (strcmp(mnemonic, "BMI") == 0) opcode = 0x30;
+    else if (strcmp(mnemonic, "BNE") == 0) opcode = 0xD0;
+    else if (strcmp(mnemonic, "BPL") == 0) opcode = 0x10;
+    else if (strcmp(mnemonic, "BVC") == 0) opcode = 0x50;
+    else if (strcmp(mnemonic, "BVS") == 0) opcode = 0x70;
+    else return fail("unsupported 6501 branch");
+    buffer_write(out, opcode);
+    buffer_write(out, (uint8_t)rel);
+    return true;
+}
+
+static bool emit_6501_load_store(const char *mnemonic, Operand *operands, size_t op_count, OutputBuffer *out)
+{
+    (void)operands;
+    if (strcmp(mnemonic, "LDA") == 0 || strcmp(mnemonic, "STA") == 0)
+    {
+        if (op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
+        {
+            uint8_t opcode = operands[0].is_immediate_prefix ? 0xA9 : (operands[0].value.imm < 0x100 ? 0xA5 : 0xAD);
+            if (strcmp(mnemonic, "STA") == 0)
+                opcode = operands[0].is_immediate_prefix ? 0x85 : (operands[0].value.imm < 0x100 ? 0x85 : 0x8D);
+            if (operands[0].is_immediate_prefix)
+            {
+                buffer_write(out, opcode);
+                buffer_write(out, (uint8_t)operands[0].value.imm);
+                return true;
+            }
+            buffer_write(out, opcode);
+            if (operands[0].value.imm < 0x100)
+                buffer_write(out, (uint8_t)operands[0].value.imm);
+            else
+            {
+                buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+                buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+            }
+            return true;
+        }
+        if (op_count == 2 && operands[0].type == OPERAND_IMMEDIATE && operands[1].type == OPERAND_REGISTER)
+        {
+            uint8_t opcode = 0;
+            if (operands[1].value.reg == 1) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xB5 : 0x95;
+            else if (operands[1].value.reg == 2) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xB4 : 0x94;
+            else if (operands[1].value.reg == 0) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xBD : 0x9D;
+            if (opcode == 0)
+                return fail("unsupported 6501 indexed addressing mode");
+            buffer_write(out, opcode);
+            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+            if (operands[1].value.reg == 0)
+                buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+            return true;
+        }
+    }
+
+    if ((strcmp(mnemonic, "LDX") == 0 || strcmp(mnemonic, "STX") == 0) &&
+        op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
+    {
+        uint8_t opcode = operands[0].is_immediate_prefix ? 0xA2 : (operands[0].value.imm < 0x100 ? 0xA6 : 0xAE);
+        if (strcmp(mnemonic, "STX") == 0)
+            opcode = operands[0].is_immediate_prefix ? 0x86 : (operands[0].value.imm < 0x100 ? 0x86 : 0x8E);
+        buffer_write(out, opcode);
+        if (operands[0].is_immediate_prefix)
+            buffer_write(out, (uint8_t)operands[0].value.imm);
+        else if (operands[0].value.imm < 0x100)
+            buffer_write(out, (uint8_t)operands[0].value.imm);
+        else
+        {
+            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+        }
+        return true;
+    }
+
+    if ((strcmp(mnemonic, "LDY") == 0 || strcmp(mnemonic, "STY") == 0) &&
+        op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
+    {
+        uint8_t opcode = operands[0].is_immediate_prefix ? 0xA0 : (operands[0].value.imm < 0x100 ? 0xA4 : 0xAC);
+        if (strcmp(mnemonic, "STY") == 0)
+            opcode = operands[0].is_immediate_prefix ? 0x84 : (operands[0].value.imm < 0x100 ? 0x84 : 0x8C);
+        buffer_write(out, opcode);
+        if (operands[0].is_immediate_prefix)
+            buffer_write(out, (uint8_t)operands[0].value.imm);
+        else if (operands[0].value.imm < 0x100)
+            buffer_write(out, (uint8_t)operands[0].value.imm);
+        else
+        {
+            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+        }
+        return true;
+    }
+
+    if (op_count == 2 && operands[0].type == OPERAND_IMMEDIATE && operands[1].type == OPERAND_REGISTER)
+    {
+        int reg_id = operands[1].value.reg;
+        if (reg_id == 1 || reg_id == 2)
+        {
+            uint8_t opcode = 0;
+            if (strcmp(mnemonic, "LDA") == 0)
+                opcode = reg_id == 1 ? 0xB5 : 0xB4;
+            else if (strcmp(mnemonic, "STA") == 0)
+                opcode = reg_id == 1 ? 0x95 : 0x94;
+            else if (strcmp(mnemonic, "LDA") == 0)
+                opcode = reg_id == 1 ? 0xB5 : 0xB4;
+            if (opcode != 0)
+            {
+                buffer_write(out, opcode);
+                buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+                return true;
+            }
+        }
+    }
+    return fail("unsupported 6501 load/store form");
+}
+
+static bool emit_6501_math(const char *mnemonic, Operand *operands, size_t op_count, OutputBuffer *out)
+{
+    if (op_count == 1 && operands[0].is_immediate_prefix)
+    {
+        static const struct { const char *name; uint8_t opcode; } imm[] = {
+            {"ADC", 0x69}, {"AND", 0x29}, {"CMP", 0xC9}, {"EOR", 0x49},
+            {"ORA", 0x09}, {"SBC", 0xE9}, {"CPX", 0xE0}, {"CPY", 0xC0}
+        };
+        for (size_t i = 0; i < sizeof(imm) / sizeof(imm[0]); i++)
+        {
+            if (strcmp(mnemonic, imm[i].name) == 0)
+            {
+                buffer_write(out, imm[i].opcode);
+                buffer_write(out, (uint8_t)operands[0].value.imm);
+                return true;
+            }
+        }
+    }
+
+    if (op_count == 1 && operands[0].type == OPERAND_IMMEDIATE && !operands[0].is_immediate_prefix)
+    {
+        static const struct { const char *name; uint8_t zp; uint8_t abs; } mem[] = {
+            {"ADC", 0x65, 0x6D}, {"AND", 0x25, 0x2D}, {"CMP", 0xC5, 0xCD},
+            {"EOR", 0x45, 0x4D}, {"ORA", 0x05, 0x0D}, {"SBC", 0xE5, 0xED}
+        };
+        for (size_t i = 0; i < sizeof(mem) / sizeof(mem[0]); i++)
+        {
+            if (strcmp(mnemonic, mem[i].name) == 0)
+            {
+                bool zp = operands[0].value.imm < 0x100;
+                buffer_write(out, zp ? mem[i].zp : mem[i].abs);
+                if (zp)
+                    buffer_write(out, (uint8_t)operands[0].value.imm);
+                else
+                {
+                    buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+                    buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+                }
+                return true;
+            }
+        }
+    }
+
+    return fail("unsupported 6501 arithmetic form");
+}
+
+static bool emit_6501_instruction(const OpcodeEntry *entry, Operand *operands, OpSize size, OutputBuffer *out)
+{
+    (void)size;
+    const char *m = entry->mnemonic;
+    if (strcmp(m, "NOP") == 0) { buffer_write(out, 0xEA); return true; }
+    if (strcmp(m, "BRK") == 0) { buffer_write(out, 0x00); return true; }
+    if (strcmp(m, "RTS") == 0) { buffer_write(out, 0x60); return true; }
+    if (strcmp(m, "JMP") == 0)
+    {
+        if (operands[0].type == OPERAND_IMMEDIATE)
+        {
+            buffer_write(out, 0x4C);
+            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+            return true;
+        }
+        return fail("unsupported 6501 JMP form");
+    }
+    if (strcmp(m, "JSR") == 0)
+    {
+        if (operands[0].type == OPERAND_IMMEDIATE)
+        {
+            buffer_write(out, 0x20);
+            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
+            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+            return true;
+        }
+        return fail("unsupported 6501 JSR form");
+    }
+    if (strcmp(m, "BRA") == 0 || strcmp(m, "BCC") == 0 || strcmp(m, "BCS") == 0 ||
+        strcmp(m, "BEQ") == 0 || strcmp(m, "BMI") == 0 || strcmp(m, "BNE") == 0 ||
+        strcmp(m, "BPL") == 0 || strcmp(m, "BVC") == 0 || strcmp(m, "BVS") == 0)
+        return emit_6501_branch(m, &operands[0], out);
+    if ((strcmp(m, "LDA") == 0 || strcmp(m, "STA") == 0 || strcmp(m, "LDX") == 0 ||
+         strcmp(m, "STX") == 0 || strcmp(m, "LDY") == 0 || strcmp(m, "STY") == 0))
+        return emit_6501_load_store(m, operands, entry->operand_count, out);
+    if (strcmp(m, "ADC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "CMP") == 0 ||
+        strcmp(m, "EOR") == 0 || strcmp(m, "ORA") == 0 || strcmp(m, "SBC") == 0 ||
+        strcmp(m, "CPX") == 0 || strcmp(m, "CPY") == 0)
+        return emit_6501_math(m, operands, entry->operand_count, out);
+    return fail("unsupported 6501 opcode");
+}
+
+static int x86_reg_code(int reg); // defined below
+
 // CMP / CMPA / CMPI: compute (dst - src) at the operation size, set the
 // flags, and change no register. 68K CMP sets N, Z, V and C (C is the
 // borrow) and leaves X alone; x86 CMP sets SF, ZF, OF and CF the same way
@@ -5085,6 +5607,14 @@ int emit_code(const OpcodeEntry *entry, Operand *operands, OpSize size,
         int r = emit_x86_one_operand(entry, &operands[0], size, out);
         if (r >= 0)
             return r ? 0 : -1;
+    }
+    if (arch && strcmp(arch, "z80") == 0)
+    {
+        return emit_z80_instruction(entry, operands, size, out) ? 0 : -1;
+    }
+    if (arch && strcmp(arch, "6501") == 0)
+    {
+        return emit_6501_instruction(entry, operands, size, out) ? 0 : -1;
     }
 
     for (size_t i = entry->size; i > 0; i--)

@@ -277,12 +277,62 @@ static const OpcodeEntry arm_opcode_table[] = {
 
 static const OpcodeEntry z80_opcode_table[] = {
     {"NOP", 0x00, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"HALT", 0x76, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"RET", 0xC9, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"LD", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"JP", 0xC3, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
+    {"JR", 0x18, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
+    {"CALL", 0xCD, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
+    {"PUSH", 0xC5, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"POP", 0xC1, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"ADD", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"ADC", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"SUB", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"SBC", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"AND", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"OR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"XOR", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
+    {"INC", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"DEC", 0x00, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
+    {"RST", 0xC7, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
 };
 
 static const OpcodeEntry m6501_opcode_table[] = {
     {"NOP", 0xEA, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"BRK", 0x00, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"RTS", 0x60, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"JMP", 0x4C, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"JSR", 0x20, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"LDA", 0xA9, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"LDX", 0xA2, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"LDY", 0xA0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"STA", 0x85, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"STX", 0x86, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"STY", 0x84, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"ADC", 0x69, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"SBC", 0xE9, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"AND", 0x29, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"ORA", 0x09, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"EOR", 0x49, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"CMP", 0xC9, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"CPX", 0xE0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"CPY", 0xC0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"INC", 0xE6, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"DEC", 0xC6, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BIT", 0x24, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"ASL", 0x06, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"LSR", 0x46, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"ROL", 0x26, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"ROR", 0x66, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BRA", 0x80, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BCC", 0x90, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BCS", 0xB0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BEQ", 0xF0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BMI", 0x30, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BNE", 0xD0, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BPL", 0x10, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BVC", 0x50, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
+    {"BVS", 0x70, 1, 1, 1, {OPERAND_IMMEDIATE, OPERAND_NONE}, 0},
 };
 
 bool operand_is_memory(OperandType t)
@@ -293,14 +343,14 @@ bool operand_is_memory(OperandType t)
 bool operand_matches(OperandType expected, OperandType actual)
 {
     if (expected == OPERAND_REG_OR_IMM)
-        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE;
+        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE || actual == OPERAND_LABEL;
     if (expected == OPERAND_EA_SRC)
-        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE ||
+        return actual == OPERAND_REGISTER || actual == OPERAND_IMMEDIATE || actual == OPERAND_LABEL ||
                operand_is_memory(actual);
     if (expected == OPERAND_REG_OR_MEM)
-        return actual == OPERAND_REGISTER || operand_is_memory(actual);
+        return actual == OPERAND_REGISTER || actual == OPERAND_LABEL || operand_is_memory(actual);
     if (expected == OPERAND_EA_ALT)
-        return actual == OPERAND_REGISTER || operand_is_memory(actual);
+        return actual == OPERAND_REGISTER || actual == OPERAND_LABEL || operand_is_memory(actual);
     if (expected == OPERAND_CONTROL)
         return actual == OPERAND_LABEL || actual == OPERAND_IND || actual == OPERAND_DISP;
     if (expected == OPERAND_MOVEM_ARG)

@@ -160,12 +160,26 @@ if "$ASM" -t z80 -o "$TMP/z80.bin" "$TMP/z80.asm" >/dev/null 2>&1 &&
 else
     echo "FAIL   z80 opcode scaffold"; fail=$((fail + 1))
 fi
+printf 'nop\nld a, 5\nld hl, 0x1234\nret\n' > "$TMP/z80_real.asm"
+if "$ASM" -t z80 -o "$TMP/z80_real.bin" "$TMP/z80_real.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/z80_real.bin" | tr -d ' \n')" = "003e05213412c9" ]; then
+    echo "PASS   z80 basic encoding"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 basic encoding"; fail=$((fail + 1))
+fi
 printf 'nop\nrts\n' > "$TMP/6501.asm"
 if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
     echo "PASS   6501 opcode scaffold"; pass=$((pass + 1))
 else
     echo "FAIL   6501 opcode scaffold"; fail=$((fail + 1))
+fi
+printf 'lda #$42\nsta $10\n' > "$TMP/6501_core.asm"
+if "$ASM" -t 6501 -o "$TMP/6501_core.bin" "$TMP/6501_core.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/6501_core.bin" | tr -d ' \n')" = "a9428510" ]; then
+    echo "PASS   6501 core instructions"; pass=$((pass + 1))
+else
+    echo "FAIL   6501 core instructions"; fail=$((fail + 1))
 fi
 
 echo "----"

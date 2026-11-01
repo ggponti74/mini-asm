@@ -356,14 +356,22 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
         if (pass == 2)
         {
           int32_t value;
-          if (!symtab_find_equ(ops[i].symbol, &value))
+          size_t off;
+          if (symtab_find_equ(ops[i].symbol, &value))
           {
-            fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
+            ops[i].value.imm = value;
+          }
+          else if (symtab_find(ops[i].symbol, &off))
+          {
+            ops[i].value.imm = (int32_t)(code_base + off);
+          }
+          else
+          {
+            fprintf(stderr, "Error in %s at line %zu: undefined symbol '%s'\n", g_src_file,
                     line_num, ops[i].symbol);
             ok = 0;
             break;
           }
-          ops[i].value.imm = value;
         }
         continue;
       }
@@ -579,17 +587,9 @@ int main(int argc, char *argv[])
     opcodes_print_table(stdout);
     printf("\n");
     directive_print_list(stdout);
-    if (strcmp(target->cpu_arch, "z80") == 0 ||
-        strcmp(target->cpu_arch, "6501") == 0)
-    {
-      printf("\nOnly zero-operand instructions are currently supported.\n");
-    }
-    else
-    {
-      printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
-      printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
-             "                 see each instruction's operand forms above.\n");
-    }
+    printf("\nSuffix: .b/.w/.l (unsuffixed = .w). Mnemonics are case-insensitive.\n");
+    printf("Memory operands: (An), (An)+ (post-increment), -(An) (pre-decrement);\n"
+           "                 see each instruction's operand forms above.\n");
     return 0;
   }
 

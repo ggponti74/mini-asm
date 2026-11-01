@@ -11,6 +11,168 @@
 
 static int parse_register(const char *s, int *reg);
 static int parse_reglist(const char *tok, int32_t *mask);
+static int parse_immediate(const char *token, int32_t *value, const char **symbol);
+static char *copy_string(const char *s);
+
+static int is_z80_arch(void)
+{
+  const char *arch = opcodes_active_arch_name();
+  return arch && strcmp(arch, "z80") == 0;
+}
+
+static int is_6501_arch(void)
+{
+  const char *arch = opcodes_active_arch_name();
+  return arch && strcmp(arch, "6501") == 0;
+}
+
+static int parse_6501_register(const char *s, int *reg)
+{
+  if (!s || !*s)
+    return 0;
+  if (strcasecmp(s, "A") == 0) { *reg = 0; return 1; }
+  if (strcasecmp(s, "X") == 0) { *reg = 1; return 1; }
+  if (strcasecmp(s, "Y") == 0) { *reg = 2; return 1; }
+  return 0;
+}
+
+static int parse_6501_indirect(const char *token, Operand *op)
+{
+  if (!token || !*token || token[0] != '(' || token[strlen(token) - 1] != ')')
+    return 0;
+
+  char inner[64];
+  size_t len = strlen(token);
+  if (len >= sizeof(inner))
+    return 0;
+  memcpy(inner, token + 1, len - 2);
+  inner[len - 2] = '\0';
+
+  char *comma = strrchr(inner, ',');
+  if (comma)
+  {
+    *comma = '\0';
+    int reg = -1;
+    char *suffix = comma + 1;
+    if (strcasecmp(suffix, "X") == 0)
+      reg = 1;
+    else if (strcasecmp(suffix, "Y") == 0)
+      reg = 2;
+    if (reg >= 0)
+    {
+      int32_t value = 0;
+      const char *symbol = NULL;
+      if (parse_immediate(inner, &value, &symbol) ||
+          (symbol = copy_string(inner)) != NULL)
+      {
+        op->type = OPERAND_DISP;
+        op->disp = value;
+        op->symbol = symbol;
+        op->value.reg = reg;
+        op->is_immediate_prefix = false;
+        return 1;
+      }
+    }
+    return 0;
+  }
+
+  int32_t value = 0;
+  const char *symbol = NULL;
+  if (parse_immediate(inner, &value, &symbol) ||
+      (symbol = copy_string(inner)) != NULL)
+  {
+    op->type = OPERAND_IMMEDIATE;
+    op->value.imm = value;
+    op->symbol = symbol;
+    op->is_immediate_prefix = false;
+    return 1;
+  }
+  return 0;
+}
+
+static int parse_z80_number(const char *token, int32_t *value, const char **symbol)
+{
+  if (!token || !*token)
+    return 0;
+  return parse_immediate(token, value, symbol);
+}
+
+static int parse_z80_register(const char *s, int *reg)
+{
+  static const struct { const char *name; int code; } regs[] = {
+      {"B", 0}, {"C", 1}, {"D", 2}, {"E", 3}, {"H", 4}, {"L", 5}, {"A", 7},
+      {"F", 6}, {"AF", 0x10}, {"BC", 0x11}, {"DE", 0x12}, {"HL", 0x13},
+      {"SP", 0x14}
+  };
+  if (!s || !*s)
+    return 0;
+  for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++)
+  {
+    size_t len = strlen(regs[i].name);
+    if (strlen(s) != len)
+      continue;
+    if (strcasecmp(s, regs[i].name) == 0)
+    {
+      *reg = regs[i].code;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int parse_z80_memory(const char *token, Operand *op)
+{
+  size_t len = strlen(token);
+  if (len < 3 || token[0] != '(' || token[len - 1] != ')')
+    return 0;
+
+  char inner[32];
+  size_t n = len - 2;
+  if (n >= sizeof(inner))
+    return 0;
+  memcpy(inner, token + 1, n);
+  inner[n] = '\0';
+
+  if (strcasecmp(inner, "HL") == 0)
+  {
+    op->type = OPERAND_REGISTER;
+    op->value.reg = 0x20;
+    return 1;
+  }
+  if (strcasecmp(inner, "BC") == 0)
+  {
+    op->type = OPERAND_REGISTER;
+    op->value.reg = 0x21;
+    return 1;
+  }
+  if (strcasecmp(inner, "DE") == 0)
+  {
+    op->type = OPERAND_REGISTER;
+    op->value.reg = 0x22;
+    return 1;
+  }
+
+  int32_t imm = 0;
+  const char *symbol = NULL;
+  if (parse_z80_number(inner, &imm, &symbol))
+  {
+    op->type = OPERAND_IMMEDIATE;
+    op->value.imm = imm;
+    op->symbol = symbol ? copy_string(symbol) : NULL;
+    return 1;
+  }
+  if (isalpha((unsigned char)inner[0]) || inner[0] == '_')
+  {
+    for (const char *p = inner + 1; *p; p++)
+      if (!(isalnum((unsigned char)*p) || *p == '_'))
+        return 0;
+    op->type = OPERAND_IMMEDIATE;
+    op->value.imm = 0;
+    op->symbol = copy_string(inner);
+    return 1;
+  }
+  return 0;
+}
 
 // malloc-based copy (strdup isn't standard C).
 static char *copy_string(const char *s) {
@@ -246,18 +408,28 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
 
   char token[64];
   while (*p && count < max_ops) {
+    int paren_depth = 0;
 
     // skip white spaces and commas between tokens
-    while (*p != '\0' && (isspace((unsigned char)*p) || *p == ',')) {
+    while (*p != '\0' && (isspace((unsigned char)*p) || (*p == ',' && paren_depth == 0))) {
+      if (*p == '(')
+        paren_depth++;
+      if (*p == ')')
+        paren_depth--;
       p++;
     }
     if (*p == '\0')
       break;
 
-    // copy token until comma, whitespace, or end
+    // copy token until comma at top level, whitespace, or end. Commas inside
+    // parentheses are part of the operand (e.g. 6501 indirect-indexed mode).
     size_t len = 0;
-    while (*p && *p != ',' && !isspace((unsigned char)*p) &&
+    while (*p && (paren_depth > 0 || *p != ',') && !isspace((unsigned char)*p) &&
            len < sizeof(token) - 1) {
+      if (*p == '(')
+        paren_depth++;
+      else if (*p == ')')
+        paren_depth--;
       token[len++] = *p++;
     }
     token[len] = '\0';
@@ -265,6 +437,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       break;
 
     ops[count].symbol = NULL;
+    ops[count].is_immediate_prefix = false;
 
     // classify operand
     int reg;
@@ -279,6 +452,18 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     } else if (ind == -1) {
       ops[count].type = OPERAND_BAD;
       ops[count].value.label = copy_string(token);
+    } else if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
+      /* handled separately */
+    } else if (is_z80_arch() && parse_z80_memory(token, &ops[count])) {
+      /* handled separately */
+    } else if (is_6501_arch() && parse_6501_register(token, &reg)) {
+      ops[count].type = OPERAND_REGISTER;
+      ops[count].value.reg = reg;
+    } else if (is_z80_arch() && parse_z80_register(token, &reg)) {
+      ops[count].type = OPERAND_REGISTER;
+      ops[count].value.reg = reg;
+    } else if (is_z80_arch() && parse_z80_number(token, &ops[count].value.imm, &ops[count].symbol)) {
+      ops[count].type = OPERAND_IMMEDIATE;
     } else if (parse_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
@@ -296,12 +481,16 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       }
     } else if (token[0] == '#') {
       ops[count].type = OPERAND_IMMEDIATE;
-        ops[count].value.imm = 0;
-        if (!parse_immediate(token + 1, &ops[count].value.imm,
-                           &ops[count].symbol)) {
+      ops[count].is_immediate_prefix = true;
+      ops[count].value.imm = 0;
+      if (!parse_immediate(token + 1, &ops[count].value.imm,
+                         &ops[count].symbol)) {
         ops[count].type = OPERAND_BAD;
         ops[count].value.label = copy_string(token);
       }
+    } else if (is_6501_arch() && parse_immediate(token, &ops[count].value.imm, &ops[count].symbol)) {
+      ops[count].type = OPERAND_IMMEDIATE;
+      ops[count].is_immediate_prefix = false;
     } else {
       ops[count].type = OPERAND_LABEL;
       ops[count].value.label = copy_string(token);
