@@ -380,19 +380,42 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
         if (ops[i].symbol && pass == 2)
         {
           int32_t value;
-          if (!symtab_find_equ(ops[i].symbol, &value))
+          size_t off;
+          if (symtab_find_equ(ops[i].symbol, &value))
           {
-            fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n", g_src_file,
-                    line_num, ops[i].symbol);
+            ops[i].disp = value;
+          }
+          else if (opcodes_active_arch_name() &&
+                   strcmp(opcodes_active_arch_name(), "6501") == 0 &&
+                   symtab_find(ops[i].symbol, &off))
+          {
+            ops[i].disp = (int32_t)(code_base + off);
+          }
+          else
+          {
+            if (opcodes_active_arch_name() &&
+                strcmp(opcodes_active_arch_name(), "6501") == 0)
+              fprintf(stderr, "Error in %s at line %zu: undefined symbol '%s'\n",
+                      g_src_file, line_num, ops[i].symbol);
+            else
+              fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n",
+                      g_src_file, line_num, ops[i].symbol);
             ok = 0;
             break;
           }
-          ops[i].disp = value;
         }
-        if ((!ops[i].symbol || pass == 2) && (ops[i].disp < -32768 || ops[i].disp > 32767))
+        bool is_6501_indirect = opcodes_active_arch_name() &&
+                                strcmp(opcodes_active_arch_name(), "6501") == 0;
+        if ((!ops[i].symbol || pass == 2) &&
+            (is_6501_indirect ? (ops[i].disp < 0 || ops[i].disp > 65535)
+                              : (ops[i].disp < -32768 || ops[i].disp > 32767)))
         {
-          fprintf(stderr, "Error in %s at line %zu: displacement %d does not fit in 16 bits (-32768..32767)\n",
-                  g_src_file, line_num, ops[i].disp);
+          if (is_6501_indirect)
+            fprintf(stderr, "Error in %s at line %zu: 6501 indirect address must fit in 16 bits (0..65535)\n",
+                    g_src_file, line_num);
+          else
+            fprintf(stderr, "Error in %s at line %zu: displacement %d does not fit in 16 bits (-32768..32767)\n",
+                    g_src_file, line_num, ops[i].disp);
           ok = 0;
           break;
         }

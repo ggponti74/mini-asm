@@ -38,26 +38,30 @@ static int parse_6501_register(const char *s, int *reg)
 
 static int parse_6501_indirect(const char *token, Operand *op)
 {
-  if (!token || !*token || token[0] != '(' || token[strlen(token) - 1] != ')')
+  if (!token || !*token || token[0] != '(')
     return 0;
 
   char inner[64];
   size_t len = strlen(token);
-  if (len >= sizeof(inner))
+  int outside_y = len > 3 && token[len - 2] == ',' &&
+                  (tolower((unsigned char)token[len - 1]) == 'y');
+  size_t wrapped_len = outside_y ? len - 2 : len;
+  if (wrapped_len < 2 || token[wrapped_len - 1] != ')' ||
+      wrapped_len >= sizeof(inner))
     return 0;
-  memcpy(inner, token + 1, len - 2);
-  inner[len - 2] = '\0';
+  memcpy(inner, token + 1, wrapped_len - 2);
+  inner[wrapped_len - 2] = '\0';
 
   char *comma = strrchr(inner, ',');
   if (comma)
   {
+    if (outside_y)
+      return 0;
     *comma = '\0';
     int reg = -1;
     char *suffix = comma + 1;
     if (strcasecmp(suffix, "X") == 0)
       reg = 1;
-    else if (strcasecmp(suffix, "Y") == 0)
-      reg = 2;
     if (reg >= 0)
     {
       int32_t value = 0;
@@ -81,10 +85,22 @@ static int parse_6501_indirect(const char *token, Operand *op)
   if (parse_immediate(inner, &value, &symbol) ||
       (symbol = copy_string(inner)) != NULL)
   {
-    op->type = OPERAND_IMMEDIATE;
-    op->value.imm = value;
-    op->symbol = symbol;
-    op->is_immediate_prefix = false;
+    if (outside_y)
+    {
+      op->type = OPERAND_DISP;
+      op->disp = value;
+      op->value.reg = 2;
+      op->symbol = symbol;
+      op->is_indirect = false;
+    }
+    else
+    {
+      op->type = OPERAND_IMMEDIATE;
+      op->value.imm = value;
+      op->symbol = symbol;
+      op->is_immediate_prefix = false;
+      op->is_indirect = true;
+    }
     return 1;
   }
   return 0;
@@ -432,12 +448,21 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
         paren_depth--;
       token[len++] = *p++;
     }
+    if (is_6501_arch() && len + 2 < sizeof(token) && len > 0 &&
+        token[0] == '(' && paren_depth == 0 &&
+        *p == ',' && (tolower((unsigned char)p[1]) == 'x' ||
+                      tolower((unsigned char)p[1]) == 'y') &&
+        (p[2] == '\0' || p[2] == ',' || isspace((unsigned char)p[2]))) {
+      token[len++] = *p++;
+      token[len++] = *p++;
+    }
     token[len] = '\0';
     if (len == 0)
       break;
 
     ops[count].symbol = NULL;
     ops[count].is_immediate_prefix = false;
+    ops[count].is_indirect = false;
 
     // classify operand
     int reg;
@@ -446,14 +471,14 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     OperandType mem_type;
     ops[count].disp = 0;
     int ind = parse_indirect(token, &mem_type, &reg);
-    if (ind == 1) {
+    if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
+      /* handled separately */
+    } else if (ind == 1) {
       ops[count].type = mem_type;
       ops[count].value.reg = reg;
     } else if (ind == -1) {
       ops[count].type = OPERAND_BAD;
       ops[count].value.label = copy_string(token);
-    } else if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
-      /* handled separately */
     } else if (is_z80_arch() && parse_z80_memory(token, &ops[count])) {
       /* handled separately */
     } else if (is_6501_arch() && parse_6501_register(token, &reg)) {
@@ -464,7 +489,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       ops[count].value.reg = reg;
     } else if (is_z80_arch() && parse_z80_number(token, &ops[count].value.imm, &ops[count].symbol)) {
       ops[count].type = OPERAND_IMMEDIATE;
-    } else if (parse_register(token, &reg)) {
+    } else if (!is_6501_arch() && parse_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
     } else if ((reglist = parse_reglist(token, &ops[count].value.imm)) != 0) {

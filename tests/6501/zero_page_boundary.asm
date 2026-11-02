@@ -1,0 +1,4 @@
+LDA $FF
+LDA $100
+LDA $FF,X
+LDA $100,X

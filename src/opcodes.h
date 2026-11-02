@@ -71,9 +71,9 @@ bool operand_matches(OperandType expected, OperandType actual);
 // The instruction encoding (not just the container format) differs per
 // target CPU, so this must be called once — e.g. right after main()
 // resolves the PlatformTarget — before any call to lookup_opcode().
-// Recognized names: "arm", "x86", "z80", "6501". The Z80 and 6501
-// tables are initial scaffolds with only zero-operand opcodes. Returns false
-// for an unrecognized name.
+// Recognized names: "arm", "x86", "z80", "6501". The Z80 table is an
+// initial scaffold; 6501 supports the official 6501/6502 instruction set.
+// Returns false for an unrecognized name.
 bool opcodes_select_arch(const char *arch_name);
 
 // Lookup function: find opcode by mnemonic in the currently selected

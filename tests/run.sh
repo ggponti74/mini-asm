@@ -25,8 +25,12 @@ pass=0; fail=0
 
 # "main" includes every section, so it is expected to fail while any entry is listed.
 xfail_listed() {
-    if [ "$1" = main ]; then grep -qv '^#' "$DIR/xfail.txt" 2>/dev/null
-    else grep -qx "$1" "$DIR/xfail.txt" 2>/dev/null; fi
+    test_name=$1
+    case "$test_name" in
+        *" (arm)") test_name=${test_name% (arm)} ;;
+    esac
+    if [ "$test_name" = main ]; then grep -qv '^#' "$DIR/xfail.txt" 2>/dev/null
+    else grep -qx "$test_name" "$DIR/xfail.txt" 2>/dev/null; fi
 }
 
 report() {   # report <name> <exit code of the program>
@@ -49,6 +53,13 @@ run_program() {   # run_program <name> <source file>
         echo "FAIL   $1   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error' ; fail=$((fail + 1)); return
     fi
     "$TMP/prog"; report "$1" $?
+}
+
+run_arm_program() {   # run_arm_program <name> <source file>
+    if ! "$ASM" -t arm -o "$TMP/arm-prog" "$2" >"$TMP/asm.log" 2>&1; then
+        echo "FAIL   $1 (arm)   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error' ; fail=$((fail + 1)); return
+    fi
+    qemu-arm "$TMP/arm-prog"; report "$1 (arm)" $?
 }
 
 # 1. whole program, then each section standalone
@@ -79,8 +90,20 @@ for src in "$DIR"/errors/*.asm; do
     fi
 done
 
-# 3. ARM programs (tests/arm/*.asm, first line "; EXIT: n"): run with qemu-arm if it is installed
+# 3. ARM programs: run the shared x86 regression suite and ARM-specific tests with qemu-arm
 if command -v qemu-arm >/dev/null 2>&1; then
+    run_arm_program main "$DIR/main.asm"
+    for sec in "$DIR"/sections/*.asm; do
+        name=$(basename "$sec" .asm)
+        {
+            echo "start:"
+            echo "        include \"$sec\""
+            echo "        moveq   #0, d0"
+            echo "        rts"
+            echo "        include \"$DIR/common.asm\""
+        } > "$TMP/arm-section.asm"
+        run_arm_program "$name" "$TMP/arm-section.asm"
+    done
     for src in "$DIR"/arm/*.asm; do
         name=arm/$(basename "$src" .asm)
         want=$(sed -n '1s/^; EXIT: //p' "$src")
@@ -152,7 +175,7 @@ else
     echo "FAIL   main (x86/PE does not assemble)"; fail=$((fail + 1))
 fi
 
-# 6. initial 8-bit CPU scaffolds: verify exact raw opcode bytes
+# 6. 8-bit CPU encodings: verify exact raw opcode bytes
 printf 'nop\nret\n' > "$TMP/z80.asm"
 if "$ASM" -t z80 -o "$TMP/z80.bin" "$TMP/z80.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/z80.bin" | tr -d ' \n')" = "00c9" ]; then
@@ -170,16 +193,104 @@ fi
 printf 'nop\nrts\n' > "$TMP/6501.asm"
 if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
-    echo "PASS   6501 opcode scaffold"; pass=$((pass + 1))
+    echo "PASS   6501 NOP and RTS"; pass=$((pass + 1))
 else
-    echo "FAIL   6501 opcode scaffold"; fail=$((fail + 1))
+    echo "FAIL   6501 NOP and RTS"; fail=$((fail + 1))
 fi
 printf 'lda #$42\nsta $10\n' > "$TMP/6501_core.asm"
 if "$ASM" -t 6501 -o "$TMP/6501_core.bin" "$TMP/6501_core.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501_core.bin" | tr -d ' \n')" = "a9428510" ]; then
-    echo "PASS   6501 core instructions"; pass=$((pass + 1))
+    echo "PASS   6501 immediate and zero-page"; pass=$((pass + 1))
 else
-    echo "FAIL   6501 core instructions"; fail=$((fail + 1))
+    echo "FAIL   6501 immediate and zero-page"; fail=$((fail + 1))
+fi
+check_6501_bytes() {   # check_6501_bytes <name> <source> <expected hex>
+    name=$1
+    expected=$3
+    if "$ASM" -t 6501 -o "$TMP/6501.bin" "$2" >"$TMP/asm.log" 2>&1; then
+        got=$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')
+        if [ "$got" = "$expected" ]; then
+            echo "PASS   $name"; pass=$((pass + 1))
+        else
+            echo "FAIL   $name   (unexpected bytes)"
+            echo "         expected: $expected"
+            echo "         got:      $got"
+            fail=$((fail + 1))
+        fi
+    else
+        echo "FAIL   $name   (did not assemble)"
+        sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+        fail=$((fail + 1))
+    fi
+}
+check_6501_bytes "6501 official implied and accumulator" "$DIR/6501/implied.asm" \
+    "004060ea08284868aa8aa898ba9ae8cac88818385878b8d8f80a4a2a6a"
+check_6501_bytes "6501 zero-page boundary selection" "$DIR/6501/zero_page_boundary.asm" \
+    "a5ffad0001b5ffbd0001"
+check_6501_bytes "6501 official addressing modes" "$DIR/6501/addressing.asm" \
+    "6912651275126d34127d3412793412611271122912251235122d34123d341239341221123112c912c512d512cd3412dd3412d93412c112d1124912451255124d34125d3412593412411251120912051215120d34121d341219341201121112e912e512f512ed3412fd3412f93412e112f112ad1b01a912a512b512ad3412bd3412b93412a112b112a120b120851295128d34129d341299341281129112a212a612b612ae3412be3412861296128e3412a012a412b412ac3412bc3412841294128c341224122c3412e012e412ec3412c012c412cc3412061216120e34121e3412461256124e34125e3412261236122e34123e3412661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de34124c34126c3412201b01ea"
+check_6501_bytes "6501 relative branches" "$DIR/6501/branches.asm" \
+    "101030fc900cb0f8f008d0f4500470f0800060"
+expect_6501_failure() {   # expect_6501_failure <source>
+    printf '%s\n' "$1" > "$TMP/6501-invalid.asm"
+    if "$ASM" -t 6501 -o "$TMP/6501-invalid.bin" "$TMP/6501-invalid.asm" >"$TMP/asm.log" 2>&1; then
+        echo "FAIL   6501 rejects: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   6501 rejects invalid form"; pass=$((pass + 1))
+    fi
+}
+expect_6501_failure 'LDA #$100'
+expect_6501_failure 'STA #$01'
+expect_6501_failure 'LDA ($100,X)'
+expect_6501_failure 'LDA ($20,Y)'
+expect_6501_failure 'JMP ($20,X)'
+expect_6501_failure 'LDA $10000'
+expect_6501_failure 'ASL D0'
+expect_6501_failure 'BNE -1'
+{
+    echo 'BNE far'
+    i=0
+    while [ "$i" -lt 128 ]; do
+        echo 'dc.b 0'
+        i=$((i + 1))
+    done
+    echo 'far: NOP'
+} > "$TMP/6501-far-branch.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-far-branch.bin" "$TMP/6501-far-branch.asm" >"$TMP/asm.log" 2>&1; then
+    echo "FAIL   6501 rejects out-of-range branch"; fail=$((fail + 1))
+else
+    echo "PASS   6501 rejects out-of-range branch"; pass=$((pass + 1))
+fi
+{
+    echo 'BNE far'
+    i=0
+    while [ "$i" -lt 127 ]; do
+        echo 'dc.b 0'
+        i=$((i + 1))
+    done
+    echo 'far: NOP'
+} > "$TMP/6501-forward-limit.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-forward-limit.bin" "$TMP/6501-forward-limit.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -tx1 -N2 "$TMP/6501-forward-limit.bin" | tr -d ' \n')" = "d07f" ] &&
+   [ "$(wc -c < "$TMP/6501-forward-limit.bin" | tr -d ' ')" = "130" ]; then
+    echo "PASS   6501 accepts +127 branch"; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts +127 branch"; fail=$((fail + 1))
+fi
+{
+    echo 'back:'
+    i=0
+    while [ "$i" -lt 126 ]; do
+        echo 'dc.b 0'
+        i=$((i + 1))
+    done
+    echo 'BNE back'
+} > "$TMP/6501-backward-limit.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-backward-limit.bin" "$TMP/6501-backward-limit.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -tx1 -j126 "$TMP/6501-backward-limit.bin" | tr -d ' \n')" = "d080" ]; then
+    echo "PASS   6501 accepts -128 branch"; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts -128 branch"; fail=$((fail + 1))
 fi
 
 echo "----"

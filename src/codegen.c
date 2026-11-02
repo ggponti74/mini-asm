@@ -405,218 +405,259 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     return fail("unsupported Z80 opcode");
 }
 
-static bool emit_6501_branch(const char *mnemonic, const Operand *op, OutputBuffer *out)
+typedef enum
 {
-    int32_t target = op->value.imm;
-    int32_t rel = target - (int32_t)(g_pc + 2);
-    if (rel < -128 || rel > 127)
-        return fail("6501 branch target is out of range for an 8-bit relative jump");
+    M6501_IMMEDIATE,
+    M6501_ZERO_PAGE,
+    M6501_ZERO_PAGE_X,
+    M6501_ZERO_PAGE_Y,
+    M6501_ABSOLUTE,
+    M6501_ABSOLUTE_X,
+    M6501_ABSOLUTE_Y,
+    M6501_INDIRECT_X,
+    M6501_INDIRECT_Y,
+    M6501_INDIRECT,
+    M6501_ACCUMULATOR
+} M6501AddressMode;
+
+typedef struct
+{
+    const char *mnemonic;
+    uint8_t immediate, zero_page, zero_page_x, zero_page_y;
+    uint8_t absolute, absolute_x, absolute_y, indirect_x, indirect_y;
+    uint8_t indirect, accumulator;
+} M6501OpcodeForms;
+
+static const M6501OpcodeForms k_6501_forms[] = {
+    {"ADC", 0x69, 0x65, 0x75, 0,    0x6D, 0x7D, 0x79, 0x61, 0x71, 0,    0},
+    {"AND", 0x29, 0x25, 0x35, 0,    0x2D, 0x3D, 0x39, 0x21, 0x31, 0,    0},
+    {"CMP", 0xC9, 0xC5, 0xD5, 0,    0xCD, 0xDD, 0xD9, 0xC1, 0xD1, 0,    0},
+    {"EOR", 0x49, 0x45, 0x55, 0,    0x4D, 0x5D, 0x59, 0x41, 0x51, 0,    0},
+    {"ORA", 0x09, 0x05, 0x15, 0,    0x0D, 0x1D, 0x19, 0x01, 0x11, 0,    0},
+    {"SBC", 0xE9, 0xE5, 0xF5, 0,    0xED, 0xFD, 0xF9, 0xE1, 0xF1, 0,    0},
+    {"LDA", 0xA9, 0xA5, 0xB5, 0,    0xAD, 0xBD, 0xB9, 0xA1, 0xB1, 0,    0},
+    {"STA", 0,    0x85, 0x95, 0,    0x8D, 0x9D, 0x99, 0x81, 0x91, 0,    0},
+    {"LDX", 0xA2, 0xA6, 0,    0xB6, 0xAE, 0,    0xBE, 0,    0,    0,    0},
+    {"STX", 0,    0x86, 0,    0x96, 0x8E, 0,    0,    0,    0,    0,    0},
+    {"LDY", 0xA0, 0xA4, 0xB4, 0,    0xAC, 0xBC, 0,    0,    0,    0,    0},
+    {"STY", 0,    0x84, 0x94, 0,    0x8C, 0,    0,    0,    0,    0,    0},
+    {"CPX", 0xE0, 0xE4, 0,    0,    0xEC, 0,    0,    0,    0,    0,    0},
+    {"CPY", 0xC0, 0xC4, 0,    0,    0xCC, 0,    0,    0,    0,    0,    0},
+    {"BIT", 0,    0x24, 0,    0,    0x2C, 0,    0,    0,    0,    0,    0},
+    {"INC", 0,    0xE6, 0xF6, 0,    0xEE, 0xFE, 0,    0,    0,    0,    0},
+    {"DEC", 0,    0xC6, 0xD6, 0,    0xCE, 0xDE, 0,    0,    0,    0,    0},
+    {"ASL", 0,    0x06, 0x16, 0,    0x0E, 0x1E, 0,    0,    0,    0, 0x0A},
+    {"LSR", 0,    0x46, 0x56, 0,    0x4E, 0x5E, 0,    0,    0,    0, 0x4A},
+    {"ROL", 0,    0x26, 0x36, 0,    0x2E, 0x3E, 0,    0,    0,    0, 0x2A},
+    {"ROR", 0,    0x66, 0x76, 0,    0x6E, 0x7E, 0,    0,    0,    0, 0x6A},
+    {"JMP", 0,    0,    0,    0,    0x4C, 0,    0,    0,    0, 0x6C, 0},
+    {"JSR", 0,    0,    0,    0,    0x20, 0,    0,    0,    0, 0,    0},
+};
+
+static bool emit_6501_branch(const char *mnemonic, const Operand *op,
+                             OutputBuffer *out)
+{
+    static const struct
+    {
+        const char *mnemonic;
+        uint8_t opcode;
+    } branches[] = {
+        {"BRA", 0x80}, {"BCC", 0x90}, {"BCS", 0xB0}, {"BEQ", 0xF0},
+        {"BMI", 0x30}, {"BNE", 0xD0}, {"BPL", 0x10}, {"BVC", 0x50},
+        {"BVS", 0x70},
+    };
     uint8_t opcode = 0;
-    if (strcmp(mnemonic, "BRA") == 0) opcode = 0x80;
-    else if (strcmp(mnemonic, "BCC") == 0) opcode = 0x90;
-    else if (strcmp(mnemonic, "BCS") == 0) opcode = 0xB0;
-    else if (strcmp(mnemonic, "BEQ") == 0) opcode = 0xF0;
-    else if (strcmp(mnemonic, "BMI") == 0) opcode = 0x30;
-    else if (strcmp(mnemonic, "BNE") == 0) opcode = 0xD0;
-    else if (strcmp(mnemonic, "BPL") == 0) opcode = 0x10;
-    else if (strcmp(mnemonic, "BVC") == 0) opcode = 0x50;
-    else if (strcmp(mnemonic, "BVS") == 0) opcode = 0x70;
-    else return fail("unsupported 6501 branch");
+    for (size_t i = 0; i < sizeof branches / sizeof branches[0]; i++)
+        if (strcmp(mnemonic, branches[i].mnemonic) == 0)
+        {
+            opcode = branches[i].opcode;
+            break;
+        }
+    if (opcode == 0 || op->type != OPERAND_IMMEDIATE ||
+        op->is_immediate_prefix || op->is_indirect)
+        return fail("6501 branch requires a label or absolute target");
+    if (op->value.imm < 0 || op->value.imm > 65535)
+        return fail("6501 branch target must fit in 16 bits (0..65535)");
+
+    int64_t rel = g_final_pass
+                      ? (int64_t)(uint32_t)op->value.imm -
+                            (int64_t)(g_pc + 2)
+                      : 0;
+    if (g_final_pass && (rel < -128 || rel > 127))
+        return fail("6501 branch target is out of range for an 8-bit relative jump");
     buffer_write(out, opcode);
     buffer_write(out, (uint8_t)rel);
     return true;
 }
 
-static bool emit_6501_load_store(const char *mnemonic, Operand *operands, size_t op_count, OutputBuffer *out)
+static uint8_t m6501_form_opcode(const char *mnemonic, M6501AddressMode mode)
 {
-    (void)operands;
-    if (strcmp(mnemonic, "LDA") == 0 || strcmp(mnemonic, "STA") == 0)
+    for (size_t i = 0; i < sizeof k_6501_forms / sizeof k_6501_forms[0]; i++)
     {
-        if (op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
+        const M6501OpcodeForms *f = &k_6501_forms[i];
+        if (strcmp(mnemonic, f->mnemonic) != 0)
+            continue;
+        switch (mode)
         {
-            uint8_t opcode = operands[0].is_immediate_prefix ? 0xA9 : (operands[0].value.imm < 0x100 ? 0xA5 : 0xAD);
-            if (strcmp(mnemonic, "STA") == 0)
-                opcode = operands[0].is_immediate_prefix ? 0x85 : (operands[0].value.imm < 0x100 ? 0x85 : 0x8D);
-            if (operands[0].is_immediate_prefix)
-            {
-                buffer_write(out, opcode);
-                buffer_write(out, (uint8_t)operands[0].value.imm);
-                return true;
-            }
-            buffer_write(out, opcode);
-            if (operands[0].value.imm < 0x100)
-                buffer_write(out, (uint8_t)operands[0].value.imm);
-            else
-            {
-                buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-                buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-            }
-            return true;
-        }
-        if (op_count == 2 && operands[0].type == OPERAND_IMMEDIATE && operands[1].type == OPERAND_REGISTER)
-        {
-            uint8_t opcode = 0;
-            if (operands[1].value.reg == 1) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xB5 : 0x95;
-            else if (operands[1].value.reg == 2) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xB4 : 0x94;
-            else if (operands[1].value.reg == 0) opcode = strcmp(mnemonic, "LDA") == 0 ? 0xBD : 0x9D;
-            if (opcode == 0)
-                return fail("unsupported 6501 indexed addressing mode");
-            buffer_write(out, opcode);
-            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-            if (operands[1].value.reg == 0)
-                buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-            return true;
+        case M6501_IMMEDIATE: return f->immediate;
+        case M6501_ZERO_PAGE: return f->zero_page;
+        case M6501_ZERO_PAGE_X: return f->zero_page_x;
+        case M6501_ZERO_PAGE_Y: return f->zero_page_y;
+        case M6501_ABSOLUTE: return f->absolute;
+        case M6501_ABSOLUTE_X: return f->absolute_x;
+        case M6501_ABSOLUTE_Y: return f->absolute_y;
+        case M6501_INDIRECT_X: return f->indirect_x;
+        case M6501_INDIRECT_Y: return f->indirect_y;
+        case M6501_INDIRECT: return f->indirect;
+        case M6501_ACCUMULATOR: return f->accumulator;
         }
     }
-
-    if ((strcmp(mnemonic, "LDX") == 0 || strcmp(mnemonic, "STX") == 0) &&
-        op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
-    {
-        uint8_t opcode = operands[0].is_immediate_prefix ? 0xA2 : (operands[0].value.imm < 0x100 ? 0xA6 : 0xAE);
-        if (strcmp(mnemonic, "STX") == 0)
-            opcode = operands[0].is_immediate_prefix ? 0x86 : (operands[0].value.imm < 0x100 ? 0x86 : 0x8E);
-        buffer_write(out, opcode);
-        if (operands[0].is_immediate_prefix)
-            buffer_write(out, (uint8_t)operands[0].value.imm);
-        else if (operands[0].value.imm < 0x100)
-            buffer_write(out, (uint8_t)operands[0].value.imm);
-        else
-        {
-            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-        }
-        return true;
-    }
-
-    if ((strcmp(mnemonic, "LDY") == 0 || strcmp(mnemonic, "STY") == 0) &&
-        op_count == 1 && operands[0].type == OPERAND_IMMEDIATE)
-    {
-        uint8_t opcode = operands[0].is_immediate_prefix ? 0xA0 : (operands[0].value.imm < 0x100 ? 0xA4 : 0xAC);
-        if (strcmp(mnemonic, "STY") == 0)
-            opcode = operands[0].is_immediate_prefix ? 0x84 : (operands[0].value.imm < 0x100 ? 0x84 : 0x8C);
-        buffer_write(out, opcode);
-        if (operands[0].is_immediate_prefix)
-            buffer_write(out, (uint8_t)operands[0].value.imm);
-        else if (operands[0].value.imm < 0x100)
-            buffer_write(out, (uint8_t)operands[0].value.imm);
-        else
-        {
-            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-        }
-        return true;
-    }
-
-    if (op_count == 2 && operands[0].type == OPERAND_IMMEDIATE && operands[1].type == OPERAND_REGISTER)
-    {
-        int reg_id = operands[1].value.reg;
-        if (reg_id == 1 || reg_id == 2)
-        {
-            uint8_t opcode = 0;
-            if (strcmp(mnemonic, "LDA") == 0)
-                opcode = reg_id == 1 ? 0xB5 : 0xB4;
-            else if (strcmp(mnemonic, "STA") == 0)
-                opcode = reg_id == 1 ? 0x95 : 0x94;
-            else if (strcmp(mnemonic, "LDA") == 0)
-                opcode = reg_id == 1 ? 0xB5 : 0xB4;
-            if (opcode != 0)
-            {
-                buffer_write(out, opcode);
-                buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-                return true;
-            }
-        }
-    }
-    return fail("unsupported 6501 load/store form");
+    return 0;
 }
 
-static bool emit_6501_math(const char *mnemonic, Operand *operands, size_t op_count, OutputBuffer *out)
+static bool m6501_emit_address(OutputBuffer *out, M6501AddressMode mode,
+                               uint32_t address)
 {
-    if (op_count == 1 && operands[0].is_immediate_prefix)
+    switch (mode)
     {
-        static const struct { const char *name; uint8_t opcode; } imm[] = {
-            {"ADC", 0x69}, {"AND", 0x29}, {"CMP", 0xC9}, {"EOR", 0x49},
-            {"ORA", 0x09}, {"SBC", 0xE9}, {"CPX", 0xE0}, {"CPY", 0xC0}
-        };
-        for (size_t i = 0; i < sizeof(imm) / sizeof(imm[0]); i++)
-        {
-            if (strcmp(mnemonic, imm[i].name) == 0)
-            {
-                buffer_write(out, imm[i].opcode);
-                buffer_write(out, (uint8_t)operands[0].value.imm);
-                return true;
-            }
-        }
+    case M6501_IMMEDIATE:
+    case M6501_ZERO_PAGE:
+    case M6501_ZERO_PAGE_X:
+    case M6501_ZERO_PAGE_Y:
+    case M6501_INDIRECT_X:
+    case M6501_INDIRECT_Y:
+        buffer_write(out, (uint8_t)address);
+        return true;
+    case M6501_ABSOLUTE:
+    case M6501_ABSOLUTE_X:
+    case M6501_ABSOLUTE_Y:
+    case M6501_INDIRECT:
+        buffer_write(out, (uint8_t)address);
+        buffer_write(out, (uint8_t)(address >> 8));
+        return true;
+    case M6501_ACCUMULATOR:
+        return true;
     }
-
-    if (op_count == 1 && operands[0].type == OPERAND_IMMEDIATE && !operands[0].is_immediate_prefix)
-    {
-        static const struct { const char *name; uint8_t zp; uint8_t abs; } mem[] = {
-            {"ADC", 0x65, 0x6D}, {"AND", 0x25, 0x2D}, {"CMP", 0xC5, 0xCD},
-            {"EOR", 0x45, 0x4D}, {"ORA", 0x05, 0x0D}, {"SBC", 0xE5, 0xED}
-        };
-        for (size_t i = 0; i < sizeof(mem) / sizeof(mem[0]); i++)
-        {
-            if (strcmp(mnemonic, mem[i].name) == 0)
-            {
-                bool zp = operands[0].value.imm < 0x100;
-                buffer_write(out, zp ? mem[i].zp : mem[i].abs);
-                if (zp)
-                    buffer_write(out, (uint8_t)operands[0].value.imm);
-                else
-                {
-                    buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-                    buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-                }
-                return true;
-            }
-        }
-    }
-
-    return fail("unsupported 6501 arithmetic form");
+    return false;
 }
 
-static bool emit_6501_instruction(const OpcodeEntry *entry, Operand *operands, OpSize size, OutputBuffer *out)
+static bool emit_6501_form(const char *mnemonic, const Operand *operands,
+                           bool has_index, OutputBuffer *out)
+{
+    const Operand *operand = &operands[0];
+    int index_reg = has_index ? operands[1].value.reg : -1;
+    M6501AddressMode mode;
+    int32_t value;
+
+    if (operand->type == OPERAND_DISP)
+    {
+        value = operand->disp;
+        if (has_index || operand->is_immediate_prefix)
+            return fail("invalid 6501 indirect-indexed operand");
+        if (operand->value.reg == 1)
+            mode = M6501_INDIRECT_X;
+        else if (operand->value.reg == 2)
+            mode = M6501_INDIRECT_Y;
+        else
+            return fail("unsupported 6501 indirect addressing mode");
+        if (value < 0 || value > 255)
+            return fail("6501 indexed-indirect address must fit in zero page (0..255)");
+    }
+    else if (operand->type != OPERAND_IMMEDIATE)
+    {
+        return fail("invalid 6501 operand");
+    }
+    else if (operand->is_indirect)
+    {
+        if (has_index)
+            return fail("6501 indirect JMP does not take an index register");
+        mode = M6501_INDIRECT;
+        value = operand->value.imm;
+        if (value < 0 || value > 65535)
+            return fail("6501 indirect JMP address must fit in 16 bits (0..65535)");
+    }
+    else if (operand->is_immediate_prefix)
+    {
+        if (has_index)
+            return fail("6501 immediate operands cannot be indexed");
+        mode = M6501_IMMEDIATE;
+        value = operand->value.imm;
+        if (value < -128 || value > 255)
+            return fail("6501 immediate value must fit in a byte (-128..255)");
+    }
+    else
+    {
+        value = operand->value.imm;
+        if (value < 0 || value > 65535)
+            return fail("6501 address must fit in 16 bits (0..65535)");
+        bool zero_page = value <= 255 && operand->symbol == NULL;
+        if (!has_index)
+            mode = zero_page ? M6501_ZERO_PAGE : M6501_ABSOLUTE;
+        else if (index_reg == 1)
+            mode = zero_page ? M6501_ZERO_PAGE_X : M6501_ABSOLUTE_X;
+        else if (index_reg == 2)
+            mode = zero_page ? M6501_ZERO_PAGE_Y : M6501_ABSOLUTE_Y;
+        else
+            return fail("6501 indexed addressing requires X or Y");
+    }
+
+    uint8_t opcode = m6501_form_opcode(mnemonic, mode);
+    if (opcode == 0)
+        return fail("unsupported 6501 addressing mode for instruction");
+    buffer_write(out, opcode);
+    return m6501_emit_address(out, mode, (uint32_t)value);
+}
+
+static bool emit_6501_implied(const char *mnemonic, OutputBuffer *out)
+{
+    static const struct
+    {
+        const char *mnemonic;
+        uint8_t opcode;
+    } implied[] = {
+        {"NOP", 0xEA}, {"BRK", 0x00}, {"RTI", 0x40}, {"RTS", 0x60},
+        {"PHP", 0x08}, {"PLP", 0x28}, {"PHA", 0x48}, {"PLA", 0x68},
+        {"TAX", 0xAA}, {"TXA", 0x8A}, {"TAY", 0xA8}, {"TYA", 0x98},
+        {"TSX", 0xBA}, {"TXS", 0x9A}, {"INX", 0xE8}, {"DEX", 0xCA},
+        {"INY", 0xC8}, {"DEY", 0x88}, {"CLC", 0x18}, {"SEC", 0x38},
+        {"CLI", 0x58}, {"SEI", 0x78}, {"CLV", 0xB8}, {"CLD", 0xD8},
+        {"SED", 0xF8},
+    };
+    for (size_t i = 0; i < sizeof implied / sizeof implied[0]; i++)
+        if (strcmp(mnemonic, implied[i].mnemonic) == 0)
+        {
+            buffer_write(out, implied[i].opcode);
+            return true;
+        }
+    return false;
+}
+
+static bool emit_6501_instruction(const OpcodeEntry *entry, Operand *operands,
+                                  OpSize size, OutputBuffer *out)
 {
     (void)size;
-    const char *m = entry->mnemonic;
-    if (strcmp(m, "NOP") == 0) { buffer_write(out, 0xEA); return true; }
-    if (strcmp(m, "BRK") == 0) { buffer_write(out, 0x00); return true; }
-    if (strcmp(m, "RTS") == 0) { buffer_write(out, 0x60); return true; }
-    if (strcmp(m, "JMP") == 0)
+    const char *mnemonic = entry->mnemonic;
+    if (entry->operand_count == 0)
+        return emit_6501_implied(mnemonic, out);
+    if (mnemonic[0] == 'B' &&
+        (strcmp(mnemonic, "BIT") != 0))
+        return emit_6501_branch(mnemonic, &operands[0], out);
+
+    bool has_index = entry->operand_count > 1 &&
+                     operands[1].type == OPERAND_REGISTER;
+    if (strcmp(mnemonic, "ASL") == 0 || strcmp(mnemonic, "LSR") == 0 ||
+        strcmp(mnemonic, "ROL") == 0 || strcmp(mnemonic, "ROR") == 0)
     {
-        if (operands[0].type == OPERAND_IMMEDIATE)
+        if (operands[0].type == OPERAND_REGISTER)
         {
-            buffer_write(out, 0x4C);
-            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
+            if (operands[0].value.reg != 0 || has_index)
+                return fail("6501 accumulator shifts require A");
+            uint8_t opcode = m6501_form_opcode(mnemonic, M6501_ACCUMULATOR);
+            buffer_write(out, opcode);
             return true;
         }
-        return fail("unsupported 6501 JMP form");
     }
-    if (strcmp(m, "JSR") == 0)
-    {
-        if (operands[0].type == OPERAND_IMMEDIATE)
-        {
-            buffer_write(out, 0x20);
-            buffer_write(out, (uint8_t)(operands[0].value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((operands[0].value.imm >> 8) & 0xFF));
-            return true;
-        }
-        return fail("unsupported 6501 JSR form");
-    }
-    if (strcmp(m, "BRA") == 0 || strcmp(m, "BCC") == 0 || strcmp(m, "BCS") == 0 ||
-        strcmp(m, "BEQ") == 0 || strcmp(m, "BMI") == 0 || strcmp(m, "BNE") == 0 ||
-        strcmp(m, "BPL") == 0 || strcmp(m, "BVC") == 0 || strcmp(m, "BVS") == 0)
-        return emit_6501_branch(m, &operands[0], out);
-    if ((strcmp(m, "LDA") == 0 || strcmp(m, "STA") == 0 || strcmp(m, "LDX") == 0 ||
-         strcmp(m, "STX") == 0 || strcmp(m, "LDY") == 0 || strcmp(m, "STY") == 0))
-        return emit_6501_load_store(m, operands, entry->operand_count, out);
-    if (strcmp(m, "ADC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "CMP") == 0 ||
-        strcmp(m, "EOR") == 0 || strcmp(m, "ORA") == 0 || strcmp(m, "SBC") == 0 ||
-        strcmp(m, "CPX") == 0 || strcmp(m, "CPY") == 0)
-        return emit_6501_math(m, operands, entry->operand_count, out);
-    return fail("unsupported 6501 opcode");
+    return emit_6501_form(mnemonic, operands, has_index, out);
 }
 
 static int x86_reg_code(int reg); // defined below

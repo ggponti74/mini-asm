@@ -23,9 +23,10 @@ void strip_comment(char *line);
 // Operand structure
 typedef struct {
     OperandType type;
-    const char *symbol; // symbolic #immediate (or d(An) displacement), resolved from an EQU constant
+    const char *symbol; // symbolic immediate or displacement resolved from an EQU constant or label
     int32_t disp;       // OPERAND_DISP: the displacement (the register is in value.reg)
     bool is_immediate_prefix; // true for 6501/6502-style #imm literals; false for memory or absolute addresses
+    bool is_indirect;   // parenthesized indirect address on 6501/6502 targets
     union {
         int reg;          // register index (e.g., D0 = 0, A0 = 8, etc.)
         int32_t imm;      // immediate value

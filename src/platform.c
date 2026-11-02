@@ -100,7 +100,7 @@ static const PlatformTarget k_targets[] = {
     },
     {
         .name = "6501",
-        .description = "Flat binary, 6501 code (initial scaffold; see --base)",
+        .description = "Flat binary, official 6501/6502 code (see --base)",
         .cpu_arch = "6501",
         .default_ext = ".bin",
         .needs_exec_bit = false,

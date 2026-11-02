@@ -20,8 +20,7 @@
       bin-arm Flat binary (ARM)
       z80    Flat binary (Z80; core encodings for NOP, LD, JR, JP, CALL,
              PUSH/POP, ADD/SUB, and simple ALU/branch forms)
-      6501   Flat binary (6501; core immediate/zero-page LDA/STA and branch
-             instructions, with smoke-verified raw-byte output)
+      6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
     Example: mini-asm -t arm -l
 
@@ -38,9 +37,18 @@
     memory operands are `(An)`, `(An)+`, and `-(An)`.
 
     The Z80 and 6501 targets are flat-binary encoders for their respective CPU
-    instruction sets. The smoke suite validates exact raw opcode bytes for basic
-    Z80 and 6501 instructions, including Z80 `LD`/`JR`/`JP` and 6501
-    `LDA`/`STA`/relative branch forms.
+    instruction sets. The 6501 target supports official NMOS 6501/6502 opcodes
+    and implied, accumulator, immediate, zero-page, absolute, indexed, indirect,
+    and relative addressing. Use `#value` for immediates, `ASL A` for an
+    accumulator shift, `$xx` for zero-page
+    addresses, `$xxxx` for absolute addresses, `address,X`/`address,Y` for
+    indexed addressing, `($xx,X)` and `($xx),Y` for indexed-indirect addressing,
+    and `JMP ($xxxx)` for indirect jumps. Numeric addresses through `$FF`
+    select zero-page forms; symbolic addresses use absolute forms to keep
+    instruction sizes stable across assembly passes. `BRA` remains available as
+    a 65C02 extension for compatibility, but is not part of the original NMOS
+    6501/6502 instruction set. The test suite checks exact raw bytes across the
+    official instruction forms and validates relative-branch ranges.
   
   ### Feedback
 
