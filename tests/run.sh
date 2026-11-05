@@ -295,6 +295,15 @@ else
     echo "FAIL   6501 accepts -128 branch"; fail=$((fail + 1))
 fi
 
+printf 'BNE $0000\n' > "$TMP/6501-wrap-branch.asm"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-branch.bin" "$TMP/6501-wrap-branch.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/6501-wrap-branch.bin" | tr -d ' \n')" = "d000" ]; then
+    echo "PASS   6501 branch wraps at 16-bit address boundary"; pass=$((pass + 1))
+else
+    echo "FAIL   6501 branch wraps at 16-bit address boundary"; fail=$((fail + 1))
+    sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+fi
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
