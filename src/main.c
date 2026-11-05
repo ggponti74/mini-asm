@@ -436,6 +436,13 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
         }
         addr = (int32_t)(code_base + off);
       }
+      /* A 6501 label is always encoded as an absolute address. Keep its
+         symbolic identity through code generation so pass 1 and pass 2
+         choose the same instruction length, even for a forward reference
+         whose address is not known yet. */
+      if (opcodes_active_arch_name() &&
+          strcmp(opcodes_active_arch_name(), "6501") == 0)
+        ops[i].symbol = ops[i].value.label;
       ops[i].type = OPERAND_IMMEDIATE;
       ops[i].value.imm = addr;
     }
