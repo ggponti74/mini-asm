@@ -41,7 +41,8 @@ typedef struct {
 int parse_size_suffix(const char *line, const OpcodeEntry *entry, OpSize *size,
                       size_t line_num);
 
-// Extract operands from a line into an array
+// Extract operands from a line into an array. Returns max_ops + 1 if
+// additional operand text remains after the available slots are filled.
 size_t extract_operands(const char *line, Operand *ops, size_t max_ops);
 
 // Splits an optional leading label off `line`. Copies the label name into
