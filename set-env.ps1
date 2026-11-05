@@ -1,8 +1,6 @@
-winget install --id Microsoft.PowerShell --source winget
-
-$ENV:Path += ";C:\Users\Puser.CFL2024-P-03\OneDrive\DevEnv\Git"
-$ENV:Path += ";C:\Users\Puser.CFL2024-P-03\OneDrive\DevEnv\Git\bin"
-$ENV:Path += ";C:\Users\Puser.CFL2024-P-03\OneDrive\DevEnv\mingw64\bin"
+$ENV:Path += ";D:\Windows\Git"
+$ENV:Path += ";D:\Windows\Git\bin"
+$ENV:Path += ";D:\Windows\mingw64\bin"
 
 Set-Alias -Name make -Value mingw32-make.exe
 
