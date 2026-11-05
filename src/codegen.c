@@ -479,10 +479,17 @@ static bool emit_6501_branch(const char *mnemonic, const Operand *op,
     if (op->value.imm < 0 || op->value.imm > 65535)
         return fail("6501 branch target must fit in 16 bits (0..65535)");
 
-    int64_t rel = g_final_pass
-                      ? (int64_t)(uint32_t)op->value.imm -
-                            (int64_t)(g_pc + 2)
-                      : 0;
+    int32_t rel = 0;
+    if (g_final_pass)
+    {
+        /* The 6501 program counter wraps at 16 bits before the branch
+           displacement is applied. Measure the shortest signed distance
+           from the wrapped address of the next instruction. */
+        int32_t next_pc = (int32_t)((g_pc + 2) & 0xFFFFu);
+        rel = ((int32_t)op->value.imm - next_pc + 65536) % 65536;
+        if (rel >= 32768)
+            rel -= 65536;
+    }
     if (g_final_pass && (rel < -128 || rel > 127))
         return fail("6501 branch target is out of range for an 8-bit relative jump");
     buffer_write(out, opcode);
