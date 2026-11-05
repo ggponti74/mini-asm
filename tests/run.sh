@@ -249,6 +249,7 @@ expect_6501_failure 'JMP ($20,X)'
 expect_6501_failure 'LDA $10000'
 expect_6501_failure 'ASL D0'
 expect_6501_failure 'BNE -1'
+expect_6501_failure 'STA $10, X, Y'
 {
     echo 'BNE far'
     i=0
