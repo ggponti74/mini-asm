@@ -524,6 +524,18 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     count++;
   }
 
+  /* The caller allocates exactly max_ops slots. If anything remains after
+     those slots are filled, report one extra operand without writing past
+     the caller's array; the caller only needs to know that the count is too
+     large. */
+  if (count == max_ops)
+  {
+    while (*p && isspace((unsigned char)*p))
+      p++;
+    if (*p)
+      return max_ops + 1;
+  }
+
   return count;
 }
 
