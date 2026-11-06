@@ -79,9 +79,9 @@ static int is_6501_target(void)
    Other targets retain the assembler's existing 32-bit address behavior. */
 static int32_t resolve_label_address(uint32_t code_base, size_t offset)
 {
-  uint32_t address = code_base + (uint32_t)offset;
-  return is_6501_target() ? (int32_t)(address & 0xFFFFu)
-                          : (int32_t)address;
+  if (is_6501_target())
+    return (int32_t)((code_base + offset) & 0xFFFFu);
+  return (int32_t)(code_base + offset);
 }
 
 static int parse_include_path(const char *line, const char *code,
