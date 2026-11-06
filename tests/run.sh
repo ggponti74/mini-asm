@@ -261,6 +261,9 @@ expect_6501_failure() {   # expect_6501_failure <source>
     fi
 }
 expect_6501_failure 'LDA #$100'
+expect_6501_failure 'LDA $10,A'
+expect_6501_failure 'LDX ($10),Y'
+expect_6501_failure 'LDA ($10)'
 expect_6501_failure 'STA #$01'
 expect_6501_failure 'LDA ($100,X)'
 expect_6501_failure 'LDA ($20,Y)'
