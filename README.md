@@ -42,7 +42,7 @@
     and relative addressing. Use `#value` for immediates, `ASL A` for an
     accumulator shift, `$xx` for zero-page
     addresses, `$xxxx` for absolute addresses, `address,X`/`address,Y` for
-    indexed addressing, `($xx,X)` and `($xx),Y` for indexed-indirect addressing,
+    indexed addressing, `($xx,X)` for indexed-indirect and `($xx),Y` for indirect-indexed addressing,
     and `JMP ($xxxx)` for indirect jumps. Numeric addresses through `$FF`
     select zero-page forms when that instruction has a matching zero-page
     encoding; otherwise the assembler uses its available absolute form
