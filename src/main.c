@@ -69,6 +69,21 @@ static void derive_base_name(const char *source_path, char *out,
 
 #define MAX_INCLUDE_DEPTH 32
 
+static int is_6501_target(void)
+{
+  const char *arch = opcodes_active_arch_name();
+  return arch && strcmp(arch, "6501") == 0;
+}
+
+/* The 6501 has a 16-bit address bus: code labels wrap at $FFFF.
+   Other targets retain the assembler's existing 32-bit address behavior. */
+static int32_t resolve_label_address(uint32_t code_base, size_t offset)
+{
+  uint32_t address = code_base + (uint32_t)offset;
+  return is_6501_target() ? (int32_t)(address & 0xFFFFu)
+                          : (int32_t)address;
+}
+
 static int parse_include_path(const char *line, const char *code,
                               const char **path_start,
                               size_t *path_len, size_t *column)
@@ -363,7 +378,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
           }
           else if (symtab_find(ops[i].symbol, &off))
           {
-            ops[i].value.imm = (int32_t)(code_base + off);
+            ops[i].value.imm = resolve_label_address(code_base, off);
           }
           else
           {
@@ -389,7 +404,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
                    strcmp(opcodes_active_arch_name(), "6501") == 0 &&
                    symtab_find(ops[i].symbol, &off))
           {
-            ops[i].disp = (int32_t)(code_base + off);
+            ops[i].disp = resolve_label_address(code_base, off);
           }
           else
           {
@@ -434,7 +449,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
           ok = 0;
           break;
         }
-        addr = (int32_t)(code_base + off);
+        addr = resolve_label_address(code_base, off);
       }
       /* A 6501 label is always encoded as an absolute address. Keep its
          symbolic identity through code generation so pass 1 and pass 2
