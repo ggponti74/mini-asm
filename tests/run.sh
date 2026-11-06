@@ -305,6 +305,25 @@ else
     sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
 fi
 
+# Code labels on the 6501 wrap with its 16-bit address bus, including
+# branch targets, absolute operands and zero-page indirect pointers.
+check_6501_wrap_bytes() {   # check_6501_wrap_bytes <name> <source> <expected hex>
+    name=$1
+    if "$ASM" -t 6501 --base 65535 -o "$TMP/6501-wrap.bin" "$2" >"$TMP/asm.log" 2>&1 &&
+       [ "$(od -An -tx1 "$TMP/6501-wrap.bin" | tr -d ' \n')" = "$3" ]; then
+        echo "PASS   $name"; pass=$((pass + 1))
+    else
+        echo "FAIL   $name"; sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+        fail=$((fail + 1))
+    fi
+}
+printf 'BNE target\ntarget: NOP\n' > "$TMP/6501-wrap-label-branch.asm"
+check_6501_wrap_bytes "6501 branch to label across address wrap" "$TMP/6501-wrap-label-branch.asm" "d000ea"
+printf 'NOP\ntarget: JMP target\n' > "$TMP/6501-wrap-label-jump.asm"
+check_6501_wrap_bytes "6501 absolute label across address wrap" "$TMP/6501-wrap-label-jump.asm" "ea4c0000"
+printf 'LDA (target,X)\ntarget: NOP\n' > "$TMP/6501-wrap-label-indirect.asm"
+check_6501_wrap_bytes "6501 indirect label across address wrap" "$TMP/6501-wrap-label-indirect.asm" "a101ea"
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
