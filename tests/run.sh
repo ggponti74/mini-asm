@@ -273,6 +273,10 @@ expect_6501_failure 'ASL D0'
 expect_6501_failure 'BNE -1'
 expect_6501_failure 'STA $10, X, Y'
 expect_6501_failure 'STA ($10,Y)'
+expect_6501_failure 'LDX $10,X'
+expect_6501_failure 'LDY $10,Y'
+expect_6501_failure 'STX $10,X'
+expect_6501_failure 'STY $10,Y'
 {
     echo 'BNE far'
     i=0
