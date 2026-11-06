@@ -7,6 +7,7 @@
 #include "directives.h"
 #include "srcloc.h"
 #include "symtab.h"
+#include "opcodes.h"
 
 static int ci_equal(const char *a, const char *b) {
   while (*a && *b) {
@@ -273,6 +274,9 @@ int directive_assemble(const char *code, const char *label, size_t line_num,
             if (!symtab_find(tok, &off))
               return dc_error(line_num, "undefined label '%s'", tok);
             value = (long long)code_base + (long long)off;
+            const char *arch = opcodes_active_arch_name();
+            if (arch && strcmp(arch, "6501") == 0)
+              value &= 0xFFFF;
           }
         }
       } else {
