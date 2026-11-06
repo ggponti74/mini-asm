@@ -449,12 +449,26 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       token[len++] = *p++;
     }
     if (is_6501_arch() && len + 2 < sizeof(token) && len > 0 &&
-        token[0] == '(' && paren_depth == 0 &&
-        *p == ',' && (tolower((unsigned char)p[1]) == 'x' ||
-                      tolower((unsigned char)p[1]) == 'y') &&
-        (p[2] == '\0' || p[2] == ',' || isspace((unsigned char)p[2]))) {
-      token[len++] = *p++;
-      token[len++] = *p++;
+        token[0] == '(' && paren_depth == 0) {
+      /* The indexed-indirect form places its comma inside the parentheses;
+         indirect-indexed places it after them. Accept whitespace around the
+         latter comma just as we do for ordinary indexed operands. */
+      const char *suffix = p;
+      while (*suffix && isspace((unsigned char)*suffix))
+        suffix++;
+      if (*suffix == ',') {
+        const char *index = suffix + 1;
+        while (*index && isspace((unsigned char)*index))
+          index++;
+        if ((tolower((unsigned char)*index) == 'x' ||
+             tolower((unsigned char)*index) == 'y') &&
+            (index[1] == '\0' || index[1] == ',' ||
+             isspace((unsigned char)index[1]))) {
+          token[len++] = ',';
+          token[len++] = *index;
+          p = index + 1;
+        }
+      }
     }
     token[len] = '\0';
     if (len == 0)
