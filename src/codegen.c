@@ -597,15 +597,34 @@ static bool emit_6501_form(const char *mnemonic, const Operand *operands,
         value = operand->value.imm;
         if (value < 0 || value > 65535)
             return fail("6501 address must fit in 16 bits (0..65535)");
-        bool zero_page = value <= 255 && operand->symbol == NULL;
+        M6501AddressMode zero_page_mode;
+        M6501AddressMode absolute_mode;
         if (!has_index)
-            mode = zero_page ? M6501_ZERO_PAGE : M6501_ABSOLUTE;
+        {
+            zero_page_mode = M6501_ZERO_PAGE;
+            absolute_mode = M6501_ABSOLUTE;
+        }
         else if (index_reg == 1)
-            mode = zero_page ? M6501_ZERO_PAGE_X : M6501_ABSOLUTE_X;
+        {
+            zero_page_mode = M6501_ZERO_PAGE_X;
+            absolute_mode = M6501_ABSOLUTE_X;
+        }
         else if (index_reg == 2)
-            mode = zero_page ? M6501_ZERO_PAGE_Y : M6501_ABSOLUTE_Y;
+        {
+            zero_page_mode = M6501_ZERO_PAGE_Y;
+            absolute_mode = M6501_ABSOLUTE_Y;
+        }
         else
+        {
             return fail("6501 indexed addressing requires X or Y");
+        }
+
+        /* Prefer zero page only when this instruction actually has that
+           addressing form. Some legal forms (JMP $xx, LDA $xx,Y, etc.)
+           exist only in absolute mode even when the address is below $100. */
+        bool use_zero_page = value <= 255 && operand->symbol == NULL &&
+                             m6501_form_opcode(mnemonic, zero_page_mode) != 0;
+        mode = use_zero_page ? zero_page_mode : absolute_mode;
     }
 
     uint8_t opcode = m6501_form_opcode(mnemonic, mode);
