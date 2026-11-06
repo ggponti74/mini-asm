@@ -227,6 +227,25 @@ check_6501_bytes "6501 official implied and accumulator" "$DIR/6501/implied.asm"
     "004060ea08284868aa8aa898ba9ae8cac88818385878b8d8f80a4a2a6a"
 check_6501_bytes "6501 zero-page boundary selection" "$DIR/6501/zero_page_boundary.asm" \
     "a5ffad0001b5ffbd0001"
+# If an instruction has no matching zero-page form, a short numeric
+# address must still use its legal absolute form.
+printf 'JMP $10\nJSR $10\nLDA $10,Y\nADC $10,Y\nSTA $10,Y\n' > "$TMP/6501-absolute-fallback.asm"
+check_6501_bytes "6501 selects available absolute forms for short addresses" "$TMP/6501-absolute-fallback.asm" \
+    "4c1000201000b91000791000991000"
+printf 'LDA ($10), Y\n' > "$TMP/6501-indirect-spacing.asm"
+check_6501_bytes "6501 accepts whitespace in indirect-indexed syntax" "$TMP/6501-indirect-spacing.asm" "b110"
+cat > "$TMP/6501-indexed-boundaries.asm" <<'EOF'
+LDA $00,X
+LDA $FF,X
+LDA $0100,X
+LDX $FF,Y
+LDY $FF,X
+STA $FF,X
+STX $FF,Y
+STY $FF,X
+EOF
+check_6501_bytes "6501 indexed addressing boundaries" "$TMP/6501-indexed-boundaries.asm" \
+    "b500b5ffbd0001b6ffb4ff95ff96ff94ff"
 check_6501_bytes "6501 forward label stays absolute" "$DIR/6501/forward_label_absolute.asm" \
     "ad03014141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414160"
 check_6501_bytes "6501 official addressing modes" "$DIR/6501/addressing.asm" \
@@ -242,6 +261,9 @@ expect_6501_failure() {   # expect_6501_failure <source>
     fi
 }
 expect_6501_failure 'LDA #$100'
+expect_6501_failure 'LDA $10,A'
+expect_6501_failure 'LDX ($10),Y'
+expect_6501_failure 'LDA ($10)'
 expect_6501_failure 'STA #$01'
 expect_6501_failure 'LDA ($100,X)'
 expect_6501_failure 'LDA ($20,Y)'
@@ -250,6 +272,11 @@ expect_6501_failure 'LDA $10000'
 expect_6501_failure 'ASL D0'
 expect_6501_failure 'BNE -1'
 expect_6501_failure 'STA $10, X, Y'
+expect_6501_failure 'STA ($10,Y)'
+expect_6501_failure 'LDX $10,X'
+expect_6501_failure 'LDY $10,Y'
+expect_6501_failure 'STX $10,X'
+expect_6501_failure 'STY $10,Y'
 {
     echo 'BNE far'
     i=0
@@ -323,6 +350,8 @@ printf 'NOP\ntarget: JMP target\n' > "$TMP/6501-wrap-label-jump.asm"
 check_6501_wrap_bytes "6501 absolute label across address wrap" "$TMP/6501-wrap-label-jump.asm" "ea4c0000"
 printf 'LDA (target,X)\ntarget: NOP\n' > "$TMP/6501-wrap-label-indirect.asm"
 check_6501_wrap_bytes "6501 indirect label across address wrap" "$TMP/6501-wrap-label-indirect.asm" "a101ea"
+printf 'dc.w target\ntarget: NOP\n' > "$TMP/6501-wrap-label-data.asm"
+check_6501_wrap_bytes "6501 data directive label across address wrap" "$TMP/6501-wrap-label-data.asm" "0001ea"
 
 echo "----"
 echo "$pass ok, $fail failed"

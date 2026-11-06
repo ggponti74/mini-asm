@@ -42,10 +42,12 @@
     and relative addressing. Use `#value` for immediates, `ASL A` for an
     accumulator shift, `$xx` for zero-page
     addresses, `$xxxx` for absolute addresses, `address,X`/`address,Y` for
-    indexed addressing, `($xx,X)` and `($xx),Y` for indexed-indirect addressing,
+    indexed addressing, `($xx,X)` for indexed-indirect and `($xx),Y` for indirect-indexed addressing,
     and `JMP ($xxxx)` for indirect jumps. Numeric addresses through `$FF`
-    select zero-page forms; symbolic addresses use absolute forms to keep
-    instruction sizes stable across assembly passes. `BRA` remains available as
+    select zero-page forms when that instruction has a matching zero-page
+    encoding; otherwise the assembler uses its available absolute form
+    (for example, `JMP $10` and `LDA $10,Y`). Symbolic addresses use absolute
+    forms to keep instruction sizes stable across assembly passes. `BRA` remains available as
     a 65C02 extension for compatibility, but is not part of the original NMOS
     6501/6502 instruction set. The test suite checks exact raw bytes across the
     official instruction forms and validates relative-branch ranges.
