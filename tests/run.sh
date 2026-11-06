@@ -346,6 +346,8 @@ printf 'NOP\ntarget: JMP target\n' > "$TMP/6501-wrap-label-jump.asm"
 check_6501_wrap_bytes "6501 absolute label across address wrap" "$TMP/6501-wrap-label-jump.asm" "ea4c0000"
 printf 'LDA (target,X)\ntarget: NOP\n' > "$TMP/6501-wrap-label-indirect.asm"
 check_6501_wrap_bytes "6501 indirect label across address wrap" "$TMP/6501-wrap-label-indirect.asm" "a101ea"
+printf 'dc.w target\ntarget: NOP\n' > "$TMP/6501-wrap-label-data.asm"
+check_6501_wrap_bytes "6501 data directive label across address wrap" "$TMP/6501-wrap-label-data.asm" "0001ea"
 
 echo "----"
 echo "$pass ok, $fail failed"
