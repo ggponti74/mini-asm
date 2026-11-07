@@ -484,7 +484,7 @@ LD DE,(0x2345)
 LD HL,(0x3456)
 LD SP,(0x4567)
 EOF
-expected="ed44ed45ed4ded46ed56ed5eed67ed6fed47ed4fed57ed5fed431234ed532345ed633456ed734567ed4b3412ed5b4523ed6b5634ed7b6745"
+expected="ed44ed45ed4ded46ed56ed5eed67ed6fed47ed4fed57ed5fed433412ed534523ed635634ed736745ed4b3412ed5b4523ed6b5634ed7b6745"
 if ! "$ASM" -t z80 -o "$TMP/z80_ed_special.bin" "$TMP/z80_ed_special.asm" >"$TMP/asm.log" 2>&1; then
     echo "FAIL   z80 ED special: assembler error"
     sed 's/^/         /' "$TMP/asm.log"
