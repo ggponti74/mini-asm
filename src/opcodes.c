@@ -495,6 +495,8 @@ static const char *operand_kind_name(OperandType t)
         return "label|(An)";
     case OPERAND_OPT_REG:
         return "[reg]";
+    case OPERAND_OPT_ANY:
+        return "[operand]";
     default:
         return "";
     }
