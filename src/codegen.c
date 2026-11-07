@@ -373,6 +373,34 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
     return fail("unsupported Z80 arithmetic/logical source operand");
 }
 
+static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
+                            OutputBuffer *out)
+{
+    const Operand *bit = &ops[0];
+    const Operand *target = &ops[1];
+    if (bit->type != OPERAND_IMMEDIATE || bit->symbol || bit->is_indirect ||
+        bit->value.imm < 0 || bit->value.imm > 7)
+        return fail("Z80 bit number must be an immediate in the range 0..7");
+
+    int r = z80_reg8_code(target);
+    if (r < 0)
+        return fail("Z80 BIT/RES/SET requires an 8-bit register or (HL)");
+
+    uint8_t base;
+    if (strcmp(mnemonic, "BIT") == 0)
+        base = 0x40;
+    else if (strcmp(mnemonic, "RES") == 0)
+        base = 0x80;
+    else if (strcmp(mnemonic, "SET") == 0)
+        base = 0xC0;
+    else
+        return fail("unsupported Z80 bit instruction");
+
+    buffer_write(out, 0xCB);
+    buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + r));
+    return true;
+}
+
 static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
                                   OutputBuffer *out)
 {
@@ -487,6 +515,8 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
         strcmp(m, "SBC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
         strcmp(m, "XOR") == 0 || strcmp(m, "CP") == 0)
         return emit_z80_alu(m, operands, entry->operand_count, out);
+    if (strcmp(m, "BIT") == 0 || strcmp(m, "RES") == 0 || strcmp(m, "SET") == 0)
+        return emit_z80_bit(m, operands, out);
     if (strcmp(m, "RLC") == 0 || strcmp(m, "RRC") == 0 || strcmp(m, "RL") == 0 ||
         strcmp(m, "RR") == 0 || strcmp(m, "SLA") == 0 || strcmp(m, "SRA") == 0 ||
         strcmp(m, "SRL") == 0)
