@@ -118,7 +118,8 @@ static int parse_z80_register(const char *s, int *reg)
   static const struct { const char *name; int code; } regs[] = {
       {"B", 0}, {"C", 1}, {"D", 2}, {"E", 3}, {"H", 4}, {"L", 5}, {"A", 7},
       {"F", 6}, {"AF", 0x10}, {"BC", 0x11}, {"DE", 0x12}, {"HL", 0x13},
-      {"SP", 0x14}
+      {"SP", 0x14}, {"NZ", 0x30}, {"Z", 0x31}, {"NC", 0x32}, {"C", 0x33},
+      {"PO", 0x34}, {"PE", 0x35}, {"P", 0x36}, {"M", 0x37}
   };
   if (!s || !*s)
     return 0;
@@ -489,7 +490,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     int reglist;
     OperandType mem_type;
     ops[count].disp = 0;
-    int ind = parse_indirect(token, &mem_type, &reg);
+    int ind = is_z80_arch() ? 0 : parse_indirect(token, &mem_type, &reg);
     if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
       /* handled separately */
     } else if (ind == 1) {
