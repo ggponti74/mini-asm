@@ -373,11 +373,44 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
     return fail("unsupported Z80 arithmetic/logical source operand");
 }
 
+static bool emit_z80_io(const char *mnemonic, const Operand *ops,
+                        OutputBuffer *out)
+{
+    bool is_in = strcmp(mnemonic, "IN") == 0;
+    const Operand *port = is_in ? &ops[1] : &ops[0];
+    const Operand *reg = is_in ? &ops[0] : &ops[1];
+    int r = z80_reg8_code(reg);
+    if (r < 0)
+        return fail("Z80 IN/OUT requires B, C, D, E, H, L, or A");
+
+    if (port->type == OPERAND_REGISTER && port->is_indirect &&
+        port->value.reg == 0x23)
+    {
+        buffer_write(out, 0xED);
+        buffer_write(out, (uint8_t)((is_in ? 0x40 : 0x41) + r * 8));
+        return true;
+    }
+
+    if (port->type == OPERAND_IMMEDIATE && port->is_indirect)
+    {
+        if (r != 7)
+            return fail("Z80 immediate-port IN/OUT is only supported with A");
+        if (port->value.imm < 0 || port->value.imm > 255)
+            return fail("Z80 immediate I/O port must be in the range 0..255");
+        buffer_write(out, is_in ? 0xDB : 0xD3);
+        buffer_write(out, (uint8_t)port->value.imm);
+        return true;
+    }
+    return fail("unsupported Z80 IN/OUT operand form");
+}
+
 static bool emit_z80_block(const char *mnemonic, OutputBuffer *out)
 {
     static const struct { const char *name; uint8_t opcode; } forms[] = {
         {"LDI", 0xA0}, {"LDIR", 0xB0}, {"LDD", 0xA8}, {"LDDR", 0xB8},
-        {"CPI", 0xA1}, {"CPIR", 0xB1}, {"CPD", 0xA9}, {"CPDR", 0xB9}
+        {"CPI", 0xA1}, {"CPIR", 0xB1}, {"CPD", 0xA9}, {"CPDR", 0xB9},
+        {"INI", 0xA2}, {"INIR", 0xB2}, {"IND", 0xAA}, {"INDR", 0xBA},
+        {"OUTI", 0xA3}, {"OTIR", 0xB3}, {"OUTD", 0xAB}, {"OTDR", 0xBB}
     };
 
     for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
@@ -387,7 +420,7 @@ static bool emit_z80_block(const char *mnemonic, OutputBuffer *out)
             buffer_write(out, forms[i].opcode);
             return true;
         }
-    return fail("unsupported Z80 block transfer/search instruction");
+    return fail("unsupported Z80 block instruction");
 }
 
 static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
@@ -532,10 +565,16 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
         strcmp(m, "SBC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
         strcmp(m, "XOR") == 0 || strcmp(m, "CP") == 0)
         return emit_z80_alu(m, operands, entry->operand_count, out);
+    if (strcmp(m, "IN") == 0 || strcmp(m, "OUT") == 0)
+        return emit_z80_io(m, operands, out);
     if (strcmp(m, "LDI") == 0 || strcmp(m, "LDIR") == 0 ||
         strcmp(m, "LDD") == 0 || strcmp(m, "LDDR") == 0 ||
         strcmp(m, "CPI") == 0 || strcmp(m, "CPIR") == 0 ||
-        strcmp(m, "CPD") == 0 || strcmp(m, "CPDR") == 0)
+        strcmp(m, "CPD") == 0 || strcmp(m, "CPDR") == 0 ||
+        strcmp(m, "INI") == 0 || strcmp(m, "INIR") == 0 ||
+        strcmp(m, "IND") == 0 || strcmp(m, "INDR") == 0 ||
+        strcmp(m, "OUTI") == 0 || strcmp(m, "OTIR") == 0 ||
+        strcmp(m, "OUTD") == 0 || strcmp(m, "OTDR") == 0)
         return emit_z80_block(m, out);
     if (strcmp(m, "BIT") == 0 || strcmp(m, "RES") == 0 || strcmp(m, "SET") == 0)
         return emit_z80_bit(m, operands, out);
