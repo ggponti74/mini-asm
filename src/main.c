@@ -324,7 +324,9 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     memset(ops, 0, sizeof ops); /* operands left out (optional forms) read as OPERAND_NONE */
     size_t op_count = extract_operands(code, ops, entry->operand_count);
     size_t min_ops = entry->operand_count;
-    if (min_ops > 0 && entry->operand_types[min_ops - 1] == OPERAND_OPT_REG)
+    if (min_ops > 0 &&
+        (entry->operand_types[min_ops - 1] == OPERAND_OPT_REG ||
+         entry->operand_types[min_ops - 1] == OPERAND_OPT_ANY))
       min_ops--; /* trailing optional operand */
 
     if (op_count < min_ops || op_count > entry->operand_count)
