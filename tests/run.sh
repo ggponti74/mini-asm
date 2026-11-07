@@ -239,7 +239,7 @@ JP (HL)
 start: NOP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \\n')" = "181d201b2819301738151013c31f00c21f00fa1f00cd1f00ec1f00c9c0f8e900" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \n')" = "181d201b2819301738151013c31f00c21f00fa1f00cd1f00ec1f00c9c0f8e900" ]; then
     echo "PASS   z80 conditional control flow"; pass=$((pass + 1))
 else
     echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
