@@ -288,6 +288,90 @@ if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/
 else
     echo "PASS   z80 rejects unsupported JR condition"; pass=$((pass + 1))
 fi
+cat > "$TMP/z80_alu.asm" <<'EOF'
+ADD A,B
+ADD A,(HL)
+ADC A,C
+SUB D
+SBC A,E
+AND H
+XOR L
+OR (HL)
+CP A
+ADD HL,BC
+ADD HL,SP
+ADC HL,DE
+SBC HL,HL
+INC (HL)
+DEC A
+INC BC
+DEC SP
+ADD A,0x12
+ADC A,0x34
+SUB 0x56
+SBC A,0x78
+AND 0x9A
+XOR 0xBC
+OR 0xDE
+CP 0xF0
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_alu.bin" "$TMP/z80_alu.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_alu.bin" | tr -d ' \n')" = "80868 8919aab5a7bfc92939ed5aed72" ]; then
+    echo "PASS   z80 arithmetic and logical register forms"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 arithmetic and logical register forms"; fail=$((fail + 1))
+fi
+cat > "$TMP/z80_alu_immediate.asm" <<'EOF'
+ADD A,0x12
+ADC A,0x34
+SUB 0x56
+SBC A,0x78
+AND 0x9A
+XOR 0xBC
+OR 0xDE
+CP 0xF0
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_alu_immediate.bin" "$TMP/z80_alu_immediate.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_alu_immediate.bin" | tr -d ' \n')" = "c612ce34d656de78e69aee bcf6defef0" ]; then
+    echo "PASS   z80 arithmetic and logical immediate forms"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 arithmetic and logical immediate forms"; fail=$((fail + 1))
+fi
+cat > "$TMP/z80_rotate_shift.asm" <<'EOF'
+RLCA
+RRCA
+RLA
+RRA
+RLC B
+RRC C
+RL D
+RR E
+SLA H
+SRA L
+SRL (HL)
+CPL
+DAA
+SCF
+CCF
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_rotate_shift.bin" "$TMP/z80_rotate_shift.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_rotate_shift.bin" | tr -d ' \n')" = "070f171fcb00cb09cb12cb1bcb24cb2dcb3e2f27373f" ]; then
+    echo "PASS   z80 accumulator rotates and CB shifts"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 accumulator rotates and CB shifts"; fail=$((fail + 1))
+fi
+printf 'ADD A,256\n' > "$TMP/z80_bad_alu_imm.asm"
+if "$ASM" -t z80 -o "$TMP/z80_bad_alu_imm.bin" "$TMP/z80_bad_alu_imm.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects out-of-range ALU immediate"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects out-of-range ALU immediate"; pass=$((pass + 1))
+fi
+printf 'ADD DE,BC\n' > "$TMP/z80_bad_alu_dest.asm"
+if "$ASM" -t z80 -o "$TMP/z80_bad_alu_dest.bin" "$TMP/z80_bad_alu_dest.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects unsupported 16-bit ALU destination"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects unsupported 16-bit ALU destination"; pass=$((pass + 1))
+fi
 printf 'nop\nrts\n' > "$TMP/6501.asm"
 if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
