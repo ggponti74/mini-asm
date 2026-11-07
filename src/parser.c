@@ -489,7 +489,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     int reglist;
     OperandType mem_type;
     ops[count].disp = 0;
-    int ind = parse_indirect(token, &mem_type, &reg);
+    int ind = is_z80_arch() ? 0 : parse_indirect(token, &mem_type, &reg);
     if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
       /* handled separately */
     } else if (ind == 1) {
