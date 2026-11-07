@@ -24,7 +24,7 @@ $(OUT): $(SRC)
 clean:
 	rm -f $(OUT)*
 
-# Regression tests (Linux): see tests/run.sh
+# Regression tests (native ELF runtime tests are skipped on Windows): see tests/run.sh
 test: $(OUT)
 	sh tests/run.sh ./$(OUT)
 
