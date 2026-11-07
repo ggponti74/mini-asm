@@ -244,6 +244,38 @@ if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/de
 else
     echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
 fi
+cat > "$TMP/z80_all_conditions.asm" <<'EOF'
+JP NZ,0x1234
+JP Z,0x1234
+JP NC,0x1234
+JP C,0x1234
+JP PO,0x1234
+JP PE,0x1234
+JP P,0x1234
+JP M,0x1234
+CALL NZ,0x1234
+CALL Z,0x1234
+CALL NC,0x1234
+CALL C,0x1234
+CALL PO,0x1234
+CALL PE,0x1234
+CALL P,0x1234
+CALL M,0x1234
+RET NZ
+RET Z
+RET NC
+RET C
+RET PO
+RET PE
+RET P
+RET M
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_all_conditions.bin" "$TMP/z80_all_conditions.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_all_conditions.bin" | tr -d ' \n')" = "c23412ca3412d23412da3412e23412ea3412f23412fa3412c43412cc3412d43412dc3412e43412ec3412f43412fc3412c0c8d0d8e0e8f0f8" ]; then
+    echo "PASS   z80 all conditional opcode families"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 all conditional opcode families"; fail=$((fail + 1))
+fi
 printf 'JP 0x10000\n' > "$TMP/z80_bad_jump.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_jump.bin" "$TMP/z80_bad_jump.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range JP target"; fail=$((fail + 1))
