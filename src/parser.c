@@ -186,6 +186,13 @@ static int parse_z80_memory(const char *token, Operand *op)
     op->is_indirect = true;
     return 1;
   }
+  if (strcasecmp(inner, "C") == 0)
+  {
+    op->type = OPERAND_REGISTER;
+    op->value.reg = 0x23;
+    op->is_indirect = true;
+    return 1;
+  }
 
   int32_t imm = 0;
   const char *symbol = NULL;
