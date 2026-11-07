@@ -408,6 +408,52 @@ if "$ASM" -t z80 -o "$TMP/z80_bad_block_operand.bin" "$TMP/z80_bad_block_operand
 else
     echo "PASS   z80 rejects operands on block instructions"; pass=$((pass + 1))
 fi
+cat > "$TMP/z80_io.asm" <<'EOF'
+IN A,(0x12)
+OUT (0x34),A
+IN B,(C)
+IN C,(C)
+IN D,(C)
+IN E,(C)
+IN H,(C)
+IN L,(C)
+IN A,(C)
+OUT (C),B
+OUT (C),C
+OUT (C),D
+OUT (C),E
+OUT (C),H
+OUT (C),L
+OUT (C),A
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_io.bin" "$TMP/z80_io.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \\n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79" ]; then
+    echo "PASS   z80 IN/OUT immediate and (C) forms"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 IN/OUT immediate and (C) forms"; fail=$((fail + 1))
+fi
+cat > "$TMP/z80_block_io.asm" <<'EOF'
+INI
+INIR
+IND
+INDR
+OUTI
+OTIR
+OUTD
+OTDR
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_block_io.bin" "$TMP/z80_block_io.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_block_io.bin" | tr -d ' \\n')" = "eda2edb2edaaedbaeda3edb3edabedbb" ]; then
+    echo "PASS   z80 block I/O instructions"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 block I/O instructions"; fail=$((fail + 1))
+fi
+expect_z80_failure 'IN B,(0x12)'
+expect_z80_failure 'OUT (0x12),B'
+expect_z80_failure 'IN F,(C)'
+expect_z80_failure 'OUT (C),F'
+expect_z80_failure 'IN A,(0x100)'
+expect_z80_failure 'OUT (0x100),A'
 cat > "$TMP/z80_bit_ops.asm" <<'EOF'
 BIT 0,B
 BIT 7,A
