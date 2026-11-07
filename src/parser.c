@@ -444,7 +444,6 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     return 0;
 
   char mnemonic[32] = "";
-  sscanf(line, "%*s %31s", mnemonic); /* mnemonic is not needed for ordinary operands */
   const char *mnemonic_start = line;
   while (*mnemonic_start && isspace((unsigned char)*mnemonic_start))
     mnemonic_start++;
