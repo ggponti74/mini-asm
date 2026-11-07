@@ -1,5 +1,5 @@
 #!/bin/sh
-# run.sh - mini-asm regression tests (Linux: assembles to ELF and runs the result).
+# run.sh - mini-asm regression tests. Native ELF runtime tests are skipped on Windows.
 #
 #   tests/run.sh [path/to/mini-asm]        (default: ./mini-asm; `make test` calls this)
 #
@@ -18,6 +18,13 @@
 
 ASM=${1:-./mini-asm}
 DIR=$(cd "$(dirname "$0")" && pwd)
+
+# Git for Windows can assemble ELF output, but Windows cannot execute Linux ELF
+# binaries. Detect the native MinGW compiler and retain all assembly/byte tests.
+WINDOWS_HOST=0
+if gcc -dumpmachine 2>/dev/null | grep -qiE 'mingw|windows'; then
+    WINDOWS_HOST=1
+fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/mini-asm-test.XXXXXX") || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
@@ -52,7 +59,11 @@ run_program() {   # run_program <name> <source file>
     if ! "$ASM" -t elf -o "$TMP/prog" "$2" >"$TMP/asm.log" 2>&1; then
         echo "FAIL   $1   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error' ; fail=$((fail + 1)); return
     fi
-    "$TMP/prog"; report "$1" $?
+    if [ "$WINDOWS_HOST" -eq 1 ]; then
+        echo "SKIP   $1   (Linux ELF executable cannot run on Windows)"
+    else
+        "$TMP/prog"; report "$1" $?
+    fi
 }
 
 run_arm_program() {   # run_arm_program <name> <source file>
@@ -134,7 +145,11 @@ for src in "$DIR"/trap/*.asm; do
     if ! "$ASM" -t elf -o "$TMP/trap.elf" "$src" >"$TMP/asm.log" 2>&1; then
         echo "FAIL   $tname   (did not assemble)"; sed 's/^/         /' "$TMP/asm.log" | grep '^ *Error'; fail=$((fail + 1)); continue
     fi
-    (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$tname" $?
+    if [ "$WINDOWS_HOST" -eq 1 ]; then
+        echo "SKIP   $tname   (Linux ELF executable cannot run on Windows)"
+    else
+        (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$tname" $?
+    fi
     if command -v qemu-arm >/dev/null 2>&1; then
         if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
             (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$tname (arm)" $?
