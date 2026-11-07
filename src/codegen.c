@@ -342,21 +342,24 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
         {"AND", 0xA0, 0xE6}, {"XOR", 0xA8, 0xEE},
         {"OR",  0xB0, 0xF6}, {"CP",  0xB8, 0xFE}
     };
-    const struct { const char *name; uint8_t reg_base, imm_opcode; } *form = NULL;
+    uint8_t reg_base = 0, imm_opcode = 0;
+    bool found = false;
     for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
         if (strcmp(opname, forms[i].name) == 0)
         {
-            form = &forms[i];
+            reg_base = forms[i].reg_base;
+            imm_opcode = forms[i].imm_opcode;
+            found = true;
             break;
         }
-    if (!form)
+    if (!found)
         return fail("unsupported Z80 arithmetic/logical instruction");
 
     if (src->type == OPERAND_IMMEDIATE && !src->is_indirect)
     {
         if (src->value.imm < -128 || src->value.imm > 255)
             return fail("Z80 8-bit ALU immediate is out of range (-128..255)");
-        buffer_write(out, form->imm_opcode);
+        buffer_write(out, imm_opcode);
         buffer_write(out, (uint8_t)src->value.imm);
         return true;
     }
@@ -364,7 +367,7 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
     int r = z80_reg8_code(src);
     if (src->type == OPERAND_REGISTER && r >= 0)
     {
-        buffer_write(out, (uint8_t)(form->reg_base + r));
+        buffer_write(out, (uint8_t)(reg_base + r));
         return true;
     }
     return fail("unsupported Z80 arithmetic/logical source operand");
