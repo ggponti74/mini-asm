@@ -244,13 +244,13 @@ if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/de
 else
     echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
 fi
-printf 'JP 0x10000\\n' > "$TMP/z80_bad_jump.asm"
+printf 'JP 0x10000\n' > "$TMP/z80_bad_jump.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_jump.bin" "$TMP/z80_bad_jump.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range JP target"; fail=$((fail + 1))
 else
     echo "PASS   z80 rejects out-of-range JP target"; pass=$((pass + 1))
 fi
-printf 'JR PO, target\\ndc.b 0\\n' > "$TMP/z80_bad_condition.asm"
+printf 'JR PO, target\ndc.b 0\n' > "$TMP/z80_bad_condition.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects unsupported JR condition"; fail=$((fail + 1))
 else
