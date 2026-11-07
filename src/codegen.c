@@ -132,13 +132,61 @@ static int z80_pair_code(const Operand *op)
     }
 }
 
-static bool emit_z80_jr(const Operand *op, OutputBuffer *out)
+static int z80_condition_code(const Operand *op)
 {
-    int32_t target = op->value.imm;
-    int32_t rel = target - (int32_t)(g_pc + 2);
-    if (rel < -128 || rel > 127)
-        return fail("Z80 JR target is out of range for a signed 8-bit relative jump");
-    buffer_write(out, 0x18);
+    if (!op || op->type != OPERAND_REGISTER ||
+        op->value.reg < 0x30 || op->value.reg > 0x37)
+        return -1;
+    return op->value.reg - 0x30;
+}
+
+static bool z80_relative_displacement(const Operand *op, int32_t *rel)
+{
+    if (!op || op->type != OPERAND_IMMEDIATE)
+        return fail("Z80 relative branch requires a label or absolute target");
+    if (op->value.imm < 0 || op->value.imm > 65535)
+        return fail("Z80 relative branch target must fit in 16 bits");
+    *rel = 0;
+    if (g_final_pass)
+    {
+        int32_t next_pc = (int32_t)((g_pc + 2) & 0xFFFFu);
+        int32_t distance = (op->value.imm - next_pc + 65536) & 0xFFFF;
+        if (distance >= 32768)
+            distance -= 65536;
+        *rel = distance;
+        if (*rel < -128 || *rel > 127)
+            return fail("Z80 relative branch target is out of range (-128..127)");
+    }
+    return true;
+}
+
+static bool emit_z80_jr(const Operand *ops, OutputBuffer *out)
+{
+    static const uint8_t conditional[] = {0x20, 0x28, 0x30, 0x38};
+    const Operand *target = &ops[0];
+    uint8_t opcode = 0x18;
+    if (ops[1].type != OPERAND_NONE)
+    {
+        int cc = z80_condition_code(&ops[0]);
+        if (cc < 0 || cc > 3)
+            return fail("Z80 JR condition must be NZ, Z, NC, or C");
+        opcode = conditional[cc];
+        target = &ops[1];
+    }
+    int32_t rel;
+    if (!z80_relative_displacement(target, &rel))
+        return false;
+    buffer_write(out, opcode);
+    buffer_write(out, (uint8_t)rel);
+    return true;
+}
+
+static bool emit_z80_djnz(const Operand *op, OutputBuffer *out)
+{
+    int32_t rel;
+    if (!z80_relative_displacement(op, &rel))
+        return false;
+    buffer_write(out, 0x10);
     buffer_write(out, (uint8_t)rel);
     return true;
 }
@@ -349,19 +397,40 @@ static bool emit_z80_pushpop(const char *mnemonic, const Operand *op, OutputBuff
     return fail("unsupported Z80 stack op");
 }
 
-static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *op, OutputBuffer *out)
+static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *ops,
+                                OutputBuffer *out)
 {
-    if (op->type == OPERAND_IMMEDIATE)
+    static const uint8_t jp_conditions[] =
+        {0xC2, 0xCA, 0xD2, 0xDA, 0xE2, 0xEA, 0xF2, 0xFA};
+    static const uint8_t call_conditions[] =
+        {0xC4, 0xCC, 0xD4, 0xDC, 0xE4, 0xEC, 0xF4, 0xFC};
+    bool is_jp = strcmp(mnemonic, "JP") == 0;
+    const Operand *target = &ops[0];
+    uint8_t opcode = is_jp ? 0xC3 : 0xCD;
+
+    if (ops[1].type != OPERAND_NONE)
     {
-        uint8_t opbyte = strcmp(mnemonic, "JP") == 0 ? 0xC3 : 0xCD;
-        buffer_write(out, opbyte);
-        buffer_write(out, (uint8_t)(op->value.imm & 0xFF));
-        buffer_write(out, (uint8_t)((op->value.imm >> 8) & 0xFF));
+        int cc = z80_condition_code(&ops[0]);
+        if (cc < 0)
+            return fail("Z80 JP/CALL condition must be NZ, Z, NC, C, PO, PE, P, or M");
+        opcode = is_jp ? jp_conditions[cc] : call_conditions[cc];
+        target = &ops[1];
+    }
+
+    if (target->type == OPERAND_IMMEDIATE && !target->is_indirect)
+    {
+        if (target->value.imm < 0 || target->value.imm > 65535)
+            return fail("Z80 JP/CALL target must fit in 16 bits (0..65535)");
+        buffer_write(out, opcode);
+        buffer_write(out, (uint8_t)(target->value.imm & 0xFF));
+        buffer_write(out, (uint8_t)((target->value.imm >> 8) & 0xFF));
         return true;
     }
-    if (op->type == OPERAND_REGISTER && op->value.reg == 0x13)
+
+    if (ops[1].type == OPERAND_NONE && is_jp && target->type == OPERAND_REGISTER &&
+        target->is_indirect && target->value.reg == 0x20)
     {
-        buffer_write(out, 0xE9);
+        buffer_write(out, 0xE9); /* JP (HL) */
         return true;
     }
     return fail("unsupported Z80 JP/CALL form");
@@ -369,8 +438,17 @@ static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *op, OutputB
 
 static bool emit_z80_ret(const Operand *ops, OutputBuffer *out)
 {
-    (void)ops;
-    buffer_write(out, 0xC9);
+    static const uint8_t conditional[] =
+        {0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8};
+    if (ops[0].type == OPERAND_NONE)
+    {
+        buffer_write(out, 0xC9);
+        return true;
+    }
+    int cc = z80_condition_code(&ops[0]);
+    if (cc < 0)
+        return fail("Z80 RET condition must be NZ, Z, NC, C, PO, PE, P, or M");
+    buffer_write(out, conditional[cc]);
     return true;
 }
 
@@ -382,9 +460,10 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
     if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, out);
     if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
-    if (strcmp(m, "JR") == 0) return emit_z80_jr(&operands[0], out);
-    if (strcmp(m, "JP") == 0) return emit_z80_call_or_jp(m, &operands[0], out);
-    if (strcmp(m, "CALL") == 0) return emit_z80_call_or_jp(m, &operands[0], out);
+    if (strcmp(m, "JR") == 0) return emit_z80_jr(operands, out);
+    if (strcmp(m, "DJNZ") == 0) return emit_z80_djnz(&operands[0], out);
+    if (strcmp(m, "JP") == 0 || strcmp(m, "CALL") == 0)
+        return emit_z80_call_or_jp(m, operands, out);
     if (strcmp(m, "PUSH") == 0 || strcmp(m, "POP") == 0) return emit_z80_pushpop(m, &operands[0], out);
     if (strcmp(m, "INC") == 0 || strcmp(m, "DEC") == 0) return emit_z80_alu(m, operands, out);
     if (strcmp(m, "ADD") == 0 || strcmp(m, "ADC") == 0 || strcmp(m, "SUB") == 0 ||

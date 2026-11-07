@@ -278,11 +278,12 @@ static const OpcodeEntry arm_opcode_table[] = {
 static const OpcodeEntry z80_opcode_table[] = {
     {"NOP", 0x00, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"HALT", 0x76, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
-    {"RET", 0xC9, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"RET", 0xC9, 1, 1, 1, {OPERAND_OPT_REG, OPERAND_NONE}, 0},
     {"LD", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
-    {"JP", 0xC3, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
-    {"JR", 0x18, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
-    {"CALL", 0xCD, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
+    {"JP", 0xC3, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_OPT_ANY}, 0},
+    {"JR", 0x18, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_OPT_ANY}, 0},
+    {"DJNZ", 0x10, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
+    {"CALL", 0xCD, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_OPT_ANY}, 0},
     {"PUSH", 0xC5, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
     {"POP", 0xC1, 1, 1, 1, {OPERAND_REGISTER, OPERAND_NONE}, 0},
     {"ADD", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
@@ -380,6 +381,8 @@ bool operand_matches(OperandType expected, OperandType actual)
                operand_is_memory(actual);
     if (expected == OPERAND_OPT_REG)
         return actual == OPERAND_REGISTER;
+    if (expected == OPERAND_OPT_ANY)
+        return actual != OPERAND_NONE && actual != OPERAND_BAD;
     return expected == actual;
 }
 
@@ -492,6 +495,8 @@ static const char *operand_kind_name(OperandType t)
         return "label|(An)";
     case OPERAND_OPT_REG:
         return "[reg]";
+    case OPERAND_OPT_ANY:
+        return "[operand]";
     default:
         return "";
     }

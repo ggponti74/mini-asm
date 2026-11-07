@@ -136,6 +136,22 @@ static int parse_z80_register(const char *s, int *reg)
   return 0;
 }
 
+
+static int parse_z80_condition(const char *s, int *condition)
+{
+  static const struct { const char *name; int code; } conditions[] = {
+      {"NZ", 0x30}, {"Z", 0x31}, {"NC", 0x32}, {"C", 0x33},
+      {"PO", 0x34}, {"PE", 0x35}, {"P", 0x36}, {"M", 0x37}
+  };
+  for (size_t i = 0; i < sizeof(conditions) / sizeof(conditions[0]); i++)
+    if (strcasecmp(s, conditions[i].name) == 0)
+    {
+      *condition = conditions[i].code;
+      return 1;
+    }
+  return 0;
+}
+
 static int parse_z80_memory(const char *token, Operand *op)
 {
   size_t len = strlen(token);
@@ -427,6 +443,16 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   if (!*p)
     return 0;
 
+  char mnemonic[32] = "";
+  const char *mnemonic_start = line;
+  while (*mnemonic_start && isspace((unsigned char)*mnemonic_start))
+    mnemonic_start++;
+  size_t mnemonic_len = strcspn(mnemonic_start, " \t");
+  if (mnemonic_len >= sizeof(mnemonic))
+    mnemonic_len = sizeof(mnemonic) - 1;
+  memcpy(mnemonic, mnemonic_start, mnemonic_len);
+  mnemonic[mnemonic_len] = '\0';
+
   char token[64];
   while (*p && count < max_ops) {
     int paren_depth = 0;
@@ -489,7 +515,7 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     int reglist;
     OperandType mem_type;
     ops[count].disp = 0;
-    int ind = parse_indirect(token, &mem_type, &reg);
+    int ind = is_z80_arch() ? 0 : parse_indirect(token, &mem_type, &reg);
     if (is_6501_arch() && parse_6501_indirect(token, &ops[count])) {
       /* handled separately */
     } else if (ind == 1) {
@@ -501,6 +527,14 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
     } else if (is_z80_arch() && parse_z80_memory(token, &ops[count])) {
       /* handled separately */
     } else if (is_6501_arch() && parse_6501_register(token, &reg)) {
+      ops[count].type = OPERAND_REGISTER;
+      ops[count].value.reg = reg;
+    } else if (is_z80_arch() && count == 0 &&
+               (strcasecmp(mnemonic, "JR") == 0 ||
+                strcasecmp(mnemonic, "JP") == 0 ||
+                strcasecmp(mnemonic, "CALL") == 0 ||
+                strcasecmp(mnemonic, "RET") == 0) &&
+               parse_z80_condition(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
       ops[count].value.reg = reg;
     } else if (is_z80_arch() && parse_z80_register(token, &reg)) {
