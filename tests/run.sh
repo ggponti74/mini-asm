@@ -219,6 +219,43 @@ if "$ASM" -t z80 -o "$TMP/z80_ld_bad_addr.bin" "$TMP/z80_ld_bad_addr.asm" >/dev/
 else
     echo "PASS   z80 rejects out-of-range absolute memory address"; pass=$((pass + 1))
 fi
+
+cat > "$TMP/z80_control_flow.asm" <<'EOF'
+JR start
+JR NZ, start
+JR Z, start
+JR NC, start
+JR C, start
+DJNZ start
+JP start
+JP NZ, start
+JP M, start
+CALL start
+CALL PE, start
+RET
+RET NZ
+RET M
+JP (HL)
+start: NOP
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \\n')" = "181e201c281a301838161016c30000c20000fa0000cd0000ec0000c9c0f8e900" ]; then
+    echo "PASS   z80 conditional control flow"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
+fi
+printf 'JP 0x10000\\n' > "$TMP/z80_bad_jump.asm"
+if "$ASM" -t z80 -o "$TMP/z80_bad_jump.bin" "$TMP/z80_bad_jump.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects out-of-range JP target"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects out-of-range JP target"; pass=$((pass + 1))
+fi
+printf 'JR NZ, target\\ndc.b 0\\n' > "$TMP/z80_bad_condition.asm"
+if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects unsupported JR condition"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects unsupported JR condition"; pass=$((pass + 1))
+fi
 printf 'nop\nrts\n' > "$TMP/6501.asm"
 if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
