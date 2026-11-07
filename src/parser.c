@@ -118,7 +118,7 @@ static int parse_z80_register(const char *s, int *reg)
   static const struct { const char *name; int code; } regs[] = {
       {"B", 0}, {"C", 1}, {"D", 2}, {"E", 3}, {"H", 4}, {"L", 5}, {"A", 7},
       {"F", 6}, {"AF", 0x10}, {"BC", 0x11}, {"DE", 0x12}, {"HL", 0x13},
-      {"SP", 0x14}
+      {"SP", 0x14}, {"I", 0x15}, {"R", 0x16}
   };
   if (!s || !*s)
     return 0;

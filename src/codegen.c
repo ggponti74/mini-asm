@@ -196,6 +196,55 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     const Operand *dst = &ops[0];
     const Operand *src = &ops[1];
 
+    /* Special-register transfers and ED-prefixed absolute pair transfers. */
+    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_REGISTER)
+    {
+        if ((dst->value.reg == 0x15 || dst->value.reg == 0x16) &&
+            src->value.reg == 0x07)
+        {
+            buffer_write(out, 0xED);
+            buffer_write(out, dst->value.reg == 0x15 ? 0x47 : 0x4F);
+            return true;
+        }
+        if (dst->value.reg == 0x07 &&
+            (src->value.reg == 0x15 || src->value.reg == 0x16))
+        {
+            buffer_write(out, 0xED);
+            buffer_write(out, src->value.reg == 0x15 ? 0x57 : 0x5F);
+            return true;
+        }
+    }
+    if (dst->type == OPERAND_IMMEDIATE && dst->is_indirect &&
+        src->type == OPERAND_REGISTER)
+    {
+        int p = z80_pair_code(src);
+        if (p >= 0 && src->value.reg != 0x10)
+        {
+            if (dst->value.imm < 0 || dst->value.imm > 65535)
+                return fail("Z80 absolute memory address is out of range");
+            buffer_write(out, 0xED);
+            buffer_write(out, (uint8_t)(0x43 + p * 0x10));
+            buffer_write(out, (uint8_t)dst->value.imm);
+            buffer_write(out, (uint8_t)(dst->value.imm >> 8));
+            return true;
+        }
+    }
+    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_IMMEDIATE &&
+        src->is_indirect)
+    {
+        int p = z80_pair_code(dst);
+        if (p >= 0 && dst->value.reg != 0x10)
+        {
+            if (src->value.imm < 0 || src->value.imm > 65535)
+                return fail("Z80 absolute memory address is out of range");
+            buffer_write(out, 0xED);
+            buffer_write(out, (uint8_t)(0x4B + p * 0x10));
+            buffer_write(out, (uint8_t)src->value.imm);
+            buffer_write(out, (uint8_t)(src->value.imm >> 8));
+            return true;
+        }
+    }
+
     /* LD r,n and LD rr,nn. Parenthesized addresses are memory operands,
        not immediate constants, even though both share OPERAND_IMMEDIATE. */
     if (dst->type == OPERAND_REGISTER &&
@@ -404,6 +453,34 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
     return fail("unsupported Z80 IN/OUT operand form");
 }
 
+static bool emit_z80_ed_special(const char *mnemonic,
+                                 const Operand *ops, OutputBuffer *out)
+{
+    static const struct { const char *name; uint8_t opcode; } fixed[] = {
+        {"NEG", 0x44}, {"RETN", 0x45}, {"RETI", 0x4D},
+        {"RRD", 0x67}, {"RLD", 0x6F}
+    };
+    for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); i++)
+        if (strcmp(mnemonic, fixed[i].name) == 0)
+        {
+            buffer_write(out, 0xED);
+            buffer_write(out, fixed[i].opcode);
+            return true;
+        }
+    if (strcmp(mnemonic, "IM") == 0)
+    {
+        if (ops[0].type != OPERAND_IMMEDIATE || ops[0].symbol ||
+            ops[0].is_indirect || ops[0].value.imm < 0 ||
+            ops[0].value.imm > 2)
+            return fail("Z80 IM mode must be 0, 1, or 2");
+        static const uint8_t modes[] = {0x46, 0x56, 0x5E};
+        buffer_write(out, 0xED);
+        buffer_write(out, modes[ops[0].value.imm]);
+        return true;
+    }
+    return fail("unsupported Z80 ED special instruction");
+}
+
 static bool emit_z80_block(const char *mnemonic, OutputBuffer *out)
 {
     static const struct { const char *name; uint8_t opcode; } forms[] = {
@@ -554,6 +631,10 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
     if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, out);
     if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
+    if (strcmp(m, "IM") == 0 || strcmp(m, "NEG") == 0 ||
+        strcmp(m, "RETI") == 0 || strcmp(m, "RETN") == 0 ||
+        strcmp(m, "RRD") == 0 || strcmp(m, "RLD") == 0)
+        return emit_z80_ed_special(m, operands, out);
     if (strcmp(m, "JR") == 0) return emit_z80_jr(operands, out);
     if (strcmp(m, "DJNZ") == 0) return emit_z80_djnz(&operands[0], out);
     if (strcmp(m, "JP") == 0 || strcmp(m, "CALL") == 0)
