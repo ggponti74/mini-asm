@@ -237,7 +237,7 @@ check_6501_bytes() {   # check_6501_bytes <name> <source> <expected hex>
     name=$1
     expected=$3
     if "$ASM" -t 6501 -o "$TMP/6501.bin" "$2" >"$TMP/asm.log" 2>&1; then
-        got=$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')
+        got=$(od -An -v -tx1 "$TMP/6501.bin" | tr -d ' \n')
         if [ "$got" = "$expected" ]; then
             echo "PASS   $name"; pass=$((pass + 1))
         else
