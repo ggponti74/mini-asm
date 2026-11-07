@@ -25,6 +25,17 @@ WINDOWS_HOST=0
 if gcc -dumpmachine 2>/dev/null | grep -qiE 'mingw|windows'; then
     WINDOWS_HOST=1
 fi
+
+# Paths embedded inside assembly source are not converted by Git Bash's
+# automatic argument translation, so convert them explicitly for MinGW.
+include_path() {
+    if [ "$WINDOWS_HOST" -eq 1 ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/mini-asm-test.XXXXXX") || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
@@ -77,12 +88,14 @@ run_arm_program() {   # run_arm_program <name> <source file>
 run_program main "$DIR/main.asm"
 for sec in "$DIR"/sections/*.asm; do
     name=$(basename "$sec" .asm)
+    sec_path=$(include_path "$sec")
+    common_path=$(include_path "$DIR/common.asm")
     {
         echo "start:"
-        echo "        include \"$sec\""
+        echo "        include \"$sec_path\""
         echo "        moveq   #0, d0"
         echo "        rts"
-        echo "        include \"$DIR/common.asm\""
+        echo "        include \"$common_path\""
     } > "$TMP/section.asm"
     run_program "$name" "$TMP/section.asm"
 done
@@ -102,16 +115,18 @@ for src in "$DIR"/errors/*.asm; do
 done
 
 # 3. ARM programs: run the shared x86 regression suite and ARM-specific tests with qemu-arm
-if command -v qemu-arm >/dev/null 2>&1; then
+if [ "$WINDOWS_HOST" -eq 0 ] && command -v qemu-arm >/dev/null 2>&1; then
     run_arm_program main "$DIR/main.asm"
     for sec in "$DIR"/sections/*.asm; do
         name=$(basename "$sec" .asm)
+        sec_path=$(include_path "$sec")
+        common_path=$(include_path "$DIR/common.asm")
         {
             echo "start:"
-            echo "        include \"$sec\""
+            echo "        include \"$sec_path\""
             echo "        moveq   #0, d0"
             echo "        rts"
-            echo "        include \"$DIR/common.asm\""
+            echo "        include \"$common_path\""
         } > "$TMP/arm-section.asm"
         run_arm_program "$name" "$TMP/arm-section.asm"
     done
@@ -126,7 +141,11 @@ if command -v qemu-arm >/dev/null 2>&1; then
         else echo "FAIL   $name   (exit $got, expected $want)"; fail=$((fail + 1)); fi
     done
 else
-    echo "SKIP   arm/*   (qemu-arm not installed)"
+    if [ "$WINDOWS_HOST" -eq 1 ]; then
+        echo "SKIP   arm/*   (Linux ARM executables cannot run on Windows)"
+    else
+        echo "SKIP   arm/*   (qemu-arm not installed)"
+    fi
 fi
 
 # 4. TRAP #0 service tests
@@ -150,7 +169,7 @@ for src in "$DIR"/trap/*.asm; do
     else
         (cd "$TMP/work" && "$TMP/trap.elf" >/dev/null); report "$tname" $?
     fi
-    if command -v qemu-arm >/dev/null 2>&1; then
+    if [ "$WINDOWS_HOST" -eq 0 ] && command -v qemu-arm >/dev/null 2>&1; then
         if "$ASM" -t arm -o "$TMP/trap.arm" "$src" >"$TMP/asm.log" 2>&1; then
             (cd "$TMP/work" && qemu-arm "$TMP/trap.arm" >/dev/null 2>&1); report "$tname (arm)" $?
         elif grep -q "not supported" "$TMP/asm.log"; then
