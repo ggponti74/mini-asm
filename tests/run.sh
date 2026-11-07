@@ -484,12 +484,22 @@ LD DE,(0x2345)
 LD HL,(0x3456)
 LD SP,(0x4567)
 EOF
-if "$ASM" -t z80 -o "$TMP/z80_ed_special.bin" "$TMP/z80_ed_special.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_ed_special.bin" | tr -d ' 
-')" = "ed44ed45ed4ded46ed56ed5eed67ed6fed47ed4fed57ed5fed431234ed532345ed633456ed734567ed4b3412ed5b4523ed6b5634ed7b6745" ]; then
-    echo "PASS   z80 ED special and absolute pair instructions"; pass=$((pass + 1))
+expected="ed44ed45ed4ded46ed56ed5eed67ed6fed47ed4fed57ed5fed431234ed532345ed633456ed734567ed4b3412ed5b4523ed6b5634ed7b6745"
+if ! "$ASM" -t z80 -o "$TMP/z80_ed_special.bin" "$TMP/z80_ed_special.asm" >"$TMP/asm.log" 2>&1; then
+    echo "FAIL   z80 ED special: assembler error"
+    sed 's/^/         /' "$TMP/asm.log"
+    fail=$((fail + 1))
 else
-    echo "FAIL   z80 ED special and absolute pair instructions"; fail=$((fail + 1))
+    got=$(od -An -v -tx1 "$TMP/z80_ed_special.bin" | tr -d '[:space:]')
+    if [ "$got" = "$expected" ]; then
+        echo "PASS   z80 ED special and absolute pair instructions"
+        pass=$((pass + 1))
+    else
+        echo "FAIL   z80 ED special: unexpected bytes"
+        echo "         expected: $expected"
+        echo "         got:      $got"
+        fail=$((fail + 1))
+    fi
 fi
 expect_z80_ed_failure() {
     printf '%s
