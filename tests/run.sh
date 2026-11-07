@@ -306,17 +306,9 @@ INC (HL)
 DEC A
 INC BC
 DEC SP
-ADD A,0x12
-ADC A,0x34
-SUB 0x56
-SBC A,0x78
-AND 0x9A
-XOR 0xBC
-OR 0xDE
-CP 0xF0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu.bin" "$TMP/z80_alu.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_alu.bin" | tr -d ' \n')" = "80868 8919aab5a7bfc92939ed5aed72" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_alu.bin" | tr -d ' \n')" = "808689929ba4adb6bf0939ed5aed62343d033b" ]; then
     echo "PASS   z80 arithmetic and logical register forms"; pass=$((pass + 1))
 else
     echo "FAIL   z80 arithmetic and logical register forms"; fail=$((fail + 1))
@@ -332,7 +324,7 @@ OR 0xDE
 CP 0xF0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu_immediate.bin" "$TMP/z80_alu_immediate.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_alu_immediate.bin" | tr -d ' \n')" = "c612ce34d656de78e69aee bcf6defef0" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_alu_immediate.bin" | tr -d ' \n')" = "c612ce34d656de78e69aeebcf6defef0" ]; then
     echo "PASS   z80 arithmetic and logical immediate forms"; pass=$((pass + 1))
 else
     echo "FAIL   z80 arithmetic and logical immediate forms"; fail=$((fail + 1))
