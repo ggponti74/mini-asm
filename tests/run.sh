@@ -239,7 +239,7 @@ JP (HL)
 start: NOP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \\n')" = "181e201c281a301838161016c30000c20000fa0000cd0000ec0000c9c0f8e900" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \\n')" = "181d201b2819301738151013c31f00c21f00fa1f00cd1f00ec1f00c9c0f8e900" ]; then
     echo "PASS   z80 conditional control flow"; pass=$((pass + 1))
 else
     echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
@@ -250,7 +250,7 @@ if "$ASM" -t z80 -o "$TMP/z80_bad_jump.bin" "$TMP/z80_bad_jump.asm" >/dev/null 2
 else
     echo "PASS   z80 rejects out-of-range JP target"; pass=$((pass + 1))
 fi
-printf 'JR NZ, target\\ndc.b 0\\n' > "$TMP/z80_bad_condition.asm"
+printf 'JR PO, target\\ndc.b 0\\n' > "$TMP/z80_bad_condition.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects unsupported JR condition"; fail=$((fail + 1))
 else
