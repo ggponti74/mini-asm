@@ -27,6 +27,7 @@ typedef enum {
                        // as OPERAND_NONE
     OPERAND_REGLIST,   // register list d0-d3/a0/a2 (MOVEM): bit n of value.imm = register n (D0-D7 = 0-7, A0-A7 = 8-15)
     OPERAND_MOVEM_ARG, // table-only: a register, a register list or a memory operand (MOVEM)
+    OPERAND_OPT_ANY,   // table-only: optional operand of any otherwise valid type
     OPERAND_BAD        // parser-only: malformed operand (never matches a table slot)
 } OperandType;
 
