@@ -18,8 +18,8 @@
       elf    Linux ELF32 executable (x86)
       bin    Flat binary (x86)
       bin-arm Flat binary (ARM)
-      z80    Flat binary (Z80; core encodings for NOP, LD, JR/DJNZ, JP/CALL/RET,
-             PUSH/POP, ADD/SUB, and simple ALU forms)
+      z80    Flat binary (Z80; core encodings for NOP, LD, arithmetic/logical,
+             rotates/shifts, JR/DJNZ, JP/CALL/RET, and PUSH/POP)
       6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
     Example: mini-asm -t arm -l
