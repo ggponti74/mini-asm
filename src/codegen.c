@@ -148,34 +148,41 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     const Operand *dst = &ops[0];
     const Operand *src = &ops[1];
 
-    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_IMMEDIATE)
+    /* LD r,n and LD rr,nn. Parenthesized addresses are memory operands,
+       not immediate constants, even though both share OPERAND_IMMEDIATE. */
+    if (dst->type == OPERAND_REGISTER &&
+        src->type == OPERAND_IMMEDIATE && !src->is_indirect)
     {
         int d = z80_reg8_code(dst);
         if (d >= 0)
         {
+            if (src->value.imm < -128 || src->value.imm > 255)
+                return fail("Z80 8-bit LD immediate is out of range");
             if (d == 6)
-                return fail("LD (HL), n encodes as a different form");
+            {
+                buffer_write(out, 0x36); /* LD (HL),n */
+                buffer_write(out, (uint8_t)src->value.imm);
+                return true;
+            }
             buffer_write(out, (uint8_t)(0x06 + (d * 8)));
             buffer_write(out, (uint8_t)src->value.imm);
             return true;
         }
+
         int p = z80_pair_code(dst);
-        if (p >= 0)
+        if (p >= 0 && dst->value.reg != 0x10) /* AF is not an LD rr,nn pair */
         {
-            uint8_t op0 = 0x01; // BC
-            if (p == 1)
-                op0 = 0x11;
-            else if (p == 2)
-                op0 = 0x21;
-            else if (p == 3)
-                op0 = 0x31;
-            buffer_write(out, op0);
+            if (src->value.imm < -32768 || src->value.imm > 65535)
+                return fail("Z80 16-bit LD immediate is out of range");
+            static const uint8_t codes[] = {0x01, 0x11, 0x21, 0x31};
+            buffer_write(out, codes[p]);
             buffer_write(out, (uint8_t)(src->value.imm & 0xFF));
             buffer_write(out, (uint8_t)((src->value.imm >> 8) & 0xFF));
             return true;
         }
     }
 
+    /* LD r,r' includes (HL) as register code 6. */
     if (dst->type == OPERAND_REGISTER && src->type == OPERAND_REGISTER)
     {
         int d = z80_reg8_code(dst);
@@ -185,55 +192,45 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
             buffer_write(out, (uint8_t)(0x40 + (d * 8) + s));
             return true;
         }
-        if (dst->value.reg == 0x20 && s >= 0)
+
+        /* The accumulator is the only 8-bit register supported with (BC)/(DE). */
+        if (dst->value.reg == 0x07 && src->is_indirect &&
+            (src->value.reg == 0x21 || src->value.reg == 0x22))
         {
-            buffer_write(out, (uint8_t)(0x70 + s));
+            buffer_write(out, src->value.reg == 0x21 ? 0x0A : 0x1A);
             return true;
         }
-        if (d >= 0 && src->value.reg == 0x20)
+        if (src->value.reg == 0x07 && dst->is_indirect &&
+            (dst->value.reg == 0x21 || dst->value.reg == 0x22))
         {
-            buffer_write(out, (uint8_t)(0x46 + (d * 8)));
-            return true;
-        }
-        if (dst->value.reg == 0x20 && src->value.reg == 0x07)
-        {
-            buffer_write(out, 0x77);
+            buffer_write(out, dst->value.reg == 0x21 ? 0x02 : 0x12);
             return true;
         }
     }
 
-    if (dst->type == OPERAND_IMMEDIATE && src->type == OPERAND_REGISTER)
+    /* LD A,(nn) and LD (nn),A use the same parsed value type as immediates. */
+    if (dst->type == OPERAND_REGISTER && dst->value.reg == 0x07 &&
+        src->type == OPERAND_IMMEDIATE && src->is_indirect)
     {
-        if (src->value.reg == 0x07)
-        {
-            buffer_write(out, 0x32);
-            buffer_write(out, (uint8_t)(src->value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((src->value.imm >> 8) & 0xFF));
-            return true;
-        }
+        if (src->value.imm < 0 || src->value.imm > 65535)
+            return fail("Z80 absolute memory address is out of range");
+        buffer_write(out, 0x3A);
+        buffer_write(out, (uint8_t)(src->value.imm & 0xFF));
+        buffer_write(out, (uint8_t)((src->value.imm >> 8) & 0xFF));
+        return true;
     }
-
-    if (dst->type == OPERAND_REGISTER && src->type == OPERAND_IMMEDIATE)
+    if (dst->type == OPERAND_IMMEDIATE && dst->is_indirect &&
+        dst->value.imm >= 0 && dst->value.imm <= 65535 &&
+        src->type == OPERAND_REGISTER && src->value.reg == 0x07)
     {
-        int d = z80_reg8_code(dst);
-        if (d == 6)
-        {
-            buffer_write(out, 0x36);
-            buffer_write(out, (uint8_t)src->value.imm);
-            return true;
-        }
+        buffer_write(out, 0x32);
+        buffer_write(out, (uint8_t)(dst->value.imm & 0xFF));
+        buffer_write(out, (uint8_t)((dst->value.imm >> 8) & 0xFF));
+        return true;
     }
-
-    if (dst->type == OPERAND_IMMEDIATE && src->type == OPERAND_REGISTER)
-    {
-        if (src->value.reg == 0x07)
-        {
-            buffer_write(out, 0x3A);
-            buffer_write(out, (uint8_t)(dst->value.imm & 0xFF));
-            buffer_write(out, (uint8_t)((dst->value.imm >> 8) & 0xFF));
-            return true;
-        }
-    }
+    if (dst->type == OPERAND_IMMEDIATE && dst->is_indirect &&
+        src->type == OPERAND_REGISTER && src->value.reg == 0x07)
+        return fail("Z80 absolute memory address is out of range");
 
     return fail("unsupported Z80 LD form");
 }

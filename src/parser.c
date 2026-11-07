@@ -153,18 +153,21 @@ static int parse_z80_memory(const char *token, Operand *op)
   {
     op->type = OPERAND_REGISTER;
     op->value.reg = 0x20;
+    op->is_indirect = true;
     return 1;
   }
   if (strcasecmp(inner, "BC") == 0)
   {
     op->type = OPERAND_REGISTER;
     op->value.reg = 0x21;
+    op->is_indirect = true;
     return 1;
   }
   if (strcasecmp(inner, "DE") == 0)
   {
     op->type = OPERAND_REGISTER;
     op->value.reg = 0x22;
+    op->is_indirect = true;
     return 1;
   }
 
@@ -175,6 +178,7 @@ static int parse_z80_memory(const char *token, Operand *op)
     op->type = OPERAND_IMMEDIATE;
     op->value.imm = imm;
     op->symbol = symbol ? copy_string(symbol) : NULL;
+    op->is_indirect = true;
     return 1;
   }
   if (isalpha((unsigned char)inner[0]) || inner[0] == '_')
@@ -185,6 +189,7 @@ static int parse_z80_memory(const char *token, Operand *op)
     op->type = OPERAND_IMMEDIATE;
     op->value.imm = 0;
     op->symbol = copy_string(inner);
+    op->is_indirect = true;
     return 1;
   }
   return 0;
