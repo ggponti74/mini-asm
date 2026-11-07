@@ -19,7 +19,7 @@
       bin    Flat binary (x86)
       bin-arm Flat binary (ARM)
       z80    Flat binary (Z80; core encodings for NOP, LD, arithmetic/logical,
-             rotates/shifts, BIT/RES/SET, JR/DJNZ, JP/CALL/RET, and PUSH/POP)
+             rotates/shifts, BIT/RES/SET, block transfer/search, JR/DJNZ, JP/CALL/RET, and PUSH/POP)
       6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
     Example: mini-asm -t arm -l

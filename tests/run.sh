@@ -386,6 +386,28 @@ if "$ASM" -t z80 -o "$TMP/z80_rotate_shift.bin" "$TMP/z80_rotate_shift.asm" >/de
 else
     echo "FAIL   z80 accumulator rotates and CB shifts"; fail=$((fail + 1))
 fi
+cat > "$TMP/z80_block_transfer_search.asm" <<'EOF'
+LDI
+LDIR
+LDD
+LDDR
+CPI
+CPIR
+CPD
+CPDR
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_block_transfer_search.bin" "$TMP/z80_block_transfer_search.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_block_transfer_search.bin" | tr -d ' \\n')" = "eda0edb0eda8edb8eda1edb1eda9edb9" ]; then
+    echo "PASS   z80 block transfer and search instructions"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 block transfer and search instructions"; fail=$((fail + 1))
+fi
+printf 'LDI A\\n' > "$TMP/z80_bad_block_operand.asm"
+if "$ASM" -t z80 -o "$TMP/z80_bad_block_operand.bin" "$TMP/z80_bad_block_operand.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects operands on block instructions"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects operands on block instructions"; pass=$((pass + 1))
+fi
 cat > "$TMP/z80_bit_ops.asm" <<'EOF'
 BIT 0,B
 BIT 7,A
