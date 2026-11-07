@@ -386,6 +386,33 @@ if "$ASM" -t z80 -o "$TMP/z80_rotate_shift.bin" "$TMP/z80_rotate_shift.asm" >/de
 else
     echo "FAIL   z80 accumulator rotates and CB shifts"; fail=$((fail + 1))
 fi
+cat > "$TMP/z80_bit_ops.asm" <<'EOF'
+BIT 0,B
+BIT 7,A
+BIT 3,(HL)
+RES 0,C
+RES 7,(HL)
+SET 0,D
+SET 7,A
+SET 3,(HL)
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_bit_ops.bin" "$TMP/z80_bit_ops.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_bit_ops.bin" | tr -d ' \\n')" = "cb40cb7fcb5ecb81cbc2cbffcbde" ]; then
+    echo "PASS   z80 BIT/RES/SET register and (HL) forms"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 BIT/RES/SET register and (HL) forms"; fail=$((fail + 1))
+fi
+expect_z80_failure() {   # expect_z80_failure <source>
+    printf '%s\\n' "$1" > "$TMP/z80-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-invalid.bin" "$TMP/z80-invalid.asm" >"$TMP/asm.log" 2>&1; then
+        echo "FAIL   z80 rejects invalid bit form: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid bit form"; pass=$((pass + 1))
+    fi
+}
+expect_z80_failure 'BIT 8,A'
+expect_z80_failure 'RES -1,(HL)'
+expect_z80_failure 'SET 3,BC'
 printf 'ADD A,256\n' > "$TMP/z80_bad_alu_imm.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_alu_imm.bin" "$TMP/z80_bad_alu_imm.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range ALU immediate"; fail=$((fail + 1))
