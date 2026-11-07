@@ -202,18 +202,18 @@ LD B,(HL)
 LD (HL),C
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_ld_memory.bin" "$TMP/z80_ld_memory.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_ld_memory.bin" | tr -d ' \\n')" = "3a341232341236420a1a02124671" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_ld_memory.bin" | tr -d ' \n')" = "3a341232341236420a1a02124671" ]; then
     echo "PASS   z80 LD memory addressing"; pass=$((pass + 1))
 else
     echo "FAIL   z80 LD memory addressing"; fail=$((fail + 1))
 fi
-printf 'LD A,256\\n' > "$TMP/z80_ld_bad_imm.asm"
+printf 'LD A,256\n' > "$TMP/z80_ld_bad_imm.asm"
 if "$ASM" -t z80 -o "$TMP/z80_ld_bad_imm.bin" "$TMP/z80_ld_bad_imm.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range 8-bit LD immediate"; fail=$((fail + 1))
 else
     echo "PASS   z80 rejects out-of-range 8-bit LD immediate"; pass=$((pass + 1))
 fi
-printf 'LD A,(0x10000)\\n' > "$TMP/z80_ld_bad_addr.asm"
+printf 'LD A,(0x10000)\n' > "$TMP/z80_ld_bad_addr.asm"
 if "$ASM" -t z80 -o "$TMP/z80_ld_bad_addr.bin" "$TMP/z80_ld_bad_addr.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range absolute memory address"; fail=$((fail + 1))
 else
