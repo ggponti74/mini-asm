@@ -283,98 +283,111 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     return fail("unsupported Z80 LD form");
 }
 
-static bool emit_z80_alu(const char *mnemonic, const Operand *ops, OutputBuffer *out)
+static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
+                           size_t count, OutputBuffer *out)
 {
-    const Operand *dst = ops; // only one operand expected in these forms
-    const Operand *src = ops + 1;
-    int d = z80_reg8_code(dst);
-    if (strcmp(mnemonic, "INC") == 0)
+    const Operand *dst = count == 2 ? &ops[0] : NULL;
+    const Operand *src = count == 2 ? &ops[1] : &ops[0];
+
+    if (strcmp(mnemonic, "INC") == 0 || strcmp(mnemonic, "DEC") == 0)
     {
-        if (d >= 0)
+        int r = z80_reg8_code(src);
+        if (r >= 0)
         {
-            buffer_write(out, (uint8_t)(0x04 + (d * 8)));
+            buffer_write(out, (uint8_t)((strcmp(mnemonic, "INC") == 0 ? 0x04 : 0x05) + r * 8));
             return true;
         }
-        int p = z80_pair_code(dst);
-        if (p >= 0)
+        int pair = z80_pair_code(src);
+        if (pair >= 0 && src->value.reg != 0x10) /* AF is stack-only */
         {
-            buffer_write(out, (uint8_t)(0x03 + (p * 0x10)));
+            buffer_write(out, (uint8_t)((strcmp(mnemonic, "INC") == 0 ? 0x03 : 0x0B) + pair * 0x10));
             return true;
         }
-        return fail("unsupported Z80 INC form");
-    }
-    if (strcmp(mnemonic, "DEC") == 0)
-    {
-        if (d >= 0)
-        {
-            buffer_write(out, (uint8_t)(0x05 + (d * 8)));
-            return true;
-        }
-        int p = z80_pair_code(dst);
-        if (p >= 0)
-        {
-            buffer_write(out, (uint8_t)(0x0B + (p * 0x10)));
-            return true;
-        }
-        return fail("unsupported Z80 DEC form");
+        return fail("unsupported Z80 INC/DEC operand");
     }
 
-    int r = z80_reg8_code(src);
-    if (src->type == OPERAND_IMMEDIATE)
+    /* 16-bit arithmetic: ADD HL,rr; ADC/SBC HL,rr. */
+    if (strcmp(mnemonic, "ADD") == 0 || strcmp(mnemonic, "ADC") == 0 ||
+        strcmp(mnemonic, "SBC") == 0)
     {
-        uint8_t base = 0;
-        if (strcmp(mnemonic, "ADD") == 0) base = 0xC6;
-        else if (strcmp(mnemonic, "ADC") == 0) base = 0xCE;
-        else if (strcmp(mnemonic, "SUB") == 0) base = 0xD6;
-        else if (strcmp(mnemonic, "SBC") == 0) base = 0xDE;
-        else if (strcmp(mnemonic, "AND") == 0) base = 0xE6;
-        else if (strcmp(mnemonic, "OR") == 0) base = 0xF6;
-        else if (strcmp(mnemonic, "XOR") == 0) base = 0xEE;
-        else return fail("unsupported Z80 immediate ALU form");
-        buffer_write(out, base);
+        if (count == 2 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x13)
+        {
+            int pair = z80_pair_code(src);
+            if (pair < 0 || src->value.reg == 0x10)
+                return fail("Z80 16-bit arithmetic source must be BC, DE, HL, or SP");
+            if (strcmp(mnemonic, "ADD") == 0)
+                buffer_write(out, (uint8_t)(0x09 + pair * 0x10));
+            else
+            {
+                buffer_write(out, 0xED);
+                buffer_write(out, (uint8_t)((strcmp(mnemonic, "ADC") == 0 ? 0x4A : 0x42) + pair * 0x10));
+            }
+            return true;
+        }
+    }
+
+    const char *opname = mnemonic;
+    if (strcmp(mnemonic, "ADD") == 0 || strcmp(mnemonic, "ADC") == 0 ||
+        strcmp(mnemonic, "SBC") == 0)
+    {
+        if (count != 2 || !dst || dst->type != OPERAND_REGISTER || dst->value.reg != 0x07)
+            return fail("Z80 8-bit ADD/ADC/SBC destination must be A");
+    }
+    else if (count != 1)
+        return fail("Z80 SUB/AND/OR/XOR/CP take one source operand");
+
+    static const struct { const char *name; uint8_t reg_base, imm_opcode; } forms[] = {
+        {"ADD", 0x80, 0xC6}, {"ADC", 0x88, 0xCE},
+        {"SUB", 0x90, 0xD6}, {"SBC", 0x98, 0xDE},
+        {"AND", 0xA0, 0xE6}, {"XOR", 0xA8, 0xEE},
+        {"OR",  0xB0, 0xF6}, {"CP",  0xB8, 0xFE}
+    };
+    const struct { const char *name; uint8_t reg_base, imm_opcode; } *form = NULL;
+    for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
+        if (strcmp(opname, forms[i].name) == 0)
+        {
+            form = &forms[i];
+            break;
+        }
+    if (!form)
+        return fail("unsupported Z80 arithmetic/logical instruction");
+
+    if (src->type == OPERAND_IMMEDIATE && !src->is_indirect)
+    {
+        if (src->value.imm < -128 || src->value.imm > 255)
+            return fail("Z80 8-bit ALU immediate is out of range (-128..255)");
+        buffer_write(out, form->imm_opcode);
         buffer_write(out, (uint8_t)src->value.imm);
         return true;
     }
-    if (src->type == OPERAND_REGISTER)
+
+    int r = z80_reg8_code(src);
+    if (src->type == OPERAND_REGISTER && r >= 0)
     {
-        if (strcmp(mnemonic, "ADD") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0x80 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "ADC") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0x88 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "SUB") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0x90 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "SBC") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0x98 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "AND") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0xA0 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "OR") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0xB0 + r));
-            return true;
-        }
-        if (strcmp(mnemonic, "XOR") == 0 && dst->type == OPERAND_REGISTER && dst->value.reg == 0x07)
-        {
-            buffer_write(out, (uint8_t)(0xA8 + r));
-            return true;
-        }
-        return fail("unsupported Z80 register ALU form");
+        buffer_write(out, (uint8_t)(form->reg_base + r));
+        return true;
     }
-    return fail("unsupported Z80 ALU form");
+    return fail("unsupported Z80 arithmetic/logical source operand");
+}
+
+static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
+                                  OutputBuffer *out)
+{
+    static const struct { const char *name; uint8_t base; } forms[] = {
+        {"RLC", 0x00}, {"RRC", 0x08}, {"RL", 0x10}, {"RR", 0x18},
+        {"SLA", 0x20}, {"SRA", 0x28}, {"SRL", 0x38}
+    };
+    int r = z80_reg8_code(op);
+    if (r < 0)
+        return fail("Z80 rotate/shift requires an 8-bit register or (HL)");
+    for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
+        if (strcmp(mnemonic, forms[i].name) == 0)
+        {
+            buffer_write(out, 0xCB);
+            buffer_write(out, (uint8_t)(forms[i].base + r));
+            return true;
+        }
+    return fail("unsupported Z80 rotate/shift instruction");
 }
 
 static bool emit_z80_pushpop(const char *mnemonic, const Operand *op, OutputBuffer *out)
@@ -465,11 +478,24 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "JP") == 0 || strcmp(m, "CALL") == 0)
         return emit_z80_call_or_jp(m, operands, out);
     if (strcmp(m, "PUSH") == 0 || strcmp(m, "POP") == 0) return emit_z80_pushpop(m, &operands[0], out);
-    if (strcmp(m, "INC") == 0 || strcmp(m, "DEC") == 0) return emit_z80_alu(m, operands, out);
+    if (strcmp(m, "INC") == 0 || strcmp(m, "DEC") == 0)
+        return emit_z80_alu(m, operands, entry->operand_count, out);
     if (strcmp(m, "ADD") == 0 || strcmp(m, "ADC") == 0 || strcmp(m, "SUB") == 0 ||
         strcmp(m, "SBC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
-        strcmp(m, "XOR") == 0)
-        return emit_z80_alu(m, operands, out);
+        strcmp(m, "XOR") == 0 || strcmp(m, "CP") == 0)
+        return emit_z80_alu(m, operands, entry->operand_count, out);
+    if (strcmp(m, "RLC") == 0 || strcmp(m, "RRC") == 0 || strcmp(m, "RL") == 0 ||
+        strcmp(m, "RR") == 0 || strcmp(m, "SLA") == 0 || strcmp(m, "SRA") == 0 ||
+        strcmp(m, "SRL") == 0)
+        return emit_z80_rotate_shift(m, &operands[0], out);
+    if (strcmp(m, "RLCA") == 0) { buffer_write(out, 0x07); return true; }
+    if (strcmp(m, "RRCA") == 0) { buffer_write(out, 0x0F); return true; }
+    if (strcmp(m, "RLA") == 0) { buffer_write(out, 0x17); return true; }
+    if (strcmp(m, "RRA") == 0) { buffer_write(out, 0x1F); return true; }
+    if (strcmp(m, "CPL") == 0) { buffer_write(out, 0x2F); return true; }
+    if (strcmp(m, "DAA") == 0) { buffer_write(out, 0x27); return true; }
+    if (strcmp(m, "SCF") == 0) { buffer_write(out, 0x37); return true; }
+    if (strcmp(m, "CCF") == 0) { buffer_write(out, 0x3F); return true; }
     if (strcmp(m, "RST") == 0)
     {
         int32_t v = operands[0].value.imm;
