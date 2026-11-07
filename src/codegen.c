@@ -373,6 +373,23 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
     return fail("unsupported Z80 arithmetic/logical source operand");
 }
 
+static bool emit_z80_block(const char *mnemonic, OutputBuffer *out)
+{
+    static const struct { const char *name; uint8_t opcode; } forms[] = {
+        {"LDI", 0xA0}, {"LDIR", 0xB0}, {"LDD", 0xA8}, {"LDDR", 0xB8},
+        {"CPI", 0xA1}, {"CPIR", 0xB1}, {"CPD", 0xA9}, {"CPDR", 0xB9}
+    };
+
+    for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
+        if (strcmp(mnemonic, forms[i].name) == 0)
+        {
+            buffer_write(out, 0xED);
+            buffer_write(out, forms[i].opcode);
+            return true;
+        }
+    return fail("unsupported Z80 block transfer/search instruction");
+}
+
 static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
                             OutputBuffer *out)
 {
@@ -515,6 +532,11 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
         strcmp(m, "SBC") == 0 || strcmp(m, "AND") == 0 || strcmp(m, "OR") == 0 ||
         strcmp(m, "XOR") == 0 || strcmp(m, "CP") == 0)
         return emit_z80_alu(m, operands, entry->operand_count, out);
+    if (strcmp(m, "LDI") == 0 || strcmp(m, "LDIR") == 0 ||
+        strcmp(m, "LDD") == 0 || strcmp(m, "LDDR") == 0 ||
+        strcmp(m, "CPI") == 0 || strcmp(m, "CPIR") == 0 ||
+        strcmp(m, "CPD") == 0 || strcmp(m, "CPDR") == 0)
+        return emit_z80_block(m, out);
     if (strcmp(m, "BIT") == 0 || strcmp(m, "RES") == 0 || strcmp(m, "SET") == 0)
         return emit_z80_bit(m, operands, out);
     if (strcmp(m, "RLC") == 0 || strcmp(m, "RRC") == 0 || strcmp(m, "RL") == 0 ||
