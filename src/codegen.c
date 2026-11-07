@@ -165,7 +165,7 @@ static bool emit_z80_jr(const Operand *ops, size_t count, OutputBuffer *out)
     static const uint8_t conditional[] = {0x20, 0x28, 0x30, 0x38};
     const Operand *target = &ops[0];
     uint8_t opcode = 0x18;
-    if (count == 2)
+    if (ops[1].type != OPERAND_NONE)
     {
         int cc = z80_condition_code(&ops[0]);
         if (cc < 0 || cc > 3)
@@ -408,7 +408,7 @@ static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *ops,
     const Operand *target = &ops[0];
     uint8_t opcode = is_jp ? 0xC3 : 0xCD;
 
-    if (count == 2)
+    if (ops[1].type != OPERAND_NONE)
     {
         int cc = z80_condition_code(&ops[0]);
         if (cc < 0)
@@ -427,7 +427,7 @@ static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *ops,
         return true;
     }
 
-    if (count == 1 && is_jp && target->type == OPERAND_REGISTER &&
+    if (ops[1].type == OPERAND_NONE && is_jp && target->type == OPERAND_REGISTER &&
         target->is_indirect && target->value.reg == 0x20)
     {
         buffer_write(out, 0xE9); /* JP (HL) */
@@ -440,7 +440,7 @@ static bool emit_z80_ret(const Operand *ops, size_t count, OutputBuffer *out)
 {
     static const uint8_t conditional[] =
         {0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8};
-    if (count == 0)
+    if (ops[0].type == OPERAND_NONE)
     {
         buffer_write(out, 0xC9);
         return true;
@@ -458,12 +458,12 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     const char *m = entry->mnemonic;
     if (strcmp(m, "NOP") == 0) { buffer_write(out, 0x00); return true; }
     if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
-    if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, entry->operand_count, out);
+    if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, 1, out);
     if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
-    if (strcmp(m, "JR") == 0) return emit_z80_jr(operands, entry->operand_count, out);
+    if (strcmp(m, "JR") == 0) return emit_z80_jr(operands, 2, out);
     if (strcmp(m, "DJNZ") == 0) return emit_z80_djnz(&operands[0], out);
     if (strcmp(m, "JP") == 0 || strcmp(m, "CALL") == 0)
-        return emit_z80_call_or_jp(m, operands, entry->operand_count, out);
+        return emit_z80_call_or_jp(m, operands, 2, out);
     if (strcmp(m, "PUSH") == 0 || strcmp(m, "POP") == 0) return emit_z80_pushpop(m, &operands[0], out);
     if (strcmp(m, "INC") == 0 || strcmp(m, "DEC") == 0) return emit_z80_alu(m, operands, out);
     if (strcmp(m, "ADD") == 0 || strcmp(m, "ADC") == 0 || strcmp(m, "SUB") == 0 ||
