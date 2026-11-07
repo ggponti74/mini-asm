@@ -462,6 +462,49 @@ expect_z80_io_failure 'IN F,(C)'
 expect_z80_io_failure 'OUT (C),F'
 expect_z80_io_failure 'IN A,(0x100)'
 expect_z80_io_failure 'OUT (0x100),A'
+cat > "$TMP/z80_ed_special.asm" <<'EOF'
+NEG
+RETN
+RETI
+IM 0
+IM 1
+IM 2
+RRD
+RLD
+LD I,A
+LD R,A
+LD A,I
+LD A,R
+LD (0x1234),BC
+LD (0x2345),DE
+LD (0x3456),HL
+LD (0x4567),SP
+LD BC,(0x1234)
+LD DE,(0x2345)
+LD HL,(0x3456)
+LD SP,(0x4567)
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_ed_special.bin" "$TMP/z80_ed_special.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_ed_special.bin" | tr -d ' 
+')" = "ed44ed45ed4ded46ed56ed5eed67ed6fed47ed4fed57ed5fed431234ed532345ed633456ed734567ed4b3412ed5b4523ed6b5634ed7b6745" ]; then
+    echo "PASS   z80 ED special and absolute pair instructions"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 ED special and absolute pair instructions"; fail=$((fail + 1))
+fi
+expect_z80_ed_failure() {
+    printf '%s
+' "$1" > "$TMP/z80-ed-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-ed-invalid.bin" "$TMP/z80-ed-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid ED form: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid ED form"; pass=$((pass + 1))
+    fi
+}
+expect_z80_ed_failure 'IM 3'
+expect_z80_ed_failure 'IM -1'
+expect_z80_ed_failure 'LD I,B'
+expect_z80_ed_failure 'LD (0x10000),BC'
+expect_z80_ed_failure 'LD AF,(0x1234)'
 cat > "$TMP/z80_bit_ops.asm" <<'EOF'
 BIT 0,B
 BIT 7,A
