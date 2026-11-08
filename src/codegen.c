@@ -922,12 +922,56 @@ static bool emit_z80_ret(const Operand *ops, OutputBuffer *out)
     return true;
 }
 
+static bool emit_z80_exchange(const Operand *ops, OutputBuffer *out)
+{
+    if (ops[0].type == OPERAND_NONE && ops[1].type == OPERAND_NONE)
+    {
+        buffer_write(out, 0xD9); /* EXX */
+        return true;
+    }
+
+    if (ops[0].type == OPERAND_REGISTER &&
+        ops[1].type == OPERAND_REGISTER)
+    {
+        if (ops[0].value.reg == 0x10 && ops[1].value.reg == 0x1D)
+        {
+            buffer_write(out, 0x08); /* EX AF,AF' */
+            return true;
+        }
+        if (ops[0].value.reg == 0x12 && ops[1].value.reg == 0x13)
+        {
+            buffer_write(out, 0xEB); /* EX DE,HL */
+            return true;
+        }
+    }
+
+    if (ops[0].type == OPERAND_REGISTER && ops[0].is_indirect &&
+        ops[0].value.reg == 0x26 && ops[1].type == OPERAND_REGISTER)
+    {
+        if (ops[1].value.reg == 0x13)
+        {
+            buffer_write(out, 0xE3); /* EX (SP),HL */
+            return true;
+        }
+        if (ops[1].value.reg == 0x17 || ops[1].value.reg == 0x18)
+        {
+            buffer_write(out, ops[1].value.reg == 0x17 ? 0xDD : 0xFD);
+            buffer_write(out, 0xE3); /* EX (SP),IX/IY */
+            return true;
+        }
+    }
+
+    return fail("unsupported Z80 EX/EXX form");
+}
+
 static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, OpSize size, OutputBuffer *out)
 {
     (void)size;
     const char *m = entry->mnemonic;
     if (strcmp(m, "NOP") == 0) { buffer_write(out, 0x00); return true; }
     if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
+    if (strcmp(m, "EX") == 0 || strcmp(m, "EXX") == 0)
+        return emit_z80_exchange(operands, out);
     if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, out);
     if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
     if (strcmp(m, "IM") == 0 || strcmp(m, "NEG") == 0 ||
