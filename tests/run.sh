@@ -904,6 +904,35 @@ for bad in "DI A" "EI 1"; do
     fi
 done
 
+cat > "$TMP/z80_rst.asm" <<'EOF'
+RST 0
+RST 8
+RST 0x10
+RST 0x18
+RST 0x20
+RST 0x28
+RST 0x30
+RST 0x38
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_rst.bin" "$TMP/z80_rst.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_rst.bin" | tr -d '[:space:]')" = "c7cfd7dfe7eff7ff" ]; then
+    echo "PASS   z80 RST vectors"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 RST vectors"
+    fail=$((fail + 1))
+fi
+for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
+    printf '%s\n' "$bad" > "$TMP/z80-rst-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-rst-invalid.bin" "$TMP/z80-rst-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid RST vector: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid RST vector"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
