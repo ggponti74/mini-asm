@@ -850,6 +850,36 @@ check_6501_wrap_bytes "6501 indirect label across address wrap" "$TMP/6501-wrap-
 printf 'dc.w target\ntarget: NOP\n' > "$TMP/6501-wrap-label-data.asm"
 check_6501_wrap_bytes "6501 data directive label across address wrap" "$TMP/6501-wrap-label-data.asm" "0001ea"
 
+cat > "$TMP/z80_exchange.asm" <<'EOF'
+EX AF,AF'
+EX DE,HL
+EX (SP),HL
+EX (SP),IX
+EX (SP),IY
+EXX
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_exchange.bin" "$TMP/z80_exchange.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_exchange.bin" | tr -d '[:space:]')" = "08ebe3dde3fde3d9" ]; then
+    echo "PASS   z80 exchange instructions"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 exchange instructions"
+    sed 's/^/         /' "$TMP/asm.log"
+    fail=$((fail + 1))
+fi
+expect_z80_exchange_failure() {
+    printf '%s\\n' "$1" > "$TMP/z80-exchange-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-exchange-invalid.bin" "$TMP/z80-exchange-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid exchange form: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid exchange form"; pass=$((pass + 1))
+    fi
+}
+expect_z80_exchange_failure 'EX BC,DE'
+expect_z80_exchange_failure 'EX (SP),AF'
+expect_z80_exchange_failure 'EX AF,AF'
+expect_z80_exchange_failure 'EXX A'
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
