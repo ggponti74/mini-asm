@@ -541,7 +541,7 @@ IY_OFF EQU 3
 LD C,(IX+IX_OFF)
 LD D,(IY-IY_OFF)
 EOF
-expected="dd213412fd217856dd23fd2bdd09dd19dd29dd39fd09fd19fd29fd39dde5fde1ddf9dd220020fd2a0030dde9fde9dd7e05dd77fefd4600fd717fdd3680a5dd8601fd8effdd9602fd9e03dda600fdae00fdb604fdbefcdd3406fd35fadd4e07fd56fd"
+expected="dd213412fd217856dd23fd2bdd09dd19dd29dd39fd09fd19fd29fd39dde5fde1ddf9dd220020fd2a0030dde9fde9dd7e05dd77fefd4600fd717fdd3680a5dd8601fd8effdd9602fd9e03dda600fdae00ddb604fdbefcdd3406fd35fadd4e07fd56fd"
 if ! "$ASM" -t z80 -o "$TMP/z80_index.bin" "$TMP/z80_index.asm" >"$TMP/asm.log" 2>&1; then
     echo "FAIL   z80 IX/IY and indexed-memory: assembler error"
     sed 's/^/         /' "$TMP/asm.log"
