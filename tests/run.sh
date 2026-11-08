@@ -933,6 +933,28 @@ for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
     fi
 done
 
+cat > "$TMP/z80_indirect_jp.asm" <<'EOF'
+JP (HL)
+JP (IX)
+JP (IY)
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_indirect_jp.bin" "$TMP/z80_indirect_jp.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_indirect_jp.bin" | tr -d '[:space:]')" = "e9dde9fde9" ]; then
+    echo "PASS   z80 indirect JP through HL/IX/IY"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 indirect JP through HL/IX/IY"
+    fail=$((fail + 1))
+fi
+printf '%s\n' 'JP (IX+1)' > "$TMP/z80-indirect-jp-invalid.asm"
+if "$ASM" -t z80 -o "$TMP/z80-indirect-jp-invalid.bin" "$TMP/z80-indirect-jp-invalid.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects displaced indirect JP"
+    fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects displaced indirect JP"
+    pass=$((pass + 1))
+fi
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
