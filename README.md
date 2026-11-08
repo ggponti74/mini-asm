@@ -20,7 +20,7 @@
       bin-arm Flat binary (ARM)
       z80    Flat binary (Z80; core encodings for NOP, LD, arithmetic/logical,
              rotates/shifts, BIT/RES/SET, block transfer/search, IN/OUT and block I/O,
-             interrupt/special-register operations, 16-bit absolute pair transfers,
+             interrupt control (DI/EI), interrupt/special-register operations, 16-bit absolute pair transfers,
              IX/IY register pairs and IXH/IXL/IYH/IYL, indexed memory
              operands (IX+d)/(IY+d), including DDCB/FDCB bit/rotate/shift forms,
              JR/DJNZ, JP/CALL/RET, PUSH/POP, and EX/EXX exchange forms)
