@@ -23,7 +23,7 @@
              interrupt/special-register operations, 16-bit absolute pair transfers,
              IX/IY register pairs and IXH/IXL/IYH/IYL, indexed memory
              operands (IX+d)/(IY+d), including DDCB/FDCB bit/rotate/shift forms,
-             JR/DJNZ, JP/CALL/RET, and PUSH/POP)
+             JR/DJNZ, JP/CALL/RET, PUSH/POP, and EX/EXX exchange forms)
       6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
     Example: mini-asm -t arm -l
