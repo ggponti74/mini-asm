@@ -119,7 +119,8 @@ static int parse_z80_register(const char *s, int *reg)
       {"B", 0}, {"C", 1}, {"D", 2}, {"E", 3}, {"H", 4}, {"L", 5}, {"A", 7},
       {"F", 6}, {"AF", 0x10}, {"BC", 0x11}, {"DE", 0x12}, {"HL", 0x13},
       {"SP", 0x14}, {"I", 0x15}, {"R", 0x16},
-      {"IX", 0x17}, {"IY", 0x18}
+      {"IX", 0x17}, {"IY", 0x18},
+      {"IXH", 0x19}, {"IXL", 0x1A}, {"IYH", 0x1B}, {"IYL", 0x1C}
   };
   if (!s || !*s)
     return 0;
