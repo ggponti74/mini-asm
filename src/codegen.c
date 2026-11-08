@@ -803,7 +803,7 @@ static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
 {
     static const struct { const char *name; uint8_t base; } forms[] = {
         {"RLC", 0x00}, {"RRC", 0x08}, {"RL", 0x10}, {"RR", 0x18},
-        {"SLA", 0x20}, {"SRA", 0x28}, {"SRL", 0x38}
+        {"SLA", 0x20}, {"SRA", 0x28}, {"SLL", 0x30}, {"SRL", 0x38}
     };
     if (z80_is_indexed_memory(op))
     {
@@ -1006,7 +1006,7 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
         return emit_z80_bit(m, operands, out);
     if (strcmp(m, "RLC") == 0 || strcmp(m, "RRC") == 0 || strcmp(m, "RL") == 0 ||
         strcmp(m, "RR") == 0 || strcmp(m, "SLA") == 0 || strcmp(m, "SRA") == 0 ||
-        strcmp(m, "SRL") == 0)
+        strcmp(m, "SRL") == 0 || strcmp(m, "SLL") == 0)
         return emit_z80_rotate_shift(m, &operands[0], out);
     if (strcmp(m, "RLCA") == 0) { buffer_write(out, 0x07); return true; }
     if (strcmp(m, "RRCA") == 0) { buffer_write(out, 0x0F); return true; }

@@ -558,6 +558,31 @@ else
         fail=$((fail + 1))
     fi
 fi
+cat > "$TMP/z80_sll.asm" <<'EOF'
+SLL B
+SLL (HL)
+SLL A
+SLL (IX+1)
+SLL (IY-2)
+EOF
+expected="cb30cb36cb37ddcb0136fdcbfe36"
+if "$ASM" -t z80 -o "$TMP/z80_sll.bin" "$TMP/z80_sll.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_sll.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 undocumented SLL forms"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 undocumented SLL forms"
+    fail=$((fail + 1))
+fi
+printf '%s\n' 'SLL IXH' > "$TMP/z80-sll-invalid.asm"
+if "$ASM" -t z80 -o "$TMP/z80-sll-invalid.bin" "$TMP/z80-sll-invalid.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects SLL index-half register"
+    fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects SLL index-half register"
+    pass=$((pass + 1))
+fi
+
 cat > "$TMP/z80_index_extended.asm" <<'EOF'
 RLC (IX+1)
 BIT 3,(IX-2)
