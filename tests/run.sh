@@ -923,7 +923,7 @@ else
     fail=$((fail + 1))
 fi
 for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-rst-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-rst-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-rst-invalid.bin" "$TMP/z80-rst-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid RST vector: $bad"
         fail=$((fail + 1))
