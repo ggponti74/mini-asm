@@ -603,7 +603,7 @@ else
     fi
 fi
 expect_z80_index_extended_failure() {
-    printf '%s\\n' "$1" > "$TMP/z80-index-extended-invalid.asm"
+    printf '%s\n' "$1" > "$TMP/z80-index-extended-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-index-extended-invalid.bin" "$TMP/z80-index-extended-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid index extension: $1"; fail=$((fail + 1))
     else
