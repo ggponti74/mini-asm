@@ -880,6 +880,30 @@ expect_z80_exchange_failure 'EX (SP),AF'
 expect_z80_exchange_failure 'EX AF,AF'
 expect_z80_exchange_failure 'EXX A'
 
+cat > "$TMP/z80_interrupt_control.asm" <<'EOF'
+DI
+EI
+DI
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_interrupt_control.bin" "$TMP/z80_interrupt_control.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_interrupt_control.bin" | tr -d '[:space:]')" = "f3fbf3" ]; then
+    echo "PASS   z80 interrupt control instructions"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 interrupt control instructions"
+    fail=$((fail + 1))
+fi
+for bad in "DI A" "EI 1"; do
+    printf '%s\n' "$bad" > "$TMP/z80-interrupt-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-interrupt-invalid.bin" "$TMP/z80-interrupt-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects operands on DI/EI: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects operands on DI/EI"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]

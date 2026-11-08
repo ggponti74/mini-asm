@@ -278,6 +278,8 @@ static const OpcodeEntry arm_opcode_table[] = {
 static const OpcodeEntry z80_opcode_table[] = {
     {"NOP", 0x00, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"HALT", 0x76, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"DI", 0xF3, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
+    {"EI", 0xFB, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"EXX", 0xD9, 1, 1, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"EX", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_SRC}, 0},
     {"NEG", 0xED44, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
