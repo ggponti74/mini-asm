@@ -686,6 +686,17 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
     bool is_in = strcmp(mnemonic, "IN") == 0;
     const Operand *port = is_in ? &ops[1] : &ops[0];
     const Operand *reg = is_in ? &ops[0] : &ops[1];
+
+    /* Undocumented IN F,(C): read the port and update flags only. */
+    if (is_in && reg->type == OPERAND_REGISTER && reg->value.reg == 6 &&
+        port->type == OPERAND_REGISTER && port->is_indirect &&
+        port->value.reg == 0x23)
+    {
+        buffer_write(out, 0xED);
+        buffer_write(out, 0x70);
+        return true;
+    }
+
     int r = z80_reg8_code(reg);
     if (r < 0)
         return fail("Z80 IN/OUT requires B, C, D, E, H, L, or A");
