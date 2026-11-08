@@ -555,7 +555,7 @@ else
     fi
 fi
 expect_z80_index_failure() {
-    printf '%s\\n' "$1" > "$TMP/z80-index-invalid.asm"
+    printf '%s\n' "$1" > "$TMP/z80-index-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-index-invalid.bin" "$TMP/z80-index-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid IX/IY form: $1"; fail=$((fail + 1))
     else
