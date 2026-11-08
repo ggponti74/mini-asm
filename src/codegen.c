@@ -111,6 +111,10 @@ static int z80_reg8_code(const Operand *op)
     case 0x03: return 3; // E
     case 0x04: return 4; // H
     case 0x05: return 5; // L
+    case 0x19: return 4; // IXH
+    case 0x1A: return 5; // IXL
+    case 0x1B: return 4; // IYH
+    case 0x1C: return 5; // IYL
     case 0x20: return 6; // (HL)
     case 0x07: return 7; // A
     default: return -1;
@@ -141,6 +145,23 @@ static int z80_index_prefix(const Operand *op)
 {
     return op && op->type == OPERAND_REGISTER ?
            z80_index_prefix_reg(op->value.reg) : -1;
+}
+
+static int z80_index_half_prefix(const Operand *op)
+{
+    if (!op || op->type != OPERAND_REGISTER)
+        return -1;
+    switch (op->value.reg)
+    {
+    case 0x19: case 0x1A: return 0xDD;
+    case 0x1B: case 0x1C: return 0xFD;
+    default: return -1;
+    }
+}
+
+static bool z80_is_index_half(const Operand *op)
+{
+    return z80_index_half_prefix(op) >= 0;
 }
 
 static bool z80_is_indexed_memory(const Operand *op)
@@ -681,9 +702,21 @@ static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
         bit->value.imm < 0 || bit->value.imm > 7)
         return fail("Z80 bit number must be an immediate in the range 0..7");
 
+    if (z80_is_indexed_memory(target))
+    {
+        int prefix = z80_indexed_prefix(target);
+        buffer_write(out, (uint8_t)prefix);
+        buffer_write(out, 0xCB);
+        if (!z80_write_index_disp(target, out)) return false;
+        uint8_t base = strcmp(mnemonic, "BIT") == 0 ? 0x40 :
+                       strcmp(mnemonic, "RES") == 0 ? 0x80 : 0xC0;
+        buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + 6));
+        return true;
+    }
+
     int r = z80_reg8_code(target);
-    if (r < 0)
-        return fail("Z80 BIT/RES/SET requires an 8-bit register or (HL)");
+    if (r < 0 || z80_is_index_half(target))
+        return fail("Z80 BIT/RES/SET requires an 8-bit register, (HL), or indexed memory");
 
     uint8_t base;
     if (strcmp(mnemonic, "BIT") == 0)
@@ -707,9 +740,22 @@ static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
         {"RLC", 0x00}, {"RRC", 0x08}, {"RL", 0x10}, {"RR", 0x18},
         {"SLA", 0x20}, {"SRA", 0x28}, {"SRL", 0x38}
     };
+    if (z80_is_indexed_memory(op))
+    {
+        int prefix = z80_indexed_prefix(op);
+        for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
+            if (strcmp(mnemonic, forms[i].name) == 0)
+            {
+                buffer_write(out, (uint8_t)prefix);
+                buffer_write(out, 0xCB);
+                if (!z80_write_index_disp(op, out)) return false;
+                buffer_write(out, (uint8_t)(forms[i].base + 6));
+                return true;
+            }
+    }
     int r = z80_reg8_code(op);
-    if (r < 0)
-        return fail("Z80 rotate/shift requires an 8-bit register or (HL)");
+    if (r < 0 || z80_is_index_half(op))
+        return fail("Z80 rotate/shift requires an 8-bit register, (HL), or indexed memory");
     for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
         if (strcmp(mnemonic, forms[i].name) == 0)
         {
