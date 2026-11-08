@@ -946,7 +946,7 @@ else
     echo "FAIL   z80 indirect JP through HL/IX/IY"
     fail=$((fail + 1))
 fi
-printf 'JP (IX+1)\\n' > "$TMP/z80-indirect-jp-invalid.asm"
+printf '%s\n' 'JP (IX+1)' > "$TMP/z80-indirect-jp-invalid.asm"
 if "$ASM" -t z80 -o "$TMP/z80-indirect-jp-invalid.bin" "$TMP/z80-indirect-jp-invalid.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects displaced indirect JP"
     fail=$((fail + 1))
