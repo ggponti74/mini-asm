@@ -413,7 +413,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
               fprintf(stderr, "Error in %s at line %zu: undefined symbol '%s'\\n",
                       g_src_file, line_num, ops[i].symbol);
             else
-              fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\\n",
+              fprintf(stderr, "Error in %s at line %zu: undefined EQU constant '%s'\n",
                       g_src_file, line_num, ops[i].symbol);
             ok = 0;
             break;
@@ -425,7 +425,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
                                 (ops[i].disp < -32768 || ops[i].disp > 32767)))
         {
           if (is_z80_indexed)
-            fprintf(stderr, "Error in %s at line %zu: Z80 indexed displacement must fit in -128..127\\n",
+            fprintf(stderr, "Error in %s at line %zu: Z80 indexed displacement must fit in -128..127\n",
                     g_src_file, line_num);
           else if (is_6501_indirect)
             fprintf(stderr, "Error in %s at line %zu: 6501 indirect address must fit in 16 bits (0..65535)\\n",
