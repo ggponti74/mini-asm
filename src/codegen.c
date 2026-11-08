@@ -970,8 +970,8 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     const char *m = entry->mnemonic;
     if (strcmp(m, "NOP") == 0) { buffer_write(out, 0x00); return true; }
     if (strcmp(m, "HALT") == 0) { buffer_write(out, 0x76); return true; }
-    if (strcmp(m, "EX") == 0 || strcmp(m, "EXX") == 0)
-        return emit_z80_exchange(operands, out);
+    if (strcmp(m, "EXX") == 0) { buffer_write(out, 0xD9); return true; }
+    if (strcmp(m, "EX") == 0) return emit_z80_exchange(operands, out);
     if (strcmp(m, "RET") == 0) return emit_z80_ret(operands, out);
     if (strcmp(m, "LD") == 0) return emit_z80_ld(operands, out);
     if (strcmp(m, "IM") == 0 || strcmp(m, "NEG") == 0 ||
