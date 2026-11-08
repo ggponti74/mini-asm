@@ -558,6 +558,63 @@ else
         fail=$((fail + 1))
     fi
 fi
+cat > "$TMP/z80_index_extended.asm" <<'EOF'
+RLC (IX+1)
+BIT 3,(IX-2)
+RES 5,(IY+4)
+SET 7,(IY)
+SRA (IY-1)
+LD IXH,0x12
+LD IXL,0x34
+LD IYH,0x56
+LD IYL,0x78
+LD A,IXH
+LD IYL,A
+LD IXH,IXL
+LD IYH,B
+INC IXH
+DEC IXL
+INC IYH
+DEC IYL
+ADD A,IXH
+ADC A,IXL
+SUB IYH
+SBC A,IYL
+AND IXH
+XOR IXL
+OR IYH
+CP IYL
+EOF
+expected="ddcb0106ddcbfe5efdcb04aefdcb00fefdcbff2efd2612dd2e34fd2656fd2e78dd7cfd6fdd65fd60dd24dd2dfd24fd2ddd84dd8dfd94fd9ddda4ddadfdb4fdbd"
+if ! "$ASM" -t z80 -o "$TMP/z80_index_extended.bin" "$TMP/z80_index_extended.asm" >"$TMP/asm.log" 2>&1; then
+    echo "FAIL   z80 DDCB/FDCB and index-half: assembler error"
+    sed 's/^/         /' "$TMP/asm.log"
+    fail=$((fail + 1))
+else
+    got=$(od -An -v -tx1 "$TMP/z80_index_extended.bin" | tr -d '[:space:]')
+    if [ "$got" = "$expected" ]; then
+        echo "PASS   z80 DDCB/FDCB and IXH/IXL/IYH/IYL"
+        pass=$((pass + 1))
+    else
+        echo "FAIL   z80 DDCB/FDCB and index-half: unexpected bytes"
+        echo "         expected: $expected"
+        echo "         got:      $got"
+        fail=$((fail + 1))
+    fi
+fi
+expect_z80_index_extended_failure() {
+    printf '%s\\n' "$1" > "$TMP/z80-index-extended-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-index-extended-invalid.bin" "$TMP/z80-index-extended-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid index extension: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid index extension"; pass=$((pass + 1))
+    fi
+}
+expect_z80_index_extended_failure 'LD IXH,(IX+1)'
+expect_z80_index_extended_failure 'LD (IX+1),IXH'
+expect_z80_index_extended_failure 'LD IXH,IYL'
+expect_z80_index_extended_failure 'RLC IXH'
+expect_z80_index_extended_failure 'BIT 2,(IY+128)'
 expect_z80_index_failure() {
     printf '%s\n' "$1" > "$TMP/z80-index-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-index-invalid.bin" "$TMP/z80-index-invalid.asm" >/dev/null 2>&1; then
