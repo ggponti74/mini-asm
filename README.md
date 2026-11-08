@@ -40,7 +40,9 @@
     memory operands are `(An)`, `(An)+`, and `-(An)`.
 
     The Z80 and 6501 targets are flat-binary encoders for their respective CPU
-    instruction sets. The 6501 target supports official NMOS 6501/6502 opcodes
+    instruction sets. On Z80, indexed memory syntax is `(IX)`, `(IX+5)`,
+    or `(IY-2)`; signed offsets must fit in -128..127 and may use EQU constants.
+    The 6501 target supports official NMOS 6501/6502 opcodes
     and implied, accumulator, immediate, zero-page, absolute, indexed, indirect,
     and relative addressing. Use `#value` for immediates, `ASL A` for an
     accumulator shift, `$xx` for zero-page
