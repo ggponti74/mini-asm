@@ -868,7 +868,7 @@ else
     fail=$((fail + 1))
 fi
 expect_z80_exchange_failure() {
-    printf '%s\\n' "$1" > "$TMP/z80-exchange-invalid.asm"
+    printf '%s\n' "$1" > "$TMP/z80-exchange-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-exchange-invalid.bin" "$TMP/z80-exchange-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid exchange form: $1"; fail=$((fail + 1))
     else
