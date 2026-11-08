@@ -268,6 +268,41 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     /* IX/IY register-pair loads and absolute memory transfers. */
     int dst_index_prefix = z80_index_prefix(dst);
     int src_index_prefix = z80_index_prefix(src);
+    int dst_half_prefix = z80_index_half_prefix(dst);
+    int src_half_prefix = z80_index_half_prefix(src);
+
+    /* IXH/IXL and IYH/IYL use the corresponding DD/FD prefix. */
+    if (dst_half_prefix >= 0 || src_half_prefix >= 0)
+    {
+        int prefix = dst_half_prefix >= 0 ? dst_half_prefix : src_half_prefix;
+        if ((dst_half_prefix >= 0 && src_half_prefix >= 0 &&
+             dst_half_prefix != src_half_prefix) ||
+            (dst->type == OPERAND_REGISTER && dst->is_indirect) ||
+            (src->type == OPERAND_REGISTER && src->is_indirect) ||
+            (dst->type != OPERAND_REGISTER) ||
+            (src->type != OPERAND_REGISTER &&
+             !(src->type == OPERAND_IMMEDIATE && !src->is_indirect)))
+            return fail("unsupported Z80 index-half LD form");
+
+        if (src->type == OPERAND_IMMEDIATE)
+        {
+            int d = z80_reg8_code(dst);
+            if (d < 0 || d == 6 || src->value.imm < -128 || src->value.imm > 255)
+                return fail("invalid Z80 index-half immediate load");
+            buffer_write(out, (uint8_t)prefix);
+            buffer_write(out, (uint8_t)(0x06 + d * 8));
+            buffer_write(out, (uint8_t)src->value.imm);
+            return true;
+        }
+
+        int d = z80_reg8_code(dst), s = z80_reg8_code(src);
+        if (d < 0 || s < 0 || d == 6 || s == 6)
+            return fail("invalid Z80 index-half register load");
+        buffer_write(out, (uint8_t)prefix);
+        buffer_write(out, (uint8_t)(0x40 + d * 8 + s));
+        return true;
+    }
+
     if (dst_index_prefix >= 0 && src->type == OPERAND_IMMEDIATE && !src->is_indirect)
     {
         if (src->value.imm < -32768 || src->value.imm > 65535)
@@ -487,6 +522,14 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
 
     if (strcmp(mnemonic, "INC") == 0 || strcmp(mnemonic, "DEC") == 0)
     {
+        int half_prefix = z80_index_half_prefix(src);
+        if (half_prefix >= 0)
+        {
+            int r = z80_reg8_code(src);
+            buffer_write(out, (uint8_t)half_prefix);
+            buffer_write(out, (uint8_t)((strcmp(mnemonic, "INC") == 0 ? 0x04 : 0x05) + r * 8));
+            return true;
+        }
         int index_prefix = z80_index_prefix(src);
         if (index_prefix >= 0)
         {
@@ -580,6 +623,28 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
         }
     if (!found)
         return fail("unsupported Z80 arithmetic/logical instruction");
+
+    int half_prefix = z80_index_half_prefix(src);
+    if (half_prefix >= 0)
+    {
+        if ((count == 2 && (!dst || dst->type != OPERAND_REGISTER ||
+                            dst->value.reg != 0x07)) ||
+            (src->type != OPERAND_REGISTER))
+            return fail("Z80 index-half ALU source requires accumulator A");
+        int r = z80_reg8_code(src);
+        static const struct { const char *name; uint8_t base; } half_forms[] = {
+            {"ADD", 0x80}, {"ADC", 0x88}, {"SUB", 0x90}, {"SBC", 0x98},
+            {"AND", 0xA0}, {"XOR", 0xA8}, {"OR", 0xB0}, {"CP", 0xB8}
+        };
+        for (size_t i = 0; i < sizeof(half_forms) / sizeof(half_forms[0]); i++)
+            if (strcmp(mnemonic, half_forms[i].name) == 0)
+            {
+                buffer_write(out, (uint8_t)half_prefix);
+                buffer_write(out, (uint8_t)(half_forms[i].base + r));
+                return true;
+            }
+        return fail("unsupported Z80 index-half ALU instruction");
+    }
 
     int indexed_prefix = z80_indexed_prefix(src);
     if (indexed_prefix >= 0)
