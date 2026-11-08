@@ -894,7 +894,7 @@ else
     fail=$((fail + 1))
 fi
 for bad in "DI A" "EI 1"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-interrupt-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-interrupt-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-interrupt-invalid.bin" "$TMP/z80-interrupt-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects operands on DI/EI: $bad"
         fail=$((fail + 1))
