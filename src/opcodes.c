@@ -285,7 +285,7 @@ static const OpcodeEntry z80_opcode_table[] = {
     {"RRD", 0xED67, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"RLD", 0xED6F, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"RET", 0xC9, 1, 1, 1, {OPERAND_OPT_REG, OPERAND_NONE}, 0},
-    {"LD", 0x00, 1, 1, 2, {OPERAND_EA_ALT, OPERAND_EA_SRC}, 0},
+    {"LD", 0x00, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_EA_SRC}, 0},
     {"JP", 0xC3, 1, 1, 2, {OPERAND_EA_SRC, OPERAND_OPT_ANY}, 0},
     {"JR", 0x18, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_OPT_ANY}, 0},
     {"DJNZ", 0x10, 1, 1, 1, {OPERAND_REG_OR_IMM, OPERAND_NONE}, 0},
