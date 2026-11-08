@@ -132,6 +132,54 @@ static int z80_pair_code(const Operand *op)
     }
 }
 
+static int z80_index_prefix_reg(int reg)
+{
+    return reg == 0x17 ? 0xDD : reg == 0x18 ? 0xFD : -1;
+}
+
+static int z80_index_prefix(const Operand *op)
+{
+    return op && op->type == OPERAND_REGISTER ?
+           z80_index_prefix_reg(op->value.reg) : -1;
+}
+
+static bool z80_is_indexed_memory(const Operand *op)
+{
+    return op && op->type == OPERAND_DISP &&
+           (op->value.reg == 0x24 || op->value.reg == 0x25);
+}
+
+static int z80_indexed_prefix(const Operand *op)
+{
+    return z80_is_indexed_memory(op) ?
+           (op->value.reg == 0x24 ? 0xDD : 0xFD) : -1;
+}
+
+static bool z80_write_index_disp(const Operand *op, OutputBuffer *out)
+{
+    if (!z80_is_indexed_memory(op))
+        return false;
+    if (op->disp < -128 || op->disp > 127)
+        return fail("Z80 indexed displacement must fit in -128..127");
+    buffer_write(out, (uint8_t)op->disp);
+    return true;
+}
+
+static int z80_index_pair_code(const Operand *op)
+{
+    if (!op || op->type != OPERAND_REGISTER)
+        return -1;
+    switch (op->value.reg)
+    {
+    case 0x11: return 0;
+    case 0x12: return 1;
+    case 0x14: return 3;
+    case 0x17: return 2;
+    case 0x18: return 2;
+    default: return -1;
+    }
+}
+
 static int z80_condition_code(const Operand *op)
 {
     if (!op || op->type != OPERAND_REGISTER ||
@@ -195,6 +243,84 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
 {
     const Operand *dst = &ops[0];
     const Operand *src = &ops[1];
+
+    /* IX/IY register-pair loads and absolute memory transfers. */
+    int dst_index_prefix = z80_index_prefix(dst);
+    int src_index_prefix = z80_index_prefix(src);
+    if (dst_index_prefix >= 0 && src->type == OPERAND_IMMEDIATE && !src->is_indirect)
+    {
+        if (src->value.imm < -32768 || src->value.imm > 65535)
+            return fail("Z80 16-bit LD immediate is out of range");
+        buffer_write(out, (uint8_t)dst_index_prefix);
+        buffer_write(out, 0x21);
+        buffer_write(out, (uint8_t)src->value.imm);
+        buffer_write(out, (uint8_t)(src->value.imm >> 8));
+        return true;
+    }
+    if (dst_index_prefix >= 0 && src->type == OPERAND_IMMEDIATE && src->is_indirect)
+    {
+        if (src->value.imm < 0 || src->value.imm > 65535)
+            return fail("Z80 absolute memory address is out of range");
+        buffer_write(out, (uint8_t)dst_index_prefix);
+        buffer_write(out, 0x2A);
+        buffer_write(out, (uint8_t)src->value.imm);
+        buffer_write(out, (uint8_t)(src->value.imm >> 8));
+        return true;
+    }
+    if (dst->type == OPERAND_IMMEDIATE && dst->is_indirect && src_index_prefix >= 0)
+    {
+        if (dst->value.imm < 0 || dst->value.imm > 65535)
+            return fail("Z80 absolute memory address is out of range");
+        buffer_write(out, (uint8_t)src_index_prefix);
+        buffer_write(out, 0x22);
+        buffer_write(out, (uint8_t)dst->value.imm);
+        buffer_write(out, (uint8_t)(dst->value.imm >> 8));
+        return true;
+    }
+    if (dst->type == OPERAND_REGISTER && dst->value.reg == 0x14 && src_index_prefix >= 0)
+    {
+        buffer_write(out, (uint8_t)src_index_prefix);
+        buffer_write(out, 0xF9);
+        return true;
+    }
+
+    /* Indexed-memory LD forms. */
+    int dst_mem_prefix = z80_indexed_prefix(dst);
+    int src_mem_prefix = z80_indexed_prefix(src);
+    if (dst_mem_prefix >= 0)
+    {
+        if (src->type == OPERAND_REGISTER)
+        {
+            int r = z80_reg8_code(src);
+            if (r < 0 || r == 6)
+                return fail("Z80 indexed LD source must be an 8-bit register");
+            buffer_write(out, (uint8_t)dst_mem_prefix);
+            buffer_write(out, (uint8_t)(0x70 + r));
+            return z80_write_index_disp(dst, out);
+        }
+        if (src->type == OPERAND_IMMEDIATE && !src->is_indirect)
+        {
+            if (src->value.imm < -128 || src->value.imm > 255)
+                return fail("Z80 8-bit LD immediate is out of range");
+            buffer_write(out, (uint8_t)dst_mem_prefix);
+            buffer_write(out, 0x36);
+            if (!z80_write_index_disp(dst, out)) return false;
+            buffer_write(out, (uint8_t)src->value.imm);
+            return true;
+        }
+        return fail("unsupported Z80 indexed LD destination form");
+    }
+    if (src_mem_prefix >= 0)
+    {
+        if (dst->type != OPERAND_REGISTER)
+            return fail("Z80 indexed LD destination must be an 8-bit register");
+        int r = z80_reg8_code(dst);
+        if (r < 0 || r == 6)
+            return fail("Z80 indexed LD destination must be an 8-bit register");
+        buffer_write(out, (uint8_t)src_mem_prefix);
+        buffer_write(out, (uint8_t)(0x46 + r * 8));
+        return z80_write_index_disp(src, out);
+    }
 
     /* Special-register transfers and ED-prefixed absolute pair transfers. */
     if (dst->type == OPERAND_REGISTER && src->type == OPERAND_REGISTER)
@@ -340,6 +466,20 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
 
     if (strcmp(mnemonic, "INC") == 0 || strcmp(mnemonic, "DEC") == 0)
     {
+        int index_prefix = z80_index_prefix(src);
+        if (index_prefix >= 0)
+        {
+            buffer_write(out, (uint8_t)index_prefix);
+            buffer_write(out, strcmp(mnemonic, "INC") == 0 ? 0x23 : 0x2B);
+            return true;
+        }
+        int indexed_prefix = z80_indexed_prefix(src);
+        if (indexed_prefix >= 0)
+        {
+            buffer_write(out, (uint8_t)indexed_prefix);
+            buffer_write(out, strcmp(mnemonic, "INC") == 0 ? 0x34 : 0x35);
+            return z80_write_index_disp(src, out);
+        }
         int r = z80_reg8_code(src);
         if (r >= 0)
         {
@@ -353,6 +493,22 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
             return true;
         }
         return fail("unsupported Z80 INC/DEC operand");
+    }
+
+    /* 16-bit indexed arithmetic: ADD IX/IY,BC/DE/IX-or-IY/SP. */
+    if (strcmp(mnemonic, "ADD") == 0 && count == 2)
+    {
+        int index_prefix = z80_index_prefix(dst);
+        int pair = z80_index_pair_code(src);
+        if (index_prefix >= 0)
+        {
+            if (pair < 0 || (src->value.reg == 0x17 && dst->value.reg != 0x17) ||
+                (src->value.reg == 0x18 && dst->value.reg != 0x18))
+                return fail("Z80 ADD IX/IY source must be BC, DE, the same index register, or SP");
+            buffer_write(out, (uint8_t)index_prefix);
+            buffer_write(out, (uint8_t)(0x09 + pair * 0x10));
+            return true;
+        }
     }
 
     /* 16-bit arithmetic: ADD HL,rr; ADC/SBC HL,rr. */
@@ -403,6 +559,22 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
         }
     if (!found)
         return fail("unsupported Z80 arithmetic/logical instruction");
+
+    int indexed_prefix = z80_indexed_prefix(src);
+    if (indexed_prefix >= 0)
+    {
+        static const struct { const char *name; uint8_t opcode; } indexed_forms[] = {
+            {"ADD", 0x86}, {"ADC", 0x8E}, {"SUB", 0x96}, {"SBC", 0x9E},
+            {"AND", 0xA6}, {"XOR", 0xAE}, {"OR", 0xB6}, {"CP", 0xBE}
+        };
+        for (size_t i = 0; i < sizeof(indexed_forms) / sizeof(indexed_forms[0]); i++)
+            if (strcmp(mnemonic, indexed_forms[i].name) == 0)
+            {
+                buffer_write(out, (uint8_t)indexed_prefix);
+                buffer_write(out, indexed_forms[i].opcode);
+                return z80_write_index_disp(src, out);
+            }
+    }
 
     if (src->type == OPERAND_IMMEDIATE && !src->is_indirect)
     {
@@ -550,6 +722,13 @@ static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
 
 static bool emit_z80_pushpop(const char *mnemonic, const Operand *op, OutputBuffer *out)
 {
+    int index_prefix = z80_index_prefix(op);
+    if (index_prefix >= 0)
+    {
+        buffer_write(out, (uint8_t)index_prefix);
+        buffer_write(out, strcmp(mnemonic, "PUSH") == 0 ? 0xE5 : 0xE1);
+        return true;
+    }
     int p = z80_pair_code(op);
     if (p < 0)
         return fail("unsupported Z80 PUSH/POP register");
@@ -586,6 +765,15 @@ static bool emit_z80_call_or_jp(const char *mnemonic, const Operand *ops,
             return fail("Z80 JP/CALL condition must be NZ, Z, NC, C, PO, PE, P, or M");
         opcode = is_jp ? jp_conditions[cc] : call_conditions[cc];
         target = &ops[1];
+    }
+
+    if (is_jp && ops[1].type == OPERAND_NONE && z80_is_indexed_memory(target) &&
+        target->disp == 0)
+    {
+        int prefix = z80_indexed_prefix(target);
+        buffer_write(out, (uint8_t)prefix);
+        buffer_write(out, 0xE9);
+        return true;
     }
 
     if (target->type == OPERAND_IMMEDIATE && !target->is_indirect)

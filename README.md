@@ -21,6 +21,7 @@
       z80    Flat binary (Z80; core encodings for NOP, LD, arithmetic/logical,
              rotates/shifts, BIT/RES/SET, block transfer/search, IN/OUT and block I/O,
              interrupt/special-register operations, 16-bit absolute pair transfers,
+             IX/IY register pairs, indexed memory operands (IX+d)/(IY+d),
              JR/DJNZ, JP/CALL/RET, and PUSH/POP)
       6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
@@ -39,7 +40,9 @@
     memory operands are `(An)`, `(An)+`, and `-(An)`.
 
     The Z80 and 6501 targets are flat-binary encoders for their respective CPU
-    instruction sets. The 6501 target supports official NMOS 6501/6502 opcodes
+    instruction sets. On Z80, indexed memory syntax is `(IX)`, `(IX+5)`,
+    or `(IY-2)`; signed offsets must fit in -128..127 and may use EQU constants.
+    The 6501 target supports official NMOS 6501/6502 opcodes
     and implied, accumulator, immediate, zero-page, absolute, indexed, indirect,
     and relative addressing. Use `#value` for immediates, `ASL A` for an
     accumulator shift, `$xx` for zero-page

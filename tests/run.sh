@@ -501,6 +501,77 @@ else
         fail=$((fail + 1))
     fi
 fi
+cat > "$TMP/z80_index.asm" <<'EOF'
+LD IX,0x1234
+LD IY,0x5678
+INC IX
+DEC IY
+ADD IX,BC
+ADD IX,DE
+ADD IX,IX
+ADD IX,SP
+ADD IY,BC
+ADD IY,DE
+ADD IY,IY
+ADD IY,SP
+PUSH IX
+POP IY
+LD SP,IX
+LD (0x2000),IX
+LD IY,(0x3000)
+JP (IX)
+JP (IY)
+LD A,(IX+5)
+LD (IX-2),A
+LD B,(IY)
+LD (IY+127),C
+LD (IX-128),0xA5
+ADD A,(IX+1)
+ADC A,(IY-1)
+SUB (IX+2)
+SBC A,(IY+3)
+AND (IX)
+XOR (IY)
+OR (IX+4)
+CP (IY-4)
+INC (IX+6)
+DEC (IY-6)
+IX_OFF EQU 7
+IY_OFF EQU 3
+LD C,(IX+IX_OFF)
+LD D,(IY-IY_OFF)
+EOF
+expected="dd213412fd217856dd23fd2bdd09dd19dd29dd39fd09fd19fd29fd39dde5fde1ddf9dd220020fd2a0030dde9fde9dd7e05dd77fefd4600fd717fdd3680a5dd8601fd8effdd9602fd9e03dda600fdae00ddb604fdbefcdd3406fd35fadd4e07fd56fd"
+if ! "$ASM" -t z80 -o "$TMP/z80_index.bin" "$TMP/z80_index.asm" >"$TMP/asm.log" 2>&1; then
+    echo "FAIL   z80 IX/IY and indexed-memory: assembler error"
+    sed 's/^/         /' "$TMP/asm.log"
+    fail=$((fail + 1))
+else
+    got=$(od -An -v -tx1 "$TMP/z80_index.bin" | tr -d '[:space:]')
+    if [ "$got" = "$expected" ]; then
+        echo "PASS   z80 IX/IY pairs and indexed-memory operations"
+        pass=$((pass + 1))
+    else
+        echo "FAIL   z80 IX/IY and indexed-memory: unexpected bytes"
+        echo "         expected: $expected"
+        echo "         got:      $got"
+        fail=$((fail + 1))
+    fi
+fi
+expect_z80_index_failure() {
+    printf '%s\n' "$1" > "$TMP/z80-index-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-index-invalid.bin" "$TMP/z80-index-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid IX/IY form: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid IX/IY form"; pass=$((pass + 1))
+    fi
+}
+expect_z80_index_failure 'LD A,(IX+128)'
+expect_z80_index_failure 'LD A,(IY-129)'
+expect_z80_index_failure 'ADD IX,IY'
+expect_z80_index_failure 'LD (IX+1),IX'
+expect_z80_index_failure 'LD (IX+1),(IY+1)'
+expect_z80_index_failure 'LD IX,0x10000'
 expect_z80_ed_failure() {
     printf '%s
 ' "$1" > "$TMP/z80-ed-invalid.asm"

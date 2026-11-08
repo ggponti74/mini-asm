@@ -394,24 +394,22 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       }
       if (ops[i].type == OPERAND_DISP)
       {
+        const char *active_arch = opcodes_active_arch_name();
+        bool is_6501_indirect = active_arch && strcmp(active_arch, "6501") == 0;
+        bool is_z80_indexed = active_arch && strcmp(active_arch, "z80") == 0 &&
+                              (ops[i].value.reg == 0x24 || ops[i].value.reg == 0x25);
+        int index_sign = is_z80_indexed && ops[i].disp < 0 ? -1 : 1;
         if (ops[i].symbol && pass == 2)
         {
           int32_t value;
           size_t off;
           if (symtab_find_equ(ops[i].symbol, &value))
-          {
-            ops[i].disp = value;
-          }
-          else if (opcodes_active_arch_name() &&
-                   strcmp(opcodes_active_arch_name(), "6501") == 0 &&
-                   symtab_find(ops[i].symbol, &off))
-          {
+            ops[i].disp = is_z80_indexed ? value * index_sign : value;
+          else if (is_6501_indirect && symtab_find(ops[i].symbol, &off))
             ops[i].disp = resolve_label_address(code_base, off);
-          }
           else
           {
-            if (opcodes_active_arch_name() &&
-                strcmp(opcodes_active_arch_name(), "6501") == 0)
+            if (is_6501_indirect)
               fprintf(stderr, "Error in %s at line %zu: undefined symbol '%s'\n",
                       g_src_file, line_num, ops[i].symbol);
             else
@@ -421,13 +419,15 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
             break;
           }
         }
-        bool is_6501_indirect = opcodes_active_arch_name() &&
-                                strcmp(opcodes_active_arch_name(), "6501") == 0;
         if ((!ops[i].symbol || pass == 2) &&
-            (is_6501_indirect ? (ops[i].disp < 0 || ops[i].disp > 65535)
-                              : (ops[i].disp < -32768 || ops[i].disp > 32767)))
+            (is_z80_indexed ? (ops[i].disp < -128 || ops[i].disp > 127) :
+             is_6501_indirect ? (ops[i].disp < 0 || ops[i].disp > 65535) :
+                                (ops[i].disp < -32768 || ops[i].disp > 32767)))
         {
-          if (is_6501_indirect)
+          if (is_z80_indexed)
+            fprintf(stderr, "Error in %s at line %zu: Z80 indexed displacement must fit in -128..127\n",
+                    g_src_file, line_num);
+          else if (is_6501_indirect)
             fprintf(stderr, "Error in %s at line %zu: 6501 indirect address must fit in 16 bits (0..65535)\n",
                     g_src_file, line_num);
           else
