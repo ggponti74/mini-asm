@@ -118,7 +118,8 @@ static int parse_z80_register(const char *s, int *reg)
   static const struct { const char *name; int code; } regs[] = {
       {"B", 0}, {"C", 1}, {"D", 2}, {"E", 3}, {"H", 4}, {"L", 5}, {"A", 7},
       {"F", 6}, {"AF", 0x10}, {"BC", 0x11}, {"DE", 0x12}, {"HL", 0x13},
-      {"SP", 0x14}, {"I", 0x15}, {"R", 0x16}
+      {"SP", 0x14}, {"I", 0x15}, {"R", 0x16},
+      {"IX", 0x17}, {"IY", 0x18}
   };
   if (!s || !*s)
     return 0;
@@ -164,6 +165,37 @@ static int parse_z80_memory(const char *token, Operand *op)
     return 0;
   memcpy(inner, token + 1, n);
   inner[n] = '\0';
+
+  /* IX/IY indexed memory: (IX), (IX+disp), (IX-disp), and IY equivalents.
+     Keep the index-register identity in value.reg; main.c resolves symbolic
+     EQU displacements in pass 2. */
+  if (toupper((unsigned char)inner[0]) == 'I' &&
+      (toupper((unsigned char)inner[1]) == 'X' ||
+       toupper((unsigned char)inner[1]) == 'Y'))
+  {
+    int index_reg = toupper((unsigned char)inner[1]) == 'X' ? 0x24 : 0x25;
+    const char *tail = inner + 2;
+    int sign = 1;
+    if (*tail == '+' || *tail == '-')
+    {
+      if (*tail == '-') sign = -1;
+      tail++;
+      if (!*tail) return 0;
+    }
+    else if (*tail)
+      return 0;
+
+    int32_t disp = 0;
+    const char *symbol = NULL;
+    if (*tail && !parse_z80_number(tail, &disp, &symbol))
+      return 0;
+    op->type = OPERAND_DISP;
+    op->disp = symbol ? sign : disp * sign;
+    op->value.reg = index_reg;
+    op->symbol = symbol ? copy_string(symbol) : NULL;
+    op->is_indirect = true;
+    return 1;
+  }
 
   if (strcasecmp(inner, "HL") == 0)
   {
