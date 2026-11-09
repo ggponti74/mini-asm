@@ -1471,9 +1471,9 @@ else
     echo "FAIL   z80 absolute, pair, stack-pointer, and special-register LD forms"; fail=$((fail + 1))
 fi
 
-for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R" \\
+for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R" \
            "LD BC,(65536)" "LD (65536),DE"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-absolute-ld-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-absolute-ld-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-absolute-ld-invalid.bin" "$TMP/z80-absolute-ld-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid absolute/special LD form: $bad"; fail=$((fail + 1))
     else
