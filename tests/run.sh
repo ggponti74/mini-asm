@@ -1051,5 +1051,34 @@ for bad in "ADD SP,128" "ADD SP,-129" "LD HL,SP+128" "LD HL,SP-129"; do
 done
 
 echo "----"
+
+cat > "$TMP/z80_indexed_result_registers.asm" <<'EOF'
+RLC (IX+1),B
+SRA (IY-2),A
+RES 3,(IX+4),C
+SET 7,(IY-1),L
+EOF
+expected="ddcb0100fdcbfe2fddcb0499fdcbfffd"
+if "$ASM" -t z80 -o "$TMP/z80_indexed_result_registers.bin" "$TMP/z80_indexed_result_registers.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_indexed_result_registers.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 indexed rotate/shift and RES/SET result registers"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 indexed rotate/shift and RES/SET result registers"
+    fail=$((fail + 1))
+fi
+expect_z80_indexed_result_failure() {
+    printf '%s\\n' "$1" > "$TMP/z80-indexed-result-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-indexed-result-invalid.bin" "$TMP/z80-indexed-result-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid indexed result form: $1"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid indexed result form"; pass=$((pass + 1))
+    fi
+}
+expect_z80_indexed_result_failure 'RLC (IX+1),IXH'
+expect_z80_indexed_result_failure 'RES 3,(IY+1),IYL'
+expect_z80_indexed_result_failure 'RLC B,A'
+expect_z80_indexed_result_failure 'RES 3,B,A'
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
