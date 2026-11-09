@@ -418,8 +418,13 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
         {
             if (dst->value.imm < 0 || dst->value.imm > 65535)
                 return fail("Z80 absolute memory address is out of range");
-            buffer_write(out, 0xED);
-            buffer_write(out, (uint8_t)(0x43 + p * 0x10));
+            if (p == 2) /* LD (nn),HL has a documented base opcode. */
+                buffer_write(out, 0x22);
+            else
+            {
+                buffer_write(out, 0xED);
+                buffer_write(out, (uint8_t)(0x43 + p * 0x10));
+            }
             buffer_write(out, (uint8_t)dst->value.imm);
             buffer_write(out, (uint8_t)(dst->value.imm >> 8));
             return true;
@@ -433,8 +438,13 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
         {
             if (src->value.imm < 0 || src->value.imm > 65535)
                 return fail("Z80 absolute memory address is out of range");
-            buffer_write(out, 0xED);
-            buffer_write(out, (uint8_t)(0x4B + p * 0x10));
+            if (p == 2) /* LD HL,(nn) has a documented base opcode. */
+                buffer_write(out, 0x2A);
+            else
+            {
+                buffer_write(out, 0xED);
+                buffer_write(out, (uint8_t)(0x4B + p * 0x10));
+            }
             buffer_write(out, (uint8_t)src->value.imm);
             buffer_write(out, (uint8_t)(src->value.imm >> 8));
             return true;
