@@ -686,6 +686,40 @@ expect_z80_index_failure 'ADD IX,IY'
 expect_z80_index_failure 'LD (IX+1),IX'
 expect_z80_index_failure 'LD (IX+1),(IY+1)'
 expect_z80_index_failure 'LD IX,0x10000'
+
+cat > "$TMP/z80_stack_pairs.asm" <<'EOF'
+PUSH BC
+PUSH DE
+PUSH HL
+PUSH AF
+PUSH IX
+PUSH IY
+POP BC
+POP DE
+POP HL
+POP AF
+POP IX
+POP IY
+EOF
+expected="c5d5e5f5dde5fde5c1d1e1f1dde1fde1"
+if "$ASM" -t z80 -o "$TMP/z80_stack_pairs.bin" "$TMP/z80_stack_pairs.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_stack_pairs.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 PUSH/POP supported register pairs"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 PUSH/POP supported register pairs"
+    fail=$((fail + 1))
+fi
+for bad in "PUSH SP" "POP SP" "PUSH IXH" "POP IYL"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-stack-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-stack-invalid.bin" "$TMP/z80-stack-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid stack pair: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid stack pair"
+        pass=$((pass + 1))
+    fi
+done
 expect_z80_ed_failure() {
     printf '%s
 ' "$1" > "$TMP/z80-ed-invalid.asm"
