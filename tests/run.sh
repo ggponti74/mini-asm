@@ -1118,3 +1118,180 @@ expect_z80_indexed_result_failure 'RES 3,B,A'
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
+
+# Broad Z80 ALU, 16-bit arithmetic, and INC/DEC matrices. These cover every
+# ordinary 8-bit register encoding, immediate ALU opcode, legal pair source,
+# index-half form, and signed indexed-memory boundary.
+cat > "$TMP/z80_alu_register_matrix.asm" <<'EOF'
+ADD A,B
+ADD A,C
+ADD A,D
+ADD A,E
+ADD A,H
+ADD A,L
+ADD A,(HL)
+ADD A,A
+ADC A,B
+ADC A,C
+ADC A,D
+ADC A,E
+ADC A,H
+ADC A,L
+ADC A,(HL)
+ADC A,A
+SUB B
+SUB C
+SUB D
+SUB E
+SUB H
+SUB L
+SUB (HL)
+SUB A
+SBC A,B
+SBC A,C
+SBC A,D
+SBC A,E
+SBC A,H
+SBC A,L
+SBC A,(HL)
+SBC A,A
+AND B
+AND C
+AND D
+AND E
+AND H
+AND L
+AND (HL)
+AND A
+XOR B
+XOR C
+XOR D
+XOR E
+XOR H
+XOR L
+XOR (HL)
+XOR A
+OR B
+OR C
+OR D
+OR E
+OR H
+OR L
+OR (HL)
+OR A
+CP B
+CP C
+CP D
+CP E
+CP H
+CP L
+CP (HL)
+CP A
+ADD A,0x11
+ADC A,0x22
+SUB 0x33
+SBC A,0x44
+AND 0x55
+XOR 0x66
+OR 0x77
+CP 0x88
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_alu_register_matrix.bin" "$TMP/z80_alu_register_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_alu_register_matrix.bin" | tr -d '[:space:]')" = "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc611ce22d633de44e655ee66f677fe88" ]; then
+    echo "PASS   z80 complete 8-bit ALU register and immediate matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete 8-bit ALU register and immediate matrix"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_alu_pair_matrix.asm" <<'EOF'
+ADD HL,BC
+ADD HL,DE
+ADD HL,HL
+ADD HL,SP
+ADC HL,BC
+ADC HL,DE
+ADC HL,HL
+ADC HL,SP
+SBC HL,BC
+SBC HL,DE
+SBC HL,HL
+SBC HL,SP
+ADD IX,BC
+ADD IX,DE
+ADD IX,IX
+ADD IX,SP
+ADD IY,BC
+ADD IY,DE
+ADD IY,IY
+ADD IY,SP
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_alu_pair_matrix.bin" "$TMP/z80_alu_pair_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_alu_pair_matrix.bin" | tr -d '[:space:]')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72dd0919dd29dd39fd0919fd29fd39" ]; then
+    echo "PASS   z80 complete 16-bit HL/IX/IY arithmetic matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete 16-bit HL/IX/IY arithmetic matrix"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_incdec_matrix.asm" <<'EOF'
+INC B
+INC C
+INC D
+INC E
+INC H
+INC L
+INC (HL)
+INC A
+DEC B
+DEC C
+DEC D
+DEC E
+DEC H
+DEC L
+DEC (HL)
+DEC A
+INC IXH
+INC IXL
+INC IYH
+INC IYL
+DEC IXH
+DEC IXL
+DEC IYH
+DEC IYL
+INC BC
+INC DE
+INC HL
+INC SP
+DEC BC
+DEC DE
+DEC HL
+DEC SP
+INC IX
+INC IY
+DEC IX
+DEC IY
+INC (IX-128)
+INC (IX+127)
+INC (IY-128)
+INC (IY+127)
+DEC (IX-128)
+DEC (IX+127)
+DEC (IY-128)
+DEC (IY+127)
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_incdec_matrix.bin" "$TMP/z80_incdec_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_incdec_matrix.bin" | tr -d '[:space:]')" = "040c141c242c343c050d151d252d353ddd24dd2cfd24fd2cdd25dd2dfd25fd2d031323330b1b2b3bdd23fd23dd2bfd2bdd3480dd347ffd3480fd347fdd3580dd357ffd3580fd357f" ]; then
+    echo "PASS   z80 complete INC/DEC register, pair, and indexed matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete INC/DEC register, pair, and indexed matrix"; fail=$((fail + 1))
+fi
+
+for bad in "INC AF" "DEC AF" "INC IXH, A" "DEC (IX+128)" "INC (IY-129)" \
+           "ADD IX,IY" "ADD IY,IX" "ADC IX,BC" "SBC IY,DE" \
+           "ADD A,SP" "ADC A,IX" "SUB A,B" "AND IXH, A"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-alu-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-alu-invalid.bin" "$TMP/z80-alu-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid arithmetic form: $bad"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid arithmetic form"; pass=$((pass + 1))
+    fi
+done
