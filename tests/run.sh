@@ -362,7 +362,7 @@ SBC HL,HL
 SBC HL,SP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_16bit_hl_arithmetic.bin" "$TMP/z80_16bit_hl_arithmetic.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_16bit_hl_arithmetic.bin" | tr -d ' \\n')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_16bit_hl_arithmetic.bin" | tr -d ' \n')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72" ]; then
     echo "PASS   z80 16-bit HL arithmetic pair matrix"; pass=$((pass + 1))
 else
     echo "FAIL   z80 16-bit HL arithmetic pair matrix"; fail=$((fail + 1))
