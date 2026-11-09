@@ -991,7 +991,7 @@ LD HL,SP-2
 LD HL,SP+0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_sp_relative.bin" "$TMP/z80_sp_relative.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_sp_relative.bin" | tr -d '[:space:]')" = "e801e880e87ff805fef800" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_sp_relative.bin" | tr -d '[:space:]')" = "e801e880e87ff805f8fef800" ]; then
     echo "PASS   z80 SP-relative ADD and LD forms"
     pass=$((pass + 1))
 else
