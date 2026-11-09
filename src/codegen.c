@@ -990,12 +990,6 @@ static bool emit_z80_ret(const Operand *ops, OutputBuffer *out)
 
 static bool emit_z80_exchange(const Operand *ops, OutputBuffer *out)
 {
-    if (ops[0].type == OPERAND_NONE && ops[1].type == OPERAND_NONE)
-    {
-        buffer_write(out, 0xD9); /* EXX */
-        return true;
-    }
-
     if (ops[0].type == OPERAND_REGISTER &&
         ops[1].type == OPERAND_REGISTER)
     {
