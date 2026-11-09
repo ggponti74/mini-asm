@@ -750,6 +750,8 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
         return true;
     }
 
+    if (z80_is_index_half(reg))
+        return fail("Z80 IN/OUT does not support IXH, IXL, IYH, or IYL");
     int r = z80_reg8_code(reg);
     if (r < 0)
         return fail("Z80 IN/OUT requires B, C, D, E, H, L, or A");
