@@ -829,21 +829,37 @@ static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
 {
     const Operand *bit = &ops[0];
     const Operand *target = &ops[1];
+    const Operand *result = &ops[2];
+    bool has_result = result->type != OPERAND_NONE;
     if (bit->type != OPERAND_IMMEDIATE || bit->symbol || bit->is_indirect ||
         bit->value.imm < 0 || bit->value.imm > 7)
         return fail("Z80 bit number must be an immediate in the range 0..7");
 
+    if (has_result && strcmp(mnemonic, "BIT") == 0)
+        return fail("Z80 BIT does not accept an indexed result register");
+
     if (z80_is_indexed_memory(target))
     {
+        int r = 6;
+        if (has_result)
+        {
+            r = z80_reg8_code(result);
+            if (result->type != OPERAND_REGISTER || r < 0 || r == 6 ||
+                z80_is_index_half(result))
+                return fail("Z80 indexed RES/SET result must be B, C, D, E, H, L, or A");
+        }
         int prefix = z80_indexed_prefix(target);
         buffer_write(out, (uint8_t)prefix);
         buffer_write(out, 0xCB);
         if (!z80_write_index_disp(target, out)) return false;
         uint8_t base = strcmp(mnemonic, "BIT") == 0 ? 0x40 :
                        strcmp(mnemonic, "RES") == 0 ? 0x80 : 0xC0;
-        buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + 6));
+        buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + r));
         return true;
     }
+
+    if (has_result)
+        return fail("Z80 RES/SET result register is only valid with indexed memory");
 
     int r = z80_reg8_code(target);
     if (r < 0 || z80_is_index_half(target))
@@ -864,15 +880,26 @@ static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
     return true;
 }
 
-static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
+static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *ops,
                                   OutputBuffer *out)
 {
+    const Operand *op = &ops[0];
+    const Operand *result = &ops[1];
+    bool has_result = result->type != OPERAND_NONE;
     static const struct { const char *name; uint8_t base; } forms[] = {
         {"RLC", 0x00}, {"RRC", 0x08}, {"RL", 0x10}, {"RR", 0x18},
         {"SLA", 0x20}, {"SRA", 0x28}, {"SLL", 0x30}, {"SRL", 0x38}
     };
     if (z80_is_indexed_memory(op))
     {
+        int r = 6;
+        if (has_result)
+        {
+            r = z80_reg8_code(result);
+            if (result->type != OPERAND_REGISTER || r < 0 || r == 6 ||
+                z80_is_index_half(result))
+                return fail("Z80 indexed rotate/shift result must be B, C, D, E, H, L, or A");
+        }
         int prefix = z80_indexed_prefix(op);
         for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
             if (strcmp(mnemonic, forms[i].name) == 0)
@@ -880,10 +907,12 @@ static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *op,
                 buffer_write(out, (uint8_t)prefix);
                 buffer_write(out, 0xCB);
                 if (!z80_write_index_disp(op, out)) return false;
-                buffer_write(out, (uint8_t)(forms[i].base + 6));
+                buffer_write(out, (uint8_t)(forms[i].base + r));
                 return true;
             }
     }
+    if (has_result)
+        return fail("Z80 rotate/shift result register is only valid with indexed memory");
     int r = z80_reg8_code(op);
     if (r < 0 || z80_is_index_half(op))
         return fail("Z80 rotate/shift requires an 8-bit register, (HL), or indexed memory");
@@ -1067,7 +1096,7 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "RLC") == 0 || strcmp(m, "RRC") == 0 || strcmp(m, "RL") == 0 ||
         strcmp(m, "RR") == 0 || strcmp(m, "SLA") == 0 || strcmp(m, "SRA") == 0 ||
         strcmp(m, "SRL") == 0 || strcmp(m, "SLL") == 0)
-        return emit_z80_rotate_shift(m, &operands[0], out);
+        return emit_z80_rotate_shift(m, operands, out);
     if (strcmp(m, "RLCA") == 0) { buffer_write(out, 0x07); return true; }
     if (strcmp(m, "RRCA") == 0) { buffer_write(out, 0x0F); return true; }
     if (strcmp(m, "RLA") == 0) { buffer_write(out, 0x17); return true; }
