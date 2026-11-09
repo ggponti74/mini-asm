@@ -1084,6 +1084,9 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "CCF") == 0) { buffer_write(out, 0x3F); return true; }
     if (strcmp(m, "RST") == 0)
     {
+        if (operands[0].type != OPERAND_IMMEDIATE ||
+            operands[0].symbol || operands[0].is_indirect)
+            return fail("Z80 RST requires a numeric vector immediate");
         int32_t v = operands[0].value.imm;
         if (v < 0 || v > 0x38 || (v & 7) != 0)
             return fail("Z80 RST immediate must be a multiple of 8 in the range 0..0x38");
