@@ -286,8 +286,14 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     if (dst_half_prefix >= 0 || src_half_prefix >= 0)
     {
         int prefix = dst_half_prefix >= 0 ? dst_half_prefix : src_half_prefix;
+        bool dst_plain_hl = dst->type == OPERAND_REGISTER &&
+                            (dst->value.reg == 0x04 || dst->value.reg == 0x05);
+        bool src_plain_hl = src->type == OPERAND_REGISTER &&
+                            (src->value.reg == 0x04 || src->value.reg == 0x05);
         if ((dst_half_prefix >= 0 && src_half_prefix >= 0 &&
              dst_half_prefix != src_half_prefix) ||
+            (dst_half_prefix >= 0 && src_plain_hl) ||
+            (src_half_prefix >= 0 && dst_plain_hl) ||
             (dst->type == OPERAND_REGISTER && dst->is_indirect) ||
             (src->type == OPERAND_REGISTER && src->is_indirect) ||
             (dst->type != OPERAND_REGISTER) ||

@@ -661,6 +661,11 @@ expect_z80_index_extended_failure() {
 expect_z80_index_extended_failure 'LD IXH,(IX+1)'
 expect_z80_index_extended_failure 'LD (IX+1),IXH'
 expect_z80_index_extended_failure 'LD IXH,IYL'
+expect_z80_index_extended_failure 'LD H,IXH'
+expect_z80_index_extended_failure 'LD IXH,H'
+expect_z80_index_extended_failure 'LD L,IXL'
+expect_z80_index_extended_failure 'LD IYL,L'
+expect_z80_index_extended_failure 'LD IYH,H'
 expect_z80_index_extended_failure 'RLC IXH'
 expect_z80_index_extended_failure 'BIT 2,(IY+128)'
 expect_z80_index_failure() {
