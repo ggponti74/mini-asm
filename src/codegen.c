@@ -697,6 +697,17 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
         return true;
     }
 
+    /* Undocumented OUT (C),0: write zero to the port. */
+    if (!is_in && reg->type == OPERAND_IMMEDIATE && !reg->symbol &&
+        !reg->is_indirect && reg->value.imm == 0 &&
+        port->type == OPERAND_REGISTER && port->is_indirect &&
+        port->value.reg == 0x23)
+    {
+        buffer_write(out, 0xED);
+        buffer_write(out, 0x71);
+        return true;
+    }
+
     int r = z80_reg8_code(reg);
     if (r < 0)
         return fail("Z80 IN/OUT requires B, C, D, E, H, L, or A");

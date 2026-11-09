@@ -426,9 +426,10 @@ OUT (C),E
 OUT (C),H
 OUT (C),L
 OUT (C),A
+OUT (C),0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_io.bin" "$TMP/z80_io.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed70ed41ed49ed51ed59ed61ed69ed79" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed70ed41ed49ed51ed59ed61ed69ed79ed71" ]; then
     echo "PASS   z80 IN/OUT immediate and (C) forms"; pass=$((pass + 1))
 else
     echo "FAIL   z80 IN/OUT immediate and (C) forms"; fail=$((fail + 1))
@@ -460,6 +461,7 @@ expect_z80_io_failure() {   # expect_z80_io_failure <source>
 expect_z80_io_failure 'IN B,(0x12)'
 expect_z80_io_failure 'OUT (0x12),B'
 expect_z80_io_failure 'OUT (C),F'
+expect_z80_io_failure 'OUT (C),1'
 expect_z80_io_failure 'IN A,(0x100)'
 expect_z80_io_failure 'OUT (0x100),A'
 cat > "$TMP/z80_ed_special.asm" <<'EOF'

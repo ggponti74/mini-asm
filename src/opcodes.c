@@ -326,7 +326,7 @@ static const OpcodeEntry z80_opcode_table[] = {
     {"CPD", 0xEDA9, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"CPDR", 0xEDB9, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"IN", 0x00, 1, 1, 2, {OPERAND_REGISTER, OPERAND_REG_OR_IMM}, 0},
-    {"OUT", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REGISTER}, 0},
+    {"OUT", 0x00, 1, 1, 2, {OPERAND_REG_OR_IMM, OPERAND_REG_OR_IMM}, 0},
     {"INI", 0xEDA2, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"INIR", 0xEDB2, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
     {"IND", 0xEDAA, 2, 2, 0, {OPERAND_NONE, OPERAND_NONE}, 0},
