@@ -1293,5 +1293,69 @@ for bad in "INC AF" "DEC AF" "INC IXH, A" "DEC (IX+128)" "INC (IY-129)" \
     fi
 done
 
+
+# Exhaustive Z80 LD register-to-register matrix. The (HL),(HL) combination
+# is intentionally omitted because byte 0x76 is HALT, not an LD instruction.
+z80_reg_name() {
+    case "$1" in
+        0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
+        4) printf H ;; 5) printf L ;; 6) printf '(HL)' ;; 7) printf A ;;
+    esac
+}
+: > "$TMP/z80_ld_register_matrix.asm"
+expected=""
+for dst in 0 1 2 3 4 5 6 7; do
+    for src in 0 1 2 3 4 5 6 7; do
+        if [ "$dst" -eq 6 ] && [ "$src" -eq 6 ]; then
+            continue
+        fi
+        d=$(z80_reg_name "$dst")
+        s=$(z80_reg_name "$src")
+        printf 'LD %s,%s\\n' "$d" "$s" >> "$TMP/z80_ld_register_matrix.asm"
+        expected="${expected}$(printf '%02x' "$((0x40 + dst * 8 + src))")"
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_ld_register_matrix.bin" "$TMP/z80_ld_register_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_ld_register_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 exhaustive 8-bit LD register/memory matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 exhaustive 8-bit LD register/memory matrix"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_ld_immediate_matrix.asm" <<'EOF'
+LD B,0x12
+LD C,0x23
+LD D,0x34
+LD E,0x45
+LD H,0x56
+LD L,0x67
+LD (HL),0x78
+LD A,0x89
+LD BC,0x1234
+LD DE,0x2345
+LD HL,0x3456
+LD SP,0x4567
+LD IX,0x5678
+LD IY,0x6789
+EOF
+expected="06120e2316341e4526562e6736783e89013412114523215634316745dd217856fd218967"
+if "$ASM" -t z80 -o "$TMP/z80_ld_immediate_matrix.bin" "$TMP/z80_ld_immediate_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_ld_immediate_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete 8-bit and 16-bit LD immediate matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete 8-bit and 16-bit LD immediate matrix"; fail=$((fail + 1))
+fi
+
+for bad in "LD (BC),B" "LD (DE),C" "LD BC,A" "LD AF,0x1234" \
+           "LD IXH,(IX+1)" "LD IYL,(IY-1)" "LD (IX+1),IXH" \
+           "LD (IY-1),IYL" "LD (HL),(HL)" "LD SP,AF"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-ld-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-ld-invalid.bin" "$TMP/z80-ld-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid LD form: $bad"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid LD form"; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
