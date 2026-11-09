@@ -1375,7 +1375,11 @@ for pair in IX IY; do
             s=$(z80_index_half_name "$src" "$pair")
             printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_ld_matrix.asm"
             opcode=$((0x40 + dst * 8 + src))
-            expected="${expected}${prefix}$(printf '%02x' "$opcode")"
+            if [ "$dst" -eq 4 ] || [ "$dst" -eq 5 ] ||
+               [ "$src" -eq 4 ] || [ "$src" -eq 5 ]; then
+                expected="${expected}${prefix}"
+            fi
+            expected="${expected}$(printf '%02x' "$opcode")"
         done
     done
 done
@@ -1392,7 +1396,7 @@ LD IXL,0x34
 LD IYH,0x56
 LD IYL,0x78
 EOF
-expected="dd2612dd2efd2656fd2e78"
+expected="dd2612dd2e34fd2656fd2e78"
 if "$ASM" -t z80 -o "$TMP/z80_index_half_immediate.bin" "$TMP/z80_index_half_immediate.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_index_half_immediate.bin" | tr -d '[:space:]')" = "$expected" ]; then
     echo "PASS   z80 IX/IY index-half immediate loads"; pass=$((pass + 1))
