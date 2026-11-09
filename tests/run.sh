@@ -1116,9 +1116,6 @@ expect_z80_indexed_result_failure 'RES 3,(IY+1),IYL'
 expect_z80_indexed_result_failure 'RLC B,A'
 expect_z80_indexed_result_failure 'RES 3,B,A'
 
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
-
 # Broad Z80 ALU, 16-bit arithmetic, and INC/DEC matrices. These cover every
 # ordinary 8-bit register encoding, immediate ALU opcode, legal pair source,
 # index-half form, and signed indexed-memory boundary.
@@ -1226,7 +1223,7 @@ ADD IY,IY
 ADD IY,SP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu_pair_matrix.bin" "$TMP/z80_alu_pair_matrix.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_alu_pair_matrix.bin" | tr -d '[:space:]')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72dd0919dd29dd39fd0919fd29fd39" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_alu_pair_matrix.bin" | tr -d '[:space:]')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72dd09dd19dd29dd39fd09fd19fd29fd39" ]; then
     echo "PASS   z80 complete 16-bit HL/IX/IY arithmetic matrix"; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete 16-bit HL/IX/IY arithmetic matrix"; fail=$((fail + 1))
@@ -1288,10 +1285,13 @@ fi
 for bad in "INC AF" "DEC AF" "INC IXH, A" "DEC (IX+128)" "INC (IY-129)" \
            "ADD IX,IY" "ADD IY,IX" "ADC IX,BC" "SBC IY,DE" \
            "ADD A,SP" "ADC A,IX" "SUB A,B" "AND IXH, A"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-alu-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-alu-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-alu-invalid.bin" "$TMP/z80-alu-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid arithmetic form: $bad"; fail=$((fail + 1))
     else
         echo "PASS   z80 rejects invalid arithmetic form"; pass=$((pass + 1))
     fi
 done
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
