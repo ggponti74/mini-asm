@@ -113,6 +113,27 @@ static int parse_z80_number(const char *token, int32_t *value, const char **symb
   return parse_immediate(token, value, symbol);
 }
 
+/* Z80's LD HL,SP+e uses a signed 8-bit displacement without parentheses. */
+static int parse_z80_sp_offset(const char *token, Operand *op)
+{
+  if (toupper((unsigned char)token[0]) != 'S' ||
+      toupper((unsigned char)token[1]) != 'P' ||
+      (token[2] != '+' && token[2] != '-'))
+    return 0;
+
+  int sign = token[2] == '-' ? -1 : 1;
+  int32_t value = 0;
+  const char *symbol = NULL;
+  if (!parse_z80_number(token + 3, &value, &symbol))
+    return 0;
+
+  op->type = OPERAND_DISP;
+  op->value.reg = 0x26; /* SP-relative displacement */
+  op->disp = symbol ? sign : value * sign;
+  op->symbol = symbol ? copy_string(symbol) : NULL;
+  return !symbol || op->symbol != NULL;
+}
+
 static int parse_z80_register(const char *s, int *reg)
 {
   static const struct { const char *name; int code; } regs[] = {
@@ -572,6 +593,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
       ops[count].type = OPERAND_BAD;
       ops[count].value.label = copy_string(token);
     } else if (is_z80_arch() && parse_z80_memory(token, &ops[count])) {
+      /* handled separately */
+    } else if (is_z80_arch() && parse_z80_sp_offset(token, &ops[count])) {
       /* handled separately */
     } else if (is_6501_arch() && parse_6501_register(token, &reg)) {
       ops[count].type = OPERAND_REGISTER;
