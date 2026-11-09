@@ -989,6 +989,16 @@ for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
         pass=$((pass + 1))
     fi
 done
+for bad in "RST A" "RST (0x08)" "RST destination"; do
+    printf '%s\n' "$bad" > "$TMP/z80-rst-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-rst-invalid.bin" "$TMP/z80-rst-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects non-numeric RST operand: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects non-numeric RST operand"
+        pass=$((pass + 1))
+    fi
+done
 
 cat > "$TMP/z80_indirect_jp.asm" <<'EOF'
 JP (HL)
