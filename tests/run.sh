@@ -422,7 +422,7 @@ if "$ASM" -t z80 -o "$TMP/z80_block_transfer_search.bin" "$TMP/z80_block_transfe
 else
     echo "FAIL   z80 block transfer and search instructions"; fail=$((fail + 1))
 fi
-printf 'LDI A\\n' > "$TMP/z80_bad_block_operand.asm"
+printf 'LDI A\n' > "$TMP/z80_bad_block_operand.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_block_operand.bin" "$TMP/z80_bad_block_operand.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects operands on block instructions"; fail=$((fail + 1))
 else
@@ -1311,7 +1311,7 @@ for dst in 0 1 2 3 4 5 6 7; do
         fi
         d=$(z80_reg_name "$dst")
         s=$(z80_reg_name "$src")
-        printf 'LD %s,%s\\n' "$d" "$s" >> "$TMP/z80_ld_register_matrix.asm"
+        printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_ld_register_matrix.asm"
         expected="${expected}$(printf '%02x' "$((0x40 + dst * 8 + src))")"
     done
 done
@@ -1349,7 +1349,7 @@ fi
 for bad in "LD (BC),B" "LD (DE),C" "LD BC,A" "LD AF,0x1234" \
            "LD IXH,(IX+1)" "LD IYL,(IY-1)" "LD (IX+1),IXH" \
            "LD (IY-1),IYL" "LD (HL),(HL)" "LD SP,AF"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-ld-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-ld-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-ld-invalid.bin" "$TMP/z80-ld-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid LD form: $bad"; fail=$((fail + 1))
     else
