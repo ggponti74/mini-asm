@@ -711,7 +711,7 @@ else
     fail=$((fail + 1))
 fi
 for bad in "PUSH SP" "POP SP" "PUSH IXH" "POP IYL"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-stack-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-stack-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-stack-invalid.bin" "$TMP/z80-stack-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid stack pair: $bad"
         fail=$((fail + 1))
