@@ -1357,5 +1357,77 @@ for bad in "LD (BC),B" "LD (DE),C" "LD BC,A" "LD AF,0x1234" \
     fi
 done
 
+
+# Complete undocumented IXH/IXL and IYH/IYL register-transfer matrices.
+z80_index_half_name() {
+    case "$1" in
+        0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
+        4) printf '%sH' "$2" ;; 5) printf '%sL' "$2" ;; 7) printf A ;;
+    esac
+}
+: > "$TMP/z80_index_half_ld_matrix.asm"
+expected=""
+for pair in IX IY; do
+    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
+    for dst in 0 1 2 3 4 5 7; do
+        for src in 0 1 2 3 4 5 7; do
+            d=$(z80_index_half_name "$dst" "$pair")
+            s=$(z80_index_half_name "$src" "$pair")
+            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_ld_matrix.asm"
+            opcode=$((0x40 + dst * 8 + src))
+            expected="${expected}${prefix}$(printf '%02x' "$opcode")"
+        done
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_index_half_ld_matrix.bin" "$TMP/z80_index_half_ld_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_index_half_ld_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 exhaustive IXH/IXL and IYH/IYL LD matrices"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 exhaustive IXH/IXL and IYH/IYL LD matrices"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_index_half_immediate.asm" <<'EOF'
+LD IXH,0x12
+LD IXL,0x34
+LD IYH,0x56
+LD IYL,0x78
+EOF
+expected="dd2612dd2efd2656fd2e78"
+if "$ASM" -t z80 -o "$TMP/z80_index_half_immediate.bin" "$TMP/z80_index_half_immediate.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_index_half_immediate.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 IX/IY index-half immediate loads"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 IX/IY index-half immediate loads"; fail=$((fail + 1))
+fi
+
+# Indexed-memory loads/stores cover every ordinary register field at both
+# signed displacement extremes, plus immediate stores through IX and IY.
+z80_plain_reg_name() {
+    case "$1" in
+        0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
+        4) printf H ;; 5) printf L ;; 7) printf A ;;
+    esac
+}
+: > "$TMP/z80_indexed_ld_matrix.asm"
+expected=""
+for pair in IX IY; do
+    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
+    for reg in 0 1 2 3 4 5 7; do
+        name=$(z80_plain_reg_name "$reg")
+        printf 'LD (%s-128),%s\n' "$pair" "$name" >> "$TMP/z80_indexed_ld_matrix.asm"
+        printf 'LD %s,(%s+127)\n' "$name" "$pair" >> "$TMP/z80_indexed_ld_matrix.asm"
+        expected="${expected}${prefix}$(printf '%02x80' $((0x70 + reg)))"
+        expected="${expected}${prefix}$(printf '%02x7f' $((0x46 + reg * 8)))"
+    done
+done
+printf 'LD (IX+0),0xA5\nLD (IY-1),0x5A\n' >> "$TMP/z80_indexed_ld_matrix.asm"
+expected="${expected}dd3600a5fd36ff5a"
+if "$ASM" -t z80 -o "$TMP/z80_indexed_ld_matrix.bin" "$TMP/z80_indexed_ld_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_indexed_ld_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete IX/IY indexed LD register and immediate matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete IX/IY indexed LD register and immediate matrix"; fail=$((fail + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
