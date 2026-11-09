@@ -615,6 +615,8 @@ RLC (IX+1)
 BIT 3,(IX-2)
 RES 5,(IY+4)
 SET 7,(IY)
+RES 5,(IY+4),B
+SET 7,(IY),A
 SRA (IY-1)
 LD IXH,0x12
 LD IXL,0x34
@@ -637,7 +639,7 @@ XOR IXL
 OR IYH
 CP IYL
 EOF
-expected="ddcb0106ddcbfe5efdcb04aefdcb00fefdcbff2edd2612dd2e34fd2656fd2e78dd7cfd6fdd65fd60dd24dd2dfd24fd2ddd84dd8dfd94fd9ddda4ddadfdb4fdbd"
+expected="ddcb0106ddcbfe5efdcb04aefdcb00fefdcb04a0fdcb00ffdcbff2edd2612dd2e34fd2656fd2e78dd7cfd6fdd65fd60dd24dd2dfd24fd2ddd84dd8dfd94fd9ddda4ddadfdb4fdbd"
 if ! "$ASM" -t z80 -o "$TMP/z80_index_extended.bin" "$TMP/z80_index_extended.asm" >"$TMP/asm.log" 2>&1; then
     echo "FAIL   z80 DDCB/FDCB and index-half: assembler error"
     sed 's/^/         /' "$TMP/asm.log"
