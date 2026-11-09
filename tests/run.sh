@@ -932,6 +932,7 @@ expect_z80_exchange_failure() {
         echo "PASS   z80 rejects invalid exchange form"; pass=$((pass + 1))
     fi
 }
+expect_z80_exchange_failure 'EX'
 expect_z80_exchange_failure 'EX BC,DE'
 expect_z80_exchange_failure 'EX (SP),AF'
 expect_z80_exchange_failure 'EX AF,AF'
