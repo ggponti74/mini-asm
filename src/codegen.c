@@ -935,6 +935,9 @@ static bool emit_z80_pushpop(const char *mnemonic, const Operand *op, OutputBuff
         buffer_write(out, strcmp(mnemonic, "PUSH") == 0 ? 0xE5 : 0xE1);
         return true;
     }
+    /* SP shares the pair code used by AF, but PUSH/POP SP do not exist. */
+    if (op->type == OPERAND_REGISTER && op->value.reg == 0x14)
+        return fail("Z80 PUSH/POP supports AF, BC, DE, HL, IX, or IY; not SP");
     int p = z80_pair_code(op);
     if (p < 0)
         return fail("unsupported Z80 PUSH/POP register");
