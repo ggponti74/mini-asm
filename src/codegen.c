@@ -829,14 +829,18 @@ static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
 {
     const Operand *bit = &ops[0];
     const Operand *target = &ops[1];
-    const Operand *result = &ops[2];
-    bool has_result = result->type != OPERAND_NONE;
+    /* BIT has exactly two operand slots. RES/SET have an optional third
+       register, so do not read ops[2] for BIT. */
+    const Operand *result = NULL;
+    bool has_result = false;
+    if (strcmp(mnemonic, "BIT") != 0)
+    {
+        result = &ops[2];
+        has_result = result->type != OPERAND_NONE;
+    }
     if (bit->type != OPERAND_IMMEDIATE || bit->symbol || bit->is_indirect ||
         bit->value.imm < 0 || bit->value.imm > 7)
         return fail("Z80 bit number must be an immediate in the range 0..7");
-
-    if (has_result && strcmp(mnemonic, "BIT") == 0)
-        return fail("Z80 BIT does not accept an indexed result register");
 
     if (z80_is_indexed_memory(target))
     {
