@@ -498,6 +498,9 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
         int s = z80_reg8_code(src);
         if (d >= 0 && s >= 0)
         {
+            /* 0x76 is HALT; the Z80 has no LD (HL),(HL) instruction. */
+            if (d == 6 && s == 6)
+                return fail("Z80 LD does not support (HL),(HL)");
             buffer_write(out, (uint8_t)(0x40 + (d * 8) + s));
             return true;
         }
