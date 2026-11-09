@@ -344,9 +344,12 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
         buffer_write(out, (uint8_t)(dst->value.imm >> 8));
         return true;
     }
-    if (dst->type == OPERAND_REGISTER && dst->value.reg == 0x14 && src_index_prefix >= 0)
+    if (dst->type == OPERAND_REGISTER && dst->value.reg == 0x14 &&
+        (src_index_prefix >= 0 ||
+         (src->type == OPERAND_REGISTER && src->value.reg == 0x13)))
     {
-        buffer_write(out, (uint8_t)src_index_prefix);
+        if (src_index_prefix >= 0)
+            buffer_write(out, (uint8_t)src_index_prefix);
         buffer_write(out, 0xF9);
         return true;
     }
