@@ -1433,5 +1433,53 @@ else
     echo "FAIL   z80 complete IX/IY indexed LD register and immediate matrix"; fail=$((fail + 1))
 fi
 
+
+# Absolute-memory transfers for every Z80 register pair, special-register
+# transfers, stack-pointer copies, and accumulator BC/DE indirect forms.
+cat > "$TMP/z80_absolute_and_special_ld.asm" <<'EOF'
+LD (0x1234),BC
+LD (0x1234),DE
+LD (0x1234),HL
+LD (0x1234),SP
+LD (0x1234),IX
+LD (0x1234),IY
+LD BC,(0x1234)
+LD DE,(0x1234)
+LD HL,(0x1234)
+LD SP,(0x1234)
+LD IX,(0x1234)
+LD IY,(0x1234)
+LD SP,HL
+LD SP,IX
+LD SP,IY
+LD A,(BC)
+LD A,(DE)
+LD (BC),A
+LD (DE),A
+LD A,(0x1234)
+LD (0x1234),A
+LD I,A
+LD R,A
+LD A,I
+LD A,R
+EOF
+expected="ed433412ed533412223412ed733412dd223412fd223412ed4b3412ed5b34122a3412ed7b3412dd2a3412fd2a3412f9ddf9fdf90a1a02123a3412323412ed47ed4fed57ed5f"
+if "$ASM" -t z80 -o "$TMP/z80_absolute_and_special_ld.bin" "$TMP/z80_absolute_and_special_ld.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_absolute_and_special_ld.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 absolute, pair, stack-pointer, and special-register LD forms"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 absolute, pair, stack-pointer, and special-register LD forms"; fail=$((fail + 1))
+fi
+
+for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R" \\
+           "LD BC,(65536)" "LD (65536),DE"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-absolute-ld-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-absolute-ld-invalid.bin" "$TMP/z80-absolute-ld-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid absolute/special LD form: $bad"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid absolute/special LD form"; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
