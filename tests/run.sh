@@ -999,7 +999,7 @@ else
     fail=$((fail + 1))
 fi
 for bad in "ADD SP,128" "ADD SP,-129" "LD HL,SP+128" "LD HL,SP-129"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-sp-relative-invalid.bin" "$TMP/z80-sp-relative-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects out-of-range SP-relative operand: $bad"
         fail=$((fail + 1))
