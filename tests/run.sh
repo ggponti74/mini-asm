@@ -982,6 +982,33 @@ else
     pass=$((pass + 1))
 fi
 
+cat > "$TMP/z80_sp_relative.asm" <<'EOF'
+ADD SP,1
+ADD SP,-128
+ADD SP,127
+LD HL,SP+5
+LD HL,SP-2
+LD HL,SP+0
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_sp_relative.bin" "$TMP/z80_sp_relative.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_sp_relative.bin" | tr -d '[:space:]')" = "e801e880e87ff805fef800" ]; then
+    echo "PASS   z80 SP-relative ADD and LD forms"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 SP-relative ADD and LD forms"
+    fail=$((fail + 1))
+fi
+for bad in "ADD SP,128" "ADD SP,-129" "LD HL,SP+128" "LD HL,SP-129"; do
+    printf '%s\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-sp-relative-invalid.bin" "$TMP/z80-sp-relative-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects out-of-range SP-relative operand: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects out-of-range SP-relative operand"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "----"
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
