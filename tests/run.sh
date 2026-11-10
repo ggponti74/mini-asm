@@ -2149,5 +2149,75 @@ for bad in "LD IXH,IYH" "LD IXL,IYL" "LD IYH,IXL" "LD IYL,IXH" \
     fi
 done
 
+
+# DJNZ uses the same signed relative range as JR, but has its own encoder.
+# Verify both limits, both out-of-range directions, and 16-bit PC wraparound.
+{
+    echo 'DJNZ target'
+    i=0
+    while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'target: NOP'
+} > "$TMP/z80-djnz-forward-limit.asm"
+if "$ASM" -t z80 -o "$TMP/z80-djnz-forward-limit.bin" "$TMP/z80-djnz-forward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 -N2 "$TMP/z80-djnz-forward-limit.bin" | tr -d '[:space:]')" = "107f" ] &&
+   [ "$(wc -c < "$TMP/z80-djnz-forward-limit.bin" | tr -d ' ')" = "130" ]; then
+    echo "PASS   z80 DJNZ accepts +127 relative displacement"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 DJNZ accepts +127 relative displacement"
+    fail=$((fail + 1))
+fi
+
+{
+    echo 'target:'
+    i=0
+    while [ "$i" -lt 126 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'DJNZ target'
+} > "$TMP/z80-djnz-backward-limit.asm"
+if "$ASM" -t z80 -o "$TMP/z80-djnz-backward-limit.bin" "$TMP/z80-djnz-backward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 -j126 -N2 "$TMP/z80-djnz-backward-limit.bin" | tr -d '[:space:]')" = "1080" ] &&
+   [ "$(wc -c < "$TMP/z80-djnz-backward-limit.bin" | tr -d ' ')" = "128" ]; then
+    echo "PASS   z80 DJNZ accepts -128 relative displacement"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 DJNZ accepts -128 relative displacement"
+    fail=$((fail + 1))
+fi
+
+for direction in forward backward; do
+    if [ "$direction" = forward ]; then
+        {
+            echo 'DJNZ target'
+            i=0
+            while [ "$i" -lt 128 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'target: NOP'
+        } > "$TMP/z80-djnz-out-of-range.asm"
+    else
+        {
+            echo 'target:'
+            i=0
+            while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'DJNZ target'
+        } > "$TMP/z80-djnz-out-of-range.asm"
+    fi
+    if "$ASM" -t z80 -o "$TMP/z80-djnz-out-of-range.bin" "$TMP/z80-djnz-out-of-range.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 DJNZ rejects $direction displacement outside signed range"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 DJNZ rejects $direction displacement outside signed range"
+        pass=$((pass + 1))
+    fi
+done
+
+printf 'DJNZ $0000\n' > "$TMP/z80-djnz-wrap.asm"
+if "$ASM" -t z80 --base 65534 -o "$TMP/z80-djnz-wrap.bin" "$TMP/z80-djnz-wrap.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80-djnz-wrap.bin" | tr -d '[:space:]')" = "1000" ]; then
+    echo "PASS   z80 DJNZ relative branch wraps at 16-bit address boundary"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 DJNZ relative branch wraps at 16-bit address boundary"
+    fail=$((fail + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
