@@ -2284,5 +2284,49 @@ for bad in \
     fi
 done
 
+# Symbolic IX/IY and SP-relative displacements must retain signed 8-bit
+# boundaries after pass-two EQU resolution, just like literal displacements.
+cat > "$TMP/z80_symbolic_displacement_boundaries.asm" <<'EOF'
+NEG128 EQU 128
+POS127 EQU 127
+LD A,(IX-NEG128)
+LD (IX+POS127),A
+LD B,(IY-NEG128)
+LD (IY+POS127),C
+BIT 7,(IX-NEG128)
+RES 0,(IY+POS127)
+LD HL,SP-NEG128
+LD HL,SP+POS127
+EOF
+expected="dd7e80dd777ffd4680fd717fddcb807efdcb7f86f880f87f"
+expected=$(printf '%s' "$expected" | tr -d ' ')
+if "$ASM" -t z80 -o "$TMP/z80_symbolic_displacement_boundaries.bin" "$TMP/z80_symbolic_displacement_boundaries.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_symbolic_displacement_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 symbolic IX/IY and SP displacement boundaries"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 symbolic IX/IY and SP displacement boundaries"
+    fail=$((fail + 1))
+fi
+
+for bad in \
+    "TOO_POS EQU 128
+LD A,(IX+TOO_POS)" \
+    "TOO_NEG EQU 129
+LD A,(IY-TOO_NEG)" \
+    "TOO_POS EQU 128
+LD HL,SP+TOO_POS" \
+    "TOO_NEG EQU 129
+LD HL,SP-TOO_NEG"; do
+    printf '%s\n' "$bad" > "$TMP/z80-symbolic-displacement-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-symbolic-displacement-invalid.bin" "$TMP/z80-symbolic-displacement-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects out-of-range symbolic displacement"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects out-of-range symbolic displacement"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
