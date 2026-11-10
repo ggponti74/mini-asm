@@ -2230,7 +2230,7 @@ for reg in B C D E H L '(HL)' A; do
         H) opcode=26 ;; L) opcode=2e ;; '(HL)') opcode=36 ;; A) opcode=3e ;;
     esac
     printf 'LD %s,-128\nLD %s,255\n' "$reg" "$reg" >> "$TMP/z80_immediate_boundaries.asm"
-    ${expected}="${expected}${opcode}80${opcode}ff"
+    expected="${expected}${opcode}80${opcode}ff"
 done
 for pair in BC DE HL SP IX IY; do
     case "$pair" in
@@ -2242,7 +2242,7 @@ for pair in BC DE HL SP IX IY; do
         IY) prefix=fd; opcode=21 ;;
     esac
     printf 'LD %s,-32768\nLD %s,65535\n' "$pair" "$pair" >> "$TMP/z80_immediate_boundaries.asm"
-    ${expected}="${expected}${prefix}${opcode}0080${prefix}${opcode}ffff"
+    expected="${expected}${prefix}${opcode}0080${prefix}${opcode}ffff"
 done
 for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
     case "$mnemonic" in
@@ -2256,7 +2256,7 @@ for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
     else
         printf '%s A,-128\n%s A,255\n' "$mnemonic" "$mnemonic" >> "$TMP/z80_immediate_boundaries.asm"
     fi
-    ${expected}="${expected}${opcode}80${opcode}ff"
+    expected="${expected}${opcode}80${opcode}ff"
 done
 if "$ASM" -t z80 -o "$TMP/z80_immediate_boundaries.bin" "$TMP/z80_immediate_boundaries.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_immediate_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
