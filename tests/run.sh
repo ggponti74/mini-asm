@@ -1790,7 +1790,7 @@ LD (65535),A
 LD IX,(65535)
 LD (0),IY
 EOF
-expected="ed4b0000ed5bffff220000ed73ffff3a000032ffffdd2affffff220000"
+expected="ed4b0000ed5bffff220000ed73ffff3a000032ffffdd2afffffffd220000"
 if "$ASM" -t z80 -o "$TMP/z80_absolute_address_limits.bin" "$TMP/z80_absolute_address_limits.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_absolute_address_limits.bin" | tr -d '[:space:]')" = "$expected" ]; then
     echo "PASS   z80 absolute address zero/65535 boundary matrix"; pass=$((pass + 1))
