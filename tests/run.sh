@@ -2068,11 +2068,11 @@ for pair in IX IY; do
         for src in 0 1 2 3 7 4 5; do
             case "$src" in
                 0) s=B ;; 1) s=C ;; 2) s=D ;; 3) s=E ;;
-                4) s=\${pair}H ;; 5) s=\${pair}L ;; 7) s=A ;;
+                4) s=${pair}H ;; 5) s=${pair}L ;; 7) s=A ;;
             esac
-            if [ "$dst" -eq 4 ]; then d=\${pair}H; else d=\${pair}L; fi
+            if [ "$dst" -eq 4 ]; then d=${pair}H; else d=${pair}L; fi
             printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
-            expected="\${expected}\${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
+            expected="${expected}${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
         done
     done
     for dst in 0 1 2 3 7; do
@@ -2080,9 +2080,9 @@ for pair in IX IY; do
             0) d=B ;; 1) d=C ;; 2) d=D ;; 3) d=E ;; 7) d=A ;;
         esac
         for src in 4 5; do
-            if [ "$src" -eq 4 ]; then s=\${pair}H; else s=\${pair}L; fi
+            if [ "$src" -eq 4 ]; then s=${pair}H; else s=${pair}L; fi
             printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
-            expected="\${expected}\${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
+            expected="${expected}${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
         done
     done
 done
@@ -2106,7 +2106,7 @@ for pair in IX IY; do
             AND) base=0xa0 ;; XOR) base=0xa8 ;; OR) base=0xb0 ;; CP) base=0xb8 ;;
         esac
         for reg in 4 5; do
-            if [ "$reg" -eq 4 ]; then source=\${pair}H; else source=\${pair}L; fi
+            if [ "$reg" -eq 4 ]; then source=${pair}H; else source=${pair}L; fi
             if [ "$mnemonic" = SUB ] || [ "$mnemonic" = AND ] ||
                [ "$mnemonic" = XOR ] || [ "$mnemonic" = OR ] ||
                [ "$mnemonic" = CP ]; then
@@ -2114,17 +2114,17 @@ for pair in IX IY; do
             else
                 printf '%s A,%s\n' "$mnemonic" "$source" >> "$TMP/z80_index_half_alu.asm"
             fi
-            expected="\${expected}\${prefix}$(printf '%02x' $((base + reg)))"
+            expected="${expected}${prefix}$(printf '%02x' $((base + reg)))"
         done
     done
     for reg in 4 5; do
         if [ "$reg" -eq 4 ]; then
-            half=\${pair}H; loadop=0x26; incop=0x24; decop=0x25
+            half=${pair}H; loadop=0x26; incop=0x24; decop=0x25
         else
-            half=\${pair}L; loadop=0x2e; incop=0x2c; decop=0x2d
+            half=${pair}L; loadop=0x2e; incop=0x2c; decop=0x2d
         fi
         printf 'LD %s,0x5a\nINC %s\nDEC %s\n' "$half" "$half" "$half" >> "$TMP/z80_index_half_alu.asm"
-        expected="\${expected}\${prefix}$(printf '%02x' "$loadop")5a\${prefix}$(printf '%02x' "$incop")\${prefix}$(printf '%02x' "$decop")"
+        expected="${expected}${prefix}$(printf '%02x' "$loadop")5a${prefix}$(printf '%02x' "$incop")${prefix}$(printf '%02x' "$decop")"
     done
 done
 if "$ASM" -t z80 -o "$TMP/z80_index_half_alu.bin" "$TMP/z80_index_half_alu.asm" >/dev/null 2>&1 &&
