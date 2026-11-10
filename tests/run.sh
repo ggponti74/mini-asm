@@ -1850,5 +1850,34 @@ for bad in "HALT A" "RLCA 1" "RRCA A" "RLA 0" "RRA B" \
     fi
 done
 
+
+# Fixed Z80 control instructions: NOP, DI, EI, and EXX.
+cat > "$TMP/z80_fixed_control.asm" <<'EOF'
+NOP
+DI
+EI
+EXX
+EOF
+expected="00f3fbd9"
+if "$ASM" -t z80 -o "$TMP/z80_fixed_control.bin" "$TMP/z80_fixed_control.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_fixed_control.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 NOP, DI, EI, and EXX fixed encodings"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 NOP, DI, EI, and EXX fixed encodings"
+    fail=$((fail + 1))
+fi
+
+for bad in "NOP A" "DI 1" "EI B" "EXX 0"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-fixed-control-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-fixed-control-invalid.bin" "$TMP/z80-fixed-control-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid fixed control instruction form: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid fixed control instruction form"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
