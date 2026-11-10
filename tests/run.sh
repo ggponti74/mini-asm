@@ -2384,3 +2384,38 @@ done
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
+
+
+# Literal Z80 LD HL,SP+e displacement limits and operand validation.
+# Check both signed endpoints, zero in either spelling, and hexadecimal input.
+cat > "$TMP/z80_sp_relative_literals.asm" <<'EOF'
+LD HL,SP-128
+LD HL,SP+127
+LD HL,SP+0
+LD HL,SP-0
+LD HL,SP-$80
+LD HL,SP+$7f
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_sp_relative_literals.bin" "$TMP/z80_sp_relative_literals.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_sp_relative_literals.bin" | tr -d '[:space:]')" = "f880f87ff800f800f880f87f" ]; then
+    echo "PASS   z80 LD HL,SP+e literal signed displacement boundaries"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 LD HL,SP+e literal signed displacement boundaries"
+    fail=$((fail + 1))
+fi
+
+for bad in "LD HL,SP+128" "LD HL,SP-129" "LD HL,SP+$80" "LD HL,SP-$81" \\
+           "LD DE,SP+1" "LD IX,SP+1" "LD SP,SP+1"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-sp-relative-invalid.bin" "$TMP/z80-sp-relative-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid SP-relative LD form: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid SP-relative LD form"
+        pass=$((pass + 1))
+    fi
+done
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
