@@ -2403,7 +2403,7 @@ fi
 
 for bad in "LD HL,SP+128" "LD HL,SP-129" "LD HL,SP+$80" "LD HL,SP-$81" \
            "LD DE,SP+1" "LD IX,SP+1" "LD SP,SP+1"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-sp-relative-invalid.bin" "$TMP/z80-sp-relative-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid SP-relative LD form: $bad"
         fail=$((fail + 1))
