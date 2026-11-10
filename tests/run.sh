@@ -1901,7 +1901,7 @@ else
     fail=$((fail + 1))
 fi
 
-for bad in "dc.b 256" "dc.b -129" "dc.w 65536" "dc.w -32769" "dc.l 4294967296" "dc.l -2147483649" "dc.w \\"text\\"" "dc.b missing_z80_data_label"; do
+for bad in "dc.b 256" "dc.b -129" "dc.w 65536" "dc.w -32769" "dc.l 4294967296" "dc.l -2147483649" 'dc.w "text"' "dc.b missing_z80_data_label"; do
     printf '%s\n' "$bad" > "$TMP/z80-directive-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-directive-invalid.bin" "$TMP/z80-directive-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid data directive: $bad"
