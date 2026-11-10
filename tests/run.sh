@@ -2348,13 +2348,13 @@ for index in IX IY; do
                 CP)  opcode=be; syntax="CP (%s%s%d)" ;;
             esac
             if [ "$displacement" -lt 0 ]; then sign=-; else sign=+; fi
-            printf "$syntax\\n" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+            printf "$syntax\n" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
             expected="${expected}${prefix}${opcode}${disp}"
         done
     done
     for displacement in -128 127; do
         if [ "$displacement" -lt 0 ]; then sign=-; disp=80; else sign=+; disp=7f; fi
-        printf 'INC (%s%s%d)\\nDEC (%s%s%d)\\n' "$index" "$sign" "$displacement" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+        printf 'INC (%s%s%d)\nDEC (%s%s%d)\n' "$index" "$sign" "$displacement" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
         expected="${expected}${prefix}34${disp}${prefix}35${disp}"
     done
 done
@@ -2371,7 +2371,7 @@ for bad in \
     "ADD A,(IX+128)" "ADC A,(IY-129)" "SUB (IX+128)" "SBC A,(IY-129)" \
     "AND (IX+128)" "XOR (IY-129)" "OR (IX+128)" "CP (IY-129)" \
     "INC (IX+128)" "DEC (IY-129)"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-indexed-alu-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-indexed-alu-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-indexed-alu-invalid.bin" "$TMP/z80-indexed-alu-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects out-of-range indexed ALU/INC/DEC displacement"
         fail=$((fail + 1))
