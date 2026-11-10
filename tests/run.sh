@@ -1753,5 +1753,57 @@ for bad in "PUSH SP" "POP SP" "PUSH A" "POP BC,DE" "RST 3" "RST 0x40" "RST -8" "
     fi
 done
 
+
+# Verify pass-two resolution of forward and backward symbols in absolute
+# control-flow, immediate-pair, and memory-transfer operands.
+cat > "$TMP/z80_absolute_symbol_matrix.asm" <<'EOF'
+backward: NOP
+LD HL,backward
+LD A,(backward)
+LD (backward),A
+JP backward
+CALL backward
+JP forward
+CALL forward
+LD HL,forward
+LD A,(forward)
+LD (forward),A
+forward: NOP
+EOF
+expected="002100003a0000320000c30000cd0000c31f00cd1f00211f003a1f00321f0000"
+if "$ASM" -t z80 -o "$TMP/z80_absolute_symbol_matrix.bin" "$TMP/z80_absolute_symbol_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_absolute_symbol_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 forward/backward absolute symbol resolution matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 forward/backward absolute symbol resolution matrix"; fail=$((fail + 1))
+fi
+
+# Absolute Z80 addresses are unsigned 16-bit values. Exercise both endpoints
+# across accumulator, pair, index-register, and store/load encodings.
+cat > "$TMP/z80_absolute_address_limits.asm" <<'EOF'
+LD BC,(0)
+LD DE,(65535)
+LD (0),HL
+LD (65535),SP
+LD A,(0)
+LD (65535),A
+LD IX,(65535)
+LD (0),IY
+EOF
+expected="ed4b0000ed5bffff220000ed73ffff3a000032ffffdd2afffffffd220000"
+if "$ASM" -t z80 -o "$TMP/z80_absolute_address_limits.bin" "$TMP/z80_absolute_address_limits.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_absolute_address_limits.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 absolute address zero/65535 boundary matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 absolute address zero/65535 boundary matrix"; fail=$((fail + 1))
+fi
+
+printf 'JP missing_z80_symbol\n' > "$TMP/z80_unresolved_absolute_symbol.asm"
+if "$ASM" -t z80 -o "$TMP/z80_unresolved_absolute_symbol.bin" "$TMP/z80_unresolved_absolute_symbol.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects unresolved absolute symbol"; fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects unresolved absolute symbol"; pass=$((pass + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
