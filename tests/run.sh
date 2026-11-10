@@ -322,6 +322,92 @@ if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/
 else
     echo "PASS   z80 rejects unsupported JR condition"; pass=$((pass + 1))
 fi
+
+# Z80 relative branches: verify every JR condition and DJNZ with resolved
+# forward labels, plus the exact signed displacement boundaries and wraparound.
+cat > "$TMP/z80_relative_branch_matrix.asm" <<'EOF'
+JR NZ,target
+JR Z,target
+JR NC,target
+JR C,target
+DJNZ target
+target: NOP
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_relative_branch_matrix.bin" "$TMP/z80_relative_branch_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_relative_branch_matrix.bin" | tr -d '[:space:]')" = "20082806300438021000ea" ]; then
+    echo "PASS   z80 all relative branch conditions with forward labels"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 all relative branch conditions with forward labels"
+    fail=$((fail + 1))
+fi
+
+{
+    echo 'JR target'
+    i=0
+    while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'target: NOP'
+} > "$TMP/z80-jr-forward-limit.asm"
+if "$ASM" -t z80 -o "$TMP/z80-jr-forward-limit.bin" "$TMP/z80-jr-forward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 -N2 "$TMP/z80-jr-forward-limit.bin" | tr -d '[:space:]')" = "187f" ] &&
+   [ "$(wc -c < "$TMP/z80-jr-forward-limit.bin" | tr -d ' ')" = "130" ]; then
+    echo "PASS   z80 accepts +127 relative branch"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 accepts +127 relative branch"
+    fail=$((fail + 1))
+fi
+
+{
+    echo 'target:'
+    i=0
+    while [ "$i" -lt 126 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'JR target'
+} > "$TMP/z80-jr-backward-limit.asm"
+if "$ASM" -t z80 -o "$TMP/z80-jr-backward-limit.bin" "$TMP/z80-jr-backward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -tx1 -j126 -N2 "$TMP/z80-jr-backward-limit.bin" | tr -d '[:space:]')" = "1880" ] &&
+   [ "$(wc -c < "$TMP/z80-jr-backward-limit.bin" | tr -d ' ')" = "128" ]; then
+    echo "PASS   z80 accepts -128 relative branch"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 accepts -128 relative branch"
+    fail=$((fail + 1))
+fi
+
+for direction in forward backward; do
+    if [ "$direction" = forward ]; then
+        {
+            echo 'JR target'
+            i=0
+            while [ "$i" -lt 128 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'target: NOP'
+        } > "$TMP/z80-jr-out-of-range.asm"
+    else
+        {
+            echo 'target:'
+            i=0
+            while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'JR target'
+        } > "$TMP/z80-jr-out-of-range.asm"
+    fi
+    if "$ASM" -t z80 -o "$TMP/z80-jr-out-of-range.bin" "$TMP/z80-jr-out-of-range.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects $direction branch outside signed range"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects $direction branch outside signed range"
+        pass=$((pass + 1))
+    fi
+done
+
+printf 'JR $0000\n' > "$TMP/z80-jr-wrap.asm"
+if "$ASM" -t z80 --base 65534 -o "$TMP/z80-jr-wrap.bin" "$TMP/z80-jr-wrap.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80-jr-wrap.bin" | tr -d '[:space:]')" = "1800" ]; then
+    echo "PASS   z80 relative branch wraps at 16-bit address boundary"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 relative branch wraps at 16-bit address boundary"
+    fail=$((fail + 1))
+fi
 cat > "$TMP/z80_alu.asm" <<'EOF'
 ADD A,B
 ADD A,(HL)
