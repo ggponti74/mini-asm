@@ -1879,5 +1879,40 @@ for bad in "NOP A" "DI 1" "EI B" "EXX 0"; do
     fi
 done
 
+
+# Z80 uses the shared data directives and EQU symbols. Verify byte values,
+# big-endian word/long emission, and pass-two resolution of forward labels.
+cat > "$TMP/z80_directives.asm" <<'EOF'
+BYTE EQU $7f
+WORD EQU $1234
+LONG EQU $12345678
+start: dc.b BYTE,1
+dc.w start,WORD,end
+dc.l LONG
+end: NOP
+EOF
+expected="7f0100001234000c1234567800"
+if "$ASM" -t z80 -o "$TMP/z80_directives.bin" "$TMP/z80_directives.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_directives.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 EQU, dc.b/dc.w/dc.l, and forward-label data directives"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 EQU, dc.b/dc.w/dc.l, and forward-label data directives"
+    fail=$((fail + 1))
+fi
+
+for bad in "dc.b 256" "dc.b -129" "dc.w 65536" "dc.w -32769" \\
+           "dc.l 4294967296" "dc.l -2147483649" 'dc.w "text"' \\
+           "dc.b missing_z80_data_label"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-directive-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-directive-invalid.bin" "$TMP/z80-directive-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid data directive: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid data directive"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
