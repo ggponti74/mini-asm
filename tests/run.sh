@@ -2300,7 +2300,7 @@ RES 0,(IY+POS127)
 LD HL,SP-NEG128
 LD HL,SP+POS127
 EOF
-expected="dd7e80dd777ffd4680fd717fddcb80fe fdcb7fc6f880f87f"
+expected="dd7e80dd777ffd4680fd717fddcb807efdcb7f86f880f87f"
 expected=$(printf '%s' "$expected" | tr -d ' ')
 if "$ASM" -t z80 -o "$TMP/z80_symbolic_displacement_boundaries.bin" "$TMP/z80_symbolic_displacement_boundaries.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_symbolic_displacement_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
