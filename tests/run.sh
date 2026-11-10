@@ -2347,14 +2347,13 @@ for index in IX IY; do
                 OR)  opcode=b6; syntax="OR (%s%s%d)" ;;
                 CP)  opcode=be; syntax="CP (%s%s%d)" ;;
             esac
-            if [ "$displacement" -lt 0 ]; then sign=-; else sign=+; fi
-            printf "$syntax\\n" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+            printf "$syntax\\n" "$index" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
             expected="${expected}${prefix}${opcode}${disp}"
         done
     done
     for displacement in -128 127; do
-        if [ "$displacement" -lt 0 ]; then sign=-; disp=80; else sign=+; disp=7f; fi
-        printf 'INC (%s%s%d)\\nDEC (%s%s%d)\\n' "$index" "$sign" "$displacement" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+        if [ "$displacement" -lt 0 ]; then disp=80; else disp=7f; fi
+        printf 'INC (%s%d)\\nDEC (%s%d)\\n' "$index" "$displacement" "$index" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
         expected="${expected}${prefix}34${disp}${prefix}35${disp}"
     done
 done
