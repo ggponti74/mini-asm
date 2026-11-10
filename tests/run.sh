@@ -2338,14 +2338,14 @@ for index in IX IY; do
         case "$displacement" in -128) disp=80 ;; 127) disp=7f ;; esac
         for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
             case "$mnemonic" in
-                ADD) opcode=86; syntax="ADD A,(%s%d)" ;;
-                ADC) opcode=8e; syntax="ADC A,(%s%d)" ;;
-                SUB) opcode=96; syntax="SUB (%s%d)" ;;
-                SBC) opcode=9e; syntax="SBC A,(%s%d)" ;;
-                AND) opcode=a6; syntax="AND (%s%d)" ;;
-                XOR) opcode=ae; syntax="XOR (%s%d)" ;;
-                OR)  opcode=b6; syntax="OR (%s%d)" ;;
-                CP)  opcode=be; syntax="CP (%s%d)" ;;
+                ADD) opcode=86; syntax="ADD A,(%s%s%d)" ;;
+                ADC) opcode=8e; syntax="ADC A,(%s%s%d)" ;;
+                SUB) opcode=96; syntax="SUB (%s%s%d)" ;;
+                SBC) opcode=9e; syntax="SBC A,(%s%s%d)" ;;
+                AND) opcode=a6; syntax="AND (%s%s%d)" ;;
+                XOR) opcode=ae; syntax="XOR (%s%s%d)" ;;
+                OR)  opcode=b6; syntax="OR (%s%s%d)" ;;
+                CP)  opcode=be; syntax="CP (%s%s%d)" ;;
             esac
             if [ "$displacement" -lt 0 ]; then sign=-; magnitude=$(( -displacement )); else sign=+; magnitude=$displacement; fi
             printf "$syntax\n" "$index" "$sign" "$magnitude" >> "$TMP/z80_indexed_alu_boundaries.asm"
