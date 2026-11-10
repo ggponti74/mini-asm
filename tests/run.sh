@@ -2284,8 +2284,6 @@ for bad in \
     fi
 done
 
-e
-
 # Symbolic IX/IY and SP-relative displacements must retain signed 8-bit
 # boundaries after pass-two EQU resolution, just like literal displacements.
 cat > "$TMP/z80_symbolic_displacement_boundaries.asm" <<'EOF'
@@ -2320,7 +2318,7 @@ LD A,(IY-TOO_NEG)" \
 LD HL,SP+TOO_POS" \
     "TOO_NEG EQU 129
 LD HL,SP-TOO_NEG"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-symbolic-displacement-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-symbolic-displacement-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-symbolic-displacement-invalid.bin" "$TMP/z80-symbolic-displacement-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects out-of-range symbolic displacement"
         fail=$((fail + 1))
