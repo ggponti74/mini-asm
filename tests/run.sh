@@ -1805,5 +1805,50 @@ else
     echo "PASS   z80 rejects unresolved absolute symbol"; pass=$((pass + 1))
 fi
 
+
+# Cover the remaining fixed Z80 accumulator operations, HALT, and ED-prefixed
+# single-purpose instructions. These are all fixed encodings with no operands.
+cat > "$TMP/z80_fixed_and_ed_special.asm" <<'EOF'
+HALT
+RLCA
+RRCA
+RLA
+RRA
+CPL
+DAA
+SCF
+CCF
+NEG
+RETN
+RETI
+RRD
+RLD
+EOF
+expected="76070f171f2f27373fed44ed45ed4ded67ed6f"
+if "$ASM" -t z80 -o "$TMP/z80_fixed_and_ed_special.bin" "$TMP/z80_fixed_and_ed_special.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_fixed_and_ed_special.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 HALT, accumulator operations, and ED special instructions"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 HALT, accumulator operations, and ED special instructions"
+    fail=$((fail + 1))
+fi
+
+# Fixed no-operand instructions must reject both stray operands and missing
+# operands on the one-operand ED instruction IM.
+for bad in "HALT A" "RLCA 1" "RRCA A" "RLA 0" "RRA B" \
+           "CPL A" "DAA 1" "SCF A" "CCF 0" "NEG A" \
+           "RETN 0" "RETI A" "RRD B" "RLD 1" \
+           "IM" "IM 0,1"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-fixed-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-fixed-invalid.bin" "$TMP/z80-fixed-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid fixed/ED instruction form: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid fixed/ED instruction form"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
