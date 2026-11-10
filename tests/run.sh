@@ -1840,7 +1840,7 @@ for bad in "HALT A" "RLCA 1" "RRCA A" "RLA 0" "RRA B" \
            "CPL A" "DAA 1" "SCF A" "CCF 0" "NEG A" \
            "RETN 0" "RETI A" "RRD B" "RLD 1" \
            "IM" "IM 0,1"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-fixed-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-fixed-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-fixed-invalid.bin" "$TMP/z80-fixed-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid fixed/ED instruction form: $bad"
         fail=$((fail + 1))
@@ -1869,7 +1869,7 @@ else
 fi
 
 for bad in "NOP A" "DI 1" "EI B" "EXX 0"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-fixed-control-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-fixed-control-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-fixed-control-invalid.bin" "$TMP/z80-fixed-control-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid fixed control instruction form: $bad"
         fail=$((fail + 1))
@@ -1914,3 +1914,50 @@ done
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
+
+# Z80 I/O: exercise every documented register form for IN/OUT through (C),
+# immediate-port accumulator forms, and the two commonly supported
+# undocumented encodings.
+cat > "$TMP/z80_io_matrix.asm" <<'EOF'
+IN B,(C)
+IN C,(C)
+IN D,(C)
+IN E,(C)
+IN H,(C)
+IN L,(C)
+IN A,(C)
+OUT (C),B
+OUT (C),C
+OUT (C),D
+OUT (C),E
+OUT (C),H
+OUT (C),L
+OUT (C),A
+IN A,(0x12)
+OUT (0x34),A
+IN F,(C)
+OUT (C),0
+EOF
+expected="ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79db12d334ed70ed71"
+if "$ASM" -t z80 -o "$TMP/z80_io_matrix.bin" "$TMP/z80_io_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_io_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 IN/OUT register, immediate-port, and undocumented forms"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 IN/OUT register, immediate-port, and undocumented forms"
+    fail=$((fail + 1))
+fi
+
+for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
+           "OUT (C),IXH" "OUT (C),IXL" "OUT (C),IYH" "OUT (C),IYL" \
+           "IN B,(0x12)" "OUT (0x12),B" "IN A,(256)" "OUT (-1),A" \
+           "IN A,C" "OUT C,A" "IN B,(256)"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-io-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-io-invalid.bin" "$TMP/z80-io-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid I/O form: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid I/O form"
+        pass=$((pass + 1))
+    fi
+done
