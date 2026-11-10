@@ -1658,5 +1658,100 @@ else
     fail=$((fail + 1))
 fi
 
+
+# Exhaustive Z80 control-flow, stack-pair, restart-vector, and interrupt-mode
+# matrices. These validate all condition-code encodings and legal stack pairs.
+cat > "$TMP/z80_control_flow_matrix.asm" <<'EOF'
+JP NZ,0x1234
+JP Z,0x1234
+JP NC,0x1234
+JP C,0x1234
+JP PO,0x1234
+JP PE,0x1234
+JP P,0x1234
+JP M,0x1234
+JP 0x1234
+JP (HL)
+JP (IX)
+JP (IY)
+CALL NZ,0x1234
+CALL Z,0x1234
+CALL NC,0x1234
+CALL C,0x1234
+CALL PO,0x1234
+CALL PE,0x1234
+CALL P,0x1234
+CALL M,0x1234
+CALL 0x1234
+RET NZ
+RET Z
+RET NC
+RET C
+RET PO
+RET PE
+RET P
+RET M
+RET
+EOF
+expected="c23412ca3412d23412da3412e23412ea3412f23412fa3412c33412e9dde9fde9c43412cc3412d43412dc3412e43412ec3412f43412fc3412cd3412c0c8d0d8e0e8f0f8c9"
+if "$ASM" -t z80 -o "$TMP/z80_control_flow_matrix.bin" "$TMP/z80_control_flow_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_control_flow_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete conditional JP/CALL/RET and indirect JP matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete conditional JP/CALL/RET and indirect JP matrix"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_stack_pair_matrix.asm" <<'EOF'
+PUSH BC
+PUSH DE
+PUSH HL
+PUSH AF
+PUSH IX
+PUSH IY
+POP BC
+POP DE
+POP HL
+POP AF
+POP IX
+POP IY
+EOF
+expected="c5d5e5f5dde5fde5c1d1e1f1dde1fde1"
+if "$ASM" -t z80 -o "$TMP/z80_stack_pair_matrix.bin" "$TMP/z80_stack_pair_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_stack_pair_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete PUSH/POP pair and index-register matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete PUSH/POP pair and index-register matrix"; fail=$((fail + 1))
+fi
+
+cat > "$TMP/z80_rst_im_matrix.asm" <<'EOF'
+RST 0
+RST 8
+RST 16
+RST 24
+RST 32
+RST 40
+RST 48
+RST 56
+IM 0
+IM 1
+IM 2
+EOF
+expected="c7cfd7dfe7eff7ffed46ed56ed5e"
+if "$ASM" -t z80 -o "$TMP/z80_rst_im_matrix.bin" "$TMP/z80_rst_im_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_rst_im_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete RST vector and interrupt-mode matrix"; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete RST vector and interrupt-mode matrix"; fail=$((fail + 1))
+fi
+
+for bad in "PUSH SP" "POP SP" "PUSH A" "POP BC,DE" "RST 3" "RST 0x40" "RST -8" "IM 3" "IM -1" "JP PO" "CALL NZ" "RET IX"; do
+    printf '%s\n' "$bad" > "$TMP/z80-control-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-control-invalid.bin" "$TMP/z80-control-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid control/stack form: $bad"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid control/stack form"; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
