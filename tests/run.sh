@@ -1567,5 +1567,96 @@ for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R"
     fi
 done
 
+
+# Exhaustive Z80 CB-prefixed opcode coverage. The ordinary matrix checks all
+# 256 encodings: eight rotate/shift operations and every BIT/RES/SET bit/register
+# combination. The indexed matrix checks DDCB/FDCB displacement boundaries,
+# including all documented and undocumented result-register encodings.
+z80_cb_reg_name() {
+    case "$1" in
+        0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
+        4) printf H ;; 5) printf L ;; 6) printf '(HL)' ;; 7) printf A ;;
+    esac
+}
+: > "$TMP/z80_cb_opcode_matrix.asm"
+expected=""
+for mnemonic in RLC RRC RL RR SLA SRA SLL SRL; do
+    case "$mnemonic" in
+        RLC) base=0x00 ;; RRC) base=0x08 ;; RL) base=0x10 ;; RR) base=0x18 ;;
+        SLA) base=0x20 ;; SRA) base=0x28 ;; SLL) base=0x30 ;; SRL) base=0x38 ;;
+    esac
+    for reg in 0 1 2 3 4 5 6 7; do
+        name=$(z80_cb_reg_name "$reg")
+        printf '%s %s\n' "$mnemonic" "$name" >> "$TMP/z80_cb_opcode_matrix.asm"
+        expected="\${expected}cb$(printf '%02x' $((base + reg)))"
+    done
+done
+for mnemonic in BIT RES SET; do
+    case "$mnemonic" in BIT) base=0x40 ;; RES) base=0x80 ;; SET) base=0xC0 ;; esac
+    for bit in 0 1 2 3 4 5 6 7; do
+        for reg in 0 1 2 3 4 5 6 7; do
+            name=$(z80_cb_reg_name "$reg")
+            printf '%s %s,%s\n' "$mnemonic" "$bit" "$name" >> "$TMP/z80_cb_opcode_matrix.asm"
+            expected="\${expected}cb$(printf '%02x' $((base + bit * 8 + reg)))"
+        done
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_cb_opcode_matrix.bin" "$TMP/z80_cb_opcode_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_cb_opcode_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 exhaustive 256-opcode CB matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 exhaustive 256-opcode CB matrix"
+    fail=$((fail + 1))
+fi
+
+: > "$TMP/z80_indexed_cb_matrix.asm"
+expected=""
+for pair in IX IY; do
+    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
+    for disp in -128 127; do
+        if [ "$disp" -lt 0 ]; then disp_byte=80; else disp_byte=7f; fi
+        for mnemonic in RLC RRC RL RR SLA SRA SLL SRL; do
+            case "$mnemonic" in
+                RLC) base=0x00 ;; RRC) base=0x08 ;; RL) base=0x10 ;; RR) base=0x18 ;;
+                SLA) base=0x20 ;; SRA) base=0x28 ;; SLL) base=0x30 ;; SRL) base=0x38 ;;
+            esac
+            for reg in 0 1 2 3 4 5 6 7; do
+                if [ "$reg" -eq 6 ]; then
+                    printf '%s (%s%+d)\n' "$mnemonic" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
+                else
+                    name=$(z80_cb_reg_name "$reg")
+                    printf '%s (%s%+d),%s\n' "$mnemonic" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
+                fi
+                expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((base + reg)))"
+            done
+        done
+        for bit in 0 1 2 3 4 5 6 7; do
+            printf 'BIT %s,(%s%+d)\n' "$bit" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
+            expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((0x40 + bit * 8 + 6)))"
+            for mnemonic in RES SET; do
+                if [ "$mnemonic" = RES ]; then base=0x80; else base=0xC0; fi
+                for reg in 0 1 2 3 4 5 6 7; do
+                    if [ "$reg" -eq 6 ]; then
+                        printf '%s %s,(%s%+d)\n' "$mnemonic" "$bit" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
+                    else
+                        name=$(z80_cb_reg_name "$reg")
+                        printf '%s %s,(%s%+d),%s\n' "$mnemonic" "$bit" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
+                    fi
+                    expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((base + bit * 8 + reg)))"
+                done
+            done
+        done
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_indexed_cb_matrix.bin" "$TMP/z80_indexed_cb_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_indexed_cb_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 exhaustive DDCB/FDCB indexed opcode matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 exhaustive DDCB/FDCB indexed opcode matrix"
+    fail=$((fail + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
