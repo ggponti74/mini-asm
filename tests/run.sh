@@ -2328,5 +2328,60 @@ LD HL,SP-TOO_NEG"; do
     fi
 done
 
+e
+
+# Exercise every ALU operation against IX/IY indexed memory at both
+# signed displacement endpoints, plus indexed INC/DEC and range rejection.
+: > "$TMP/z80_indexed_alu_boundaries.asm"
+expected=""
+for index in IX IY; do
+    case "$index" in IX) prefix=dd ;; IY) prefix=fd ;; esac
+    for displacement in -128 127; do
+        case "$displacement" in -128) disp=80 ;; 127) disp=7f ;; esac
+        for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
+            case "$mnemonic" in
+                ADD) opcode=86; syntax="ADD A,(%s%s%d)" ;;
+                ADC) opcode=8e; syntax="ADC A,(%s%s%d)" ;;
+                SUB) opcode=96; syntax="SUB (%s%s%d)" ;;
+                SBC) opcode=9e; syntax="SBC A,(%s%s%d)" ;;
+                AND) opcode=a6; syntax="AND (%s%s%d)" ;;
+                XOR) opcode=ae; syntax="XOR (%s%s%d)" ;;
+                OR)  opcode=b6; syntax="OR (%s%s%d)" ;;
+                CP)  opcode=be; syntax="CP (%s%s%d)" ;;
+            esac
+            if [ "$displacement" -lt 0 ]; then sign=-; else sign=+; fi
+            printf "$syntax\\n" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+            expected="${expected}${prefix}${opcode}${disp}"
+        done
+    done
+    for displacement in -128 127; do
+        if [ "$displacement" -lt 0 ]; then sign=-; disp=80; else sign=+; disp=7f; fi
+        printf 'INC (%s%s%d)\\nDEC (%s%s%d)\\n' "$index" "$sign" "$displacement" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+        expected="${expected}${prefix}34${disp}${prefix}35${disp}"
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_indexed_alu_boundaries.bin" "$TMP/z80_indexed_alu_boundaries.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_indexed_alu_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete IX/IY indexed ALU and INC/DEC displacement matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete IX/IY indexed ALU and INC/DEC displacement matrix"
+    fail=$((fail + 1))
+fi
+
+for bad in \
+    "ADD A,(IX+128)" "ADC A,(IY-129)" "SUB (IX+128)" "SBC A,(IY-129)" \
+    "AND (IX+128)" "XOR (IY-129)" "OR (IX+128)" "CP (IY-129)" \
+    "INC (IX+128)" "DEC (IY-129)"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-indexed-alu-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-indexed-alu-invalid.bin" "$TMP/z80-indexed-alu-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects out-of-range indexed ALU/INC/DEC displacement"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects out-of-range indexed ALU/INC/DEC displacement"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
