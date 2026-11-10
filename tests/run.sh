@@ -1736,7 +1736,7 @@ IM 0
 IM 1
 IM 2
 EOF
-expected="c7cfcfd7dfe7eff7ffed46ed56ed5e"
+expected="c7cfd7dfe7eff7ffed46ed56ed5e"
 if "$ASM" -t z80 -o "$TMP/z80_rst_im_matrix.bin" "$TMP/z80_rst_im_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_rst_im_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
     echo "PASS   z80 complete RST vector and interrupt-mode matrix"; pass=$((pass + 1))
