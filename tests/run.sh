@@ -1588,7 +1588,7 @@ for mnemonic in RLC RRC RL RR SLA SRA SLL SRL; do
     for reg in 0 1 2 3 4 5 6 7; do
         name=$(z80_cb_reg_name "$reg")
         printf '%s %s\n' "$mnemonic" "$name" >> "$TMP/z80_cb_opcode_matrix.asm"
-        expected="\${expected}cb$(printf '%02x' $((base + reg)))"
+        expected="${expected}cb$(printf '%02x' $((base + reg)))"
     done
 done
 for mnemonic in BIT RES SET; do
@@ -1597,7 +1597,7 @@ for mnemonic in BIT RES SET; do
         for reg in 0 1 2 3 4 5 6 7; do
             name=$(z80_cb_reg_name "$reg")
             printf '%s %s,%s\n' "$mnemonic" "$bit" "$name" >> "$TMP/z80_cb_opcode_matrix.asm"
-            expected="\${expected}cb$(printf '%02x' $((base + bit * 8 + reg)))"
+            expected="${expected}cb$(printf '%02x' $((base + bit * 8 + reg)))"
         done
     done
 done
@@ -1628,12 +1628,12 @@ for pair in IX IY; do
                     name=$(z80_cb_reg_name "$reg")
                     printf '%s (%s%+d),%s\n' "$mnemonic" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
                 fi
-                expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((base + reg)))"
+                expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((base + reg)))"
             done
         done
         for bit in 0 1 2 3 4 5 6 7; do
             printf 'BIT %s,(%s%+d)\n' "$bit" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
-            expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((0x40 + bit * 8 + 6)))"
+            expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((0x40 + bit * 8 + 6)))"
             for mnemonic in RES SET; do
                 if [ "$mnemonic" = RES ]; then base=0x80; else base=0xC0; fi
                 for reg in 0 1 2 3 4 5 6 7; do
@@ -1643,7 +1643,7 @@ for pair in IX IY; do
                         name=$(z80_cb_reg_name "$reg")
                         printf '%s %s,(%s%+d),%s\n' "$mnemonic" "$bit" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
                     fi
-                    expected="\${expected}\${prefix}cb\${disp_byte}$(printf '%02x' $((base + bit * 8 + reg)))"
+                    expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((base + bit * 8 + reg)))"
                 done
             done
         done
