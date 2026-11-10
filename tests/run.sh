@@ -2328,8 +2328,6 @@ LD HL,SP-TOO_NEG"; do
     fi
 done
 
-e
-
 # Exercise every ALU operation against IX/IY indexed memory at both
 # signed displacement endpoints, plus indexed INC/DEC and range rejection.
 : > "$TMP/z80_indexed_alu_boundaries.asm"
