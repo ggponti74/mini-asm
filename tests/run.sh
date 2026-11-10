@@ -2338,23 +2338,22 @@ for index in IX IY; do
         case "$displacement" in -128) disp=80 ;; 127) disp=7f ;; esac
         for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
             case "$mnemonic" in
-                ADD) opcode=86; syntax="ADD A,(%s%s%d)" ;;
-                ADC) opcode=8e; syntax="ADC A,(%s%s%d)" ;;
-                SUB) opcode=96; syntax="SUB (%s%s%d)" ;;
-                SBC) opcode=9e; syntax="SBC A,(%s%s%d)" ;;
-                AND) opcode=a6; syntax="AND (%s%s%d)" ;;
-                XOR) opcode=ae; syntax="XOR (%s%s%d)" ;;
-                OR)  opcode=b6; syntax="OR (%s%s%d)" ;;
-                CP)  opcode=be; syntax="CP (%s%s%d)" ;;
+                ADD) opcode=86; syntax="ADD A,(%s%d)" ;;
+                ADC) opcode=8e; syntax="ADC A,(%s%d)" ;;
+                SUB) opcode=96; syntax="SUB (%s%d)" ;;
+                SBC) opcode=9e; syntax="SBC A,(%s%d)" ;;
+                AND) opcode=a6; syntax="AND (%s%d)" ;;
+                XOR) opcode=ae; syntax="XOR (%s%d)" ;;
+                OR)  opcode=b6; syntax="OR (%s%d)" ;;
+                CP)  opcode=be; syntax="CP (%s%d)" ;;
             esac
-            if [ "$displacement" -lt 0 ]; then sign=-; else sign=+; fi
-            printf "$syntax\n" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+            printf "$syntax\n" "$index" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
             expected="${expected}${prefix}${opcode}${disp}"
         done
     done
     for displacement in -128 127; do
-        if [ "$displacement" -lt 0 ]; then sign=-; disp=80; else sign=+; disp=7f; fi
-        printf 'INC (%s%s%d)\nDEC (%s%s%d)\n' "$index" "$sign" "$displacement" "$index" "$sign" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
+        if [ "$displacement" -lt 0 ]; then disp=80; else disp=7f; fi
+        printf 'INC (%s%d)\nDEC (%s%d)\n' "$index" "$displacement" "$index" "$displacement" >> "$TMP/z80_indexed_alu_boundaries.asm"
         expected="${expected}${prefix}34${disp}${prefix}35${disp}"
     done
 done
