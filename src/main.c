@@ -396,15 +396,18 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
       {
         const char *active_arch = opcodes_active_arch_name();
         bool is_6501_indirect = active_arch && strcmp(active_arch, "6501") == 0;
-        bool is_z80_indexed = active_arch && strcmp(active_arch, "z80") == 0 &&
+        bool is_z80 = active_arch && strcmp(active_arch, "z80") == 0;
+        bool is_z80_indexed = is_z80 &&
                               (ops[i].value.reg == 0x24 || ops[i].value.reg == 0x25);
-        int index_sign = is_z80_indexed && ops[i].disp < 0 ? -1 : 1;
+        bool is_z80_sp_relative = is_z80 && ops[i].value.reg == 0x26;
+        int displacement_sign = (is_z80_indexed || is_z80_sp_relative) &&
+                                ops[i].disp < 0 ? -1 : 1;
         if (ops[i].symbol && pass == 2)
         {
           int32_t value;
           size_t off;
           if (symtab_find_equ(ops[i].symbol, &value))
-            ops[i].disp = is_z80_indexed ? value * index_sign : value;
+            ops[i].disp = (is_z80_indexed || is_z80_sp_relative) ? value * displacement_sign : value;
           else if (is_6501_indirect && symtab_find(ops[i].symbol, &off))
             ops[i].disp = resolve_label_address(code_base, off);
           else
