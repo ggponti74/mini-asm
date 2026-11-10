@@ -2054,5 +2054,100 @@ LD (IX+1),BAD_BYTE"; do
     fi
 done
 
+
+
+# Exhaustive undocumented Z80 index-half coverage. Check all legal LD
+# transfers between IXH/IXL or IYH/IYL and the ordinary 8-bit registers,
+# plus all same-index half-register transfers. Cross-index and H/L mixing
+# remain invalid and are checked separately below.
+: > "$TMP/z80_index_half_matrix.asm"
+expected=""
+for pair in IX IY; do
+    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
+    for dst in 4 5; do
+        for src in 0 1 2 3 7 4 5; do
+            case "$src" in
+                0) s=B ;; 1) s=C ;; 2) s=D ;; 3) s=E ;;
+                4) s=\${pair}H ;; 5) s=\${pair}L ;; 7) s=A ;;
+            esac
+            if [ "$dst" -eq 4 ]; then d=\${pair}H; else d=\${pair}L; fi
+            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
+            expected="\${expected}\${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
+        done
+    done
+    for dst in 0 1 2 3 7; do
+        case "$dst" in
+            0) d=B ;; 1) d=C ;; 2) d=D ;; 3) d=E ;; 7) d=A ;;
+        esac
+        for src in 4 5; do
+            if [ "$src" -eq 4 ]; then s=\${pair}H; else s=\${pair}L; fi
+            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
+            expected="\${expected}\${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
+        done
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_index_half_matrix.bin" "$TMP/z80_index_half_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_index_half_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 exhaustive legal IXH/IXL/IYH/IYL LD matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 exhaustive legal IXH/IXL/IYH/IYL LD matrix"
+    fail=$((fail + 1))
+fi
+
+# Every index-half ALU source form, immediate load, and INC/DEC encoding.
+: > "$TMP/z80_index_half_alu.asm"
+expected=""
+for pair in IX IY; do
+    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
+    for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
+        case "$mnemonic" in
+            ADD) base=0x80 ;; ADC) base=0x88 ;; SUB) base=0x90 ;; SBC) base=0x98 ;;
+            AND) base=0xa0 ;; XOR) base=0xa8 ;; OR) base=0xb0 ;; CP) base=0xb8 ;;
+        esac
+        for reg in 4 5; do
+            if [ "$reg" -eq 4 ]; then source=\${pair}H; else source=\${pair}L; fi
+            if [ "$mnemonic" = SUB ] || [ "$mnemonic" = AND ] ||
+               [ "$mnemonic" = XOR ] || [ "$mnemonic" = OR ] ||
+               [ "$mnemonic" = CP ]; then
+                printf '%s %s\n' "$mnemonic" "$source" >> "$TMP/z80_index_half_alu.asm"
+            else
+                printf '%s A,%s\n' "$mnemonic" "$source" >> "$TMP/z80_index_half_alu.asm"
+            fi
+            expected="\${expected}\${prefix}$(printf '%02x' $((base + reg)))"
+        done
+    done
+    for reg in 4 5; do
+        if [ "$reg" -eq 4 ]; then
+            half=\${pair}H; loadop=0x26; incop=0x24; decop=0x25
+        else
+            half=\${pair}L; loadop=0x2e; incop=0x2c; decop=0x2d
+        fi
+        printf 'LD %s,0x5a\nINC %s\nDEC %s\n' "$half" "$half" "$half" >> "$TMP/z80_index_half_alu.asm"
+        expected="\${expected}\${prefix}$(printf '%02x' "$loadop")5a\${prefix}$(printf '%02x' "$incop")\${prefix}$(printf '%02x' "$decop")"
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80_index_half_alu.bin" "$TMP/z80_index_half_alu.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_index_half_alu.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete IXH/IXL/IYH/IYL ALU, immediate, and INC/DEC matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete IXH/IXL/IYH/IYL ALU, immediate, and INC/DEC matrix"
+    fail=$((fail + 1))
+fi
+
+for bad in "LD IXH,IYH" "LD IXL,IYL" "LD IYH,IXL" "LD IYL,IXH" \
+           "LD IXH,H" "LD H,IXH" "LD IXL,L" "LD L,IYL" \
+           "LD IYH,H" "LD IYL,L"; do
+    printf '%s\n' "$bad" > "$TMP/z80-index-half-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-index-half-invalid.bin" "$TMP/z80-index-half-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects illegal index-half register mixing: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects illegal index-half register mixing"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
