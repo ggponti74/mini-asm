@@ -2219,5 +2219,70 @@ else
     fail=$((fail + 1))
 fi
 
+
+# Z80 byte immediates accept signed -128 through unsigned 255, while
+# 16-bit immediates accept signed -32768 through unsigned 65535.
+: > "$TMP/z80_immediate_boundaries.asm"
+expected=""
+for reg in B C D E H L '(HL)' A; do
+    case "$reg" in
+        B) opcode=06 ;; C) opcode=0e ;; D) opcode=16 ;; E) opcode=1e ;;
+        H) opcode=26 ;; L) opcode=2e ;; '(HL)') opcode=36 ;; A) opcode=3e ;;
+    esac
+    printf 'LD %s,-128\nLD %s,255\n' "$reg" "$reg" >> "$TMP/z80_immediate_boundaries.asm"
+    ${expected}="${expected}${opcode}80${opcode}ff"
+done
+for pair in BC DE HL SP IX IY; do
+    case "$pair" in
+        BC) prefix=""; opcode=01 ;;
+        DE) prefix=""; opcode=11 ;;
+        HL) prefix=""; opcode=21 ;;
+        SP) prefix=""; opcode=31 ;;
+        IX) prefix=dd; opcode=21 ;;
+        IY) prefix=fd; opcode=21 ;;
+    esac
+    printf 'LD %s,-32768\nLD %s,65535\n' "$pair" "$pair" >> "$TMP/z80_immediate_boundaries.asm"
+    ${expected}="${expected}${prefix}${opcode}0080${prefix}${opcode}ffff"
+done
+for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
+    case "$mnemonic" in
+        ADD) opcode=c6 ;; ADC) opcode=ce ;; SUB) opcode=d6 ;; SBC) opcode=de ;;
+        AND) opcode=e6 ;; XOR) opcode=ee ;; OR) opcode=f6 ;; CP) opcode=fe ;;
+    esac
+    if [ "$mnemonic" = SUB ] || [ "$mnemonic" = AND ] ||
+       [ "$mnemonic" = XOR ] || [ "$mnemonic" = OR ] ||
+       [ "$mnemonic" = CP ]; then
+        printf '%s -128\n%s 255\n' "$mnemonic" "$mnemonic" >> "$TMP/z80_immediate_boundaries.asm"
+    else
+        printf '%s A,-128\n%s A,255\n' "$mnemonic" "$mnemonic" >> "$TMP/z80_immediate_boundaries.asm"
+    fi
+    ${expected}="${expected}${opcode}80${opcode}ff"
+done
+if "$ASM" -t z80 -o "$TMP/z80_immediate_boundaries.bin" "$TMP/z80_immediate_boundaries.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_immediate_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 signed/unsigned byte and 16-bit immediate boundaries"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 signed/unsigned byte and 16-bit immediate boundaries"
+    fail=$((fail + 1))
+fi
+
+for bad in \
+    "LD B,-129" "LD C,256" "LD (HL),-129" "LD A,256" \
+    "LD IXH,-129" "LD IYL,256" \
+    "ADD A,-129" "ADC A,256" "SUB -129" "SBC A,256" \
+    "AND -129" "XOR 256" "OR -129" "CP 256" \
+    "LD BC,-32769" "LD DE,65536" "LD HL,-32769" \
+    "LD SP,65536" "LD IX,-32769" "LD IY,65536"; do
+    printf '%s\n' "$bad" > "$TMP/z80-immediate-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-immediate-invalid.bin" "$TMP/z80-immediate-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects out-of-range immediate: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects out-of-range immediate"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
