@@ -2415,6 +2415,3 @@ done
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
-
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
