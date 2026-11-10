@@ -796,7 +796,7 @@ static bool emit_z80_ed_special(const char *mnemonic,
         }
     if (strcmp(mnemonic, "IM") == 0)
     {
-        if (ops[0].type != OPERAND_IMMEDIATE || ops[0].symbol ||
+        if (ops[0].type != OPERAND_IMMEDIATE ||
             ops[0].is_indirect || ops[0].value.imm < 0 ||
             ops[0].value.imm > 2)
             return fail("Z80 IM mode must be 0, 1, or 2");
@@ -841,7 +841,7 @@ static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
         result = &ops[2];
         has_result = result->type != OPERAND_NONE;
     }
-    if (bit->type != OPERAND_IMMEDIATE || bit->symbol || bit->is_indirect ||
+    if (bit->type != OPERAND_IMMEDIATE || bit->is_indirect ||
         bit->value.imm < 0 || bit->value.imm > 7)
         return fail("Z80 bit number must be an immediate in the range 0..7");
 
