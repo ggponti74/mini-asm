@@ -334,7 +334,7 @@ DJNZ target
 target: NOP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_relative_branch_matrix.bin" "$TMP/z80_relative_branch_matrix.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_relative_branch_matrix.bin" | tr -d '[:space:]')" = "20082806300438021000ea" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_relative_branch_matrix.bin" | tr -d '[:space:]')" = "2008280630043802100000" ]; then
     echo "PASS   z80 all relative branch conditions with forward labels"
     pass=$((pass + 1))
 else
