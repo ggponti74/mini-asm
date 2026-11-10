@@ -1912,8 +1912,7 @@ for bad in "dc.b 256" "dc.b -129" "dc.w 65536" "dc.w -32769" "dc.l 4294967296" "
     fi
 done
 
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
+
 
 # Z80 I/O: exercise every documented register form for IN/OUT through (C),
 # immediate-port accumulator forms, and the two commonly supported
@@ -1952,7 +1951,7 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
            "OUT (C),IXH" "OUT (C),IXL" "OUT (C),IYH" "OUT (C),IYL" \
            "IN B,(0x12)" "OUT (0x12),B" "IN A,(256)" "OUT (-1),A" \
            "IN A,C" "OUT C,A" "IN B,(256)"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-io-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-io-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-io-invalid.bin" "$TMP/z80-io-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid I/O form: $bad"
         fail=$((fail + 1))
@@ -1961,3 +1960,6 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
         pass=$((pass + 1))
     fi
 done
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
