@@ -1961,5 +1961,50 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
     fi
 done
 
+
+# Z80 symbol resolution across immediate, absolute, indexed, and control-flow
+# operands. This exercises pass-two values in several distinct encodings.
+cat > "$TMP/z80_symbol_operands.asm" <<'EOF'
+BYTE_VALUE EQU $42
+WORD_VALUE EQU $1234
+INDEX_DISP EQU 5
+BIT_VALUE EQU 3
+start:
+    LD A,BYTE_VALUE
+    LD HL,WORD_VALUE
+    ADD A,BYTE_VALUE
+    LD (WORD_VALUE),A
+    LD A,(WORD_VALUE)
+    LD B,(IX+INDEX_DISP)
+    BIT BIT_VALUE,(IY-INDEX_DISP)
+    JP target
+    JR target
+target:
+    NOP
+EOF
+expected="3e42213412c6423234123a3412dd4605fdcbfb5ec31900180000"
+if "$ASM" -t z80 -o "$TMP/z80_symbol_operands.bin" "$TMP/z80_symbol_operands.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_symbol_operands.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 EQU symbols in immediate, absolute, indexed, and branch operands"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 EQU symbols in immediate, absolute, indexed, and branch operands"
+    fail=$((fail + 1))
+fi
+
+for bad in "BYTE_VALUE EQU 256
+LD A,BYTE_VALUE" "INDEX_DISP EQU 128
+LD A,(IX+INDEX_DISP)" "WORD_VALUE EQU 65536
+JP WORD_VALUE"; do
+    printf '%s\n' "$bad" > "$TMP/z80-symbol-range-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-symbol-range-invalid.bin" "$TMP/z80-symbol-range-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects out-of-range EQU operand"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects out-of-range EQU operand"
+        pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
