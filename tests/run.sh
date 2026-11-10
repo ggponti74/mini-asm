@@ -2382,10 +2382,6 @@ for bad in \
     fi
 done
 
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
-
-
 # Literal Z80 LD HL,SP+e displacement limits and operand validation.
 # Check both signed endpoints, zero in either spelling, and hexadecimal input.
 cat > "$TMP/z80_sp_relative_literals.asm" <<'EOF'
@@ -2416,6 +2412,9 @@ for bad in "LD HL,SP+128" "LD HL,SP-129" "LD HL,SP+$80" "LD HL,SP-$81" \\
         pass=$((pass + 1))
     fi
 done
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
