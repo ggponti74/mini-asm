@@ -28,6 +28,7 @@ clean:
 test: $(OUT)
 	sh tests/run.sh ./$(OUT)
 	sh tests/z80_alu_matrix.sh ./$(OUT)
+	sh tests/z80_long_symbol_operands.sh ./$(OUT)
 
 .PHONY: all clean test
 	
