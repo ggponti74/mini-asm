@@ -265,17 +265,6 @@ static bool emit_z80_ld(const Operand *ops, OutputBuffer *out)
     const Operand *dst = &ops[0];
     const Operand *src = &ops[1];
 
-    /* LD HL,SP+e: signed SP-relative address calculation. */
-    if (dst->type == OPERAND_REGISTER && dst->value.reg == 0x13 &&
-        src->type == OPERAND_DISP && src->value.reg == 0x26)
-    {
-        if (src->disp < -128 || src->disp > 127)
-            return fail("Z80 SP-relative displacement must fit in -128..127");
-        buffer_write(out, 0xF8);
-        buffer_write(out, (uint8_t)src->disp);
-        return true;
-    }
-
     /* IX/IY register-pair loads and absolute memory transfers. */
     int dst_index_prefix = z80_index_prefix(dst);
     int src_index_prefix = z80_index_prefix(src);
@@ -590,18 +579,6 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
             return true;
         }
         return fail("unsupported Z80 INC/DEC operand");
-    }
-
-    /* ADD SP,e: signed 8-bit adjustment of the stack pointer. */
-    if (strcmp(mnemonic, "ADD") == 0 && count == 2 &&
-        dst->type == OPERAND_REGISTER && dst->value.reg == 0x14 &&
-        src->type == OPERAND_IMMEDIATE && !src->is_indirect)
-    {
-        if (src->value.imm < -128 || src->value.imm > 127)
-            return fail("Z80 ADD SP displacement must fit in -128..127");
-        buffer_write(out, 0xE8);
-        buffer_write(out, (uint8_t)src->value.imm);
-        return true;
     }
 
     /* 16-bit indexed arithmetic: ADD IX/IY,BC/DE/IX-or-IY/SP. */
