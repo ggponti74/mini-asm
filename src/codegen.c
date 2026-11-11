@@ -732,27 +732,6 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
     const Operand *port = is_in ? &ops[1] : &ops[0];
     const Operand *reg = is_in ? &ops[0] : &ops[1];
 
-    /* Undocumented IN F,(C): read the port and update flags only. */
-    if (is_in && reg->type == OPERAND_REGISTER && reg->value.reg == 6 &&
-        port->type == OPERAND_REGISTER && port->is_indirect &&
-        port->value.reg == 0x23)
-    {
-        buffer_write(out, 0xED);
-        buffer_write(out, 0x70);
-        return true;
-    }
-
-    /* Undocumented OUT (C),0: write zero to the port. */
-    if (!is_in && reg->type == OPERAND_IMMEDIATE && !reg->symbol &&
-        !reg->is_indirect && reg->value.imm == 0 &&
-        port->type == OPERAND_REGISTER && port->is_indirect &&
-        port->value.reg == 0x23)
-    {
-        buffer_write(out, 0xED);
-        buffer_write(out, 0x71);
-        return true;
-    }
-
     if (z80_is_index_half(reg))
         return fail("Z80 IN/OUT does not support IXH, IXL, IYH, or IYL");
     int r = z80_reg8_code(reg);
@@ -828,61 +807,31 @@ static bool emit_z80_block(const char *mnemonic, OutputBuffer *out)
 }
 
 static bool emit_z80_bit(const char *mnemonic, const Operand *ops,
-                            OutputBuffer *out)
+                         OutputBuffer *out)
 {
-    const Operand *bit = &ops[0];
-    const Operand *target = &ops[1];
-    /* BIT has exactly two operand slots. RES/SET have an optional third
-       register, so do not read ops[2] for BIT. */
-    const Operand *result = NULL;
-    bool has_result = false;
-    if (strcmp(mnemonic, "BIT") != 0)
-    {
-        result = &ops[2];
-        has_result = result->type != OPERAND_NONE;
-    }
+    const Operand *bit = &ops[0], *target = &ops[1];
+    bool has_result = strcmp(mnemonic, "BIT") != 0 && ops[2].type != OPERAND_NONE;
     if (bit->type != OPERAND_IMMEDIATE || bit->is_indirect ||
         bit->value.imm < 0 || bit->value.imm > 7)
         return fail("Z80 bit number must be an immediate in the range 0..7");
-
-    if (z80_is_indexed_memory(target))
+    if (has_result)
+        return fail("Z80 indexed RES/SET result-register forms are undocumented");
+    bool indexed = z80_is_indexed_memory(target);
+    int r = indexed ? 6 : z80_reg8_code(target);
+    if (r < 0)
+        return fail("Z80 BIT/RES/SET requires an 8-bit register, (HL), or indexed memory");
+    if (indexed)
     {
-        int r = 6;
-        if (has_result)
-        {
-            r = z80_reg8_code(result);
-            if (result->type != OPERAND_REGISTER || r < 0 || r == 6 ||
-                z80_is_index_half(result))
-                return fail("Z80 indexed RES/SET result must be B, C, D, E, H, L, or A");
-        }
-        int prefix = z80_indexed_prefix(target);
-        buffer_write(out, (uint8_t)prefix);
+        buffer_write(out, (uint8_t)z80_indexed_prefix(target));
         buffer_write(out, 0xCB);
         if (!z80_write_index_disp(target, out)) return false;
-        uint8_t base = strcmp(mnemonic, "BIT") == 0 ? 0x40 :
-                       strcmp(mnemonic, "RES") == 0 ? 0x80 : 0xC0;
-        buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + r));
-        return true;
     }
-
-    if (has_result)
-        return fail("Z80 RES/SET result register is only valid with indexed memory");
-
-    int r = z80_reg8_code(target);
-    if (r < 0 || z80_is_index_half(target))
-        return fail("Z80 BIT/RES/SET requires an 8-bit register, (HL), or indexed memory");
-
     uint8_t base;
-    if (strcmp(mnemonic, "BIT") == 0)
-        base = 0x40;
-    else if (strcmp(mnemonic, "RES") == 0)
-        base = 0x80;
-    else if (strcmp(mnemonic, "SET") == 0)
-        base = 0xC0;
-    else
-        return fail("unsupported Z80 bit instruction");
-
-    buffer_write(out, 0xCB);
+    if (strcmp(mnemonic, "BIT") == 0) base = 0x40;
+    else if (strcmp(mnemonic, "RES") == 0) base = 0x80;
+    else if (strcmp(mnemonic, "SET") == 0) base = 0xC0;
+    else return fail("unsupported Z80 bit instruction");
+    if (!indexed) buffer_write(out, 0xCB);
     buffer_write(out, (uint8_t)(base + bit->value.imm * 8 + r));
     return true;
 }
@@ -891,42 +840,26 @@ static bool emit_z80_rotate_shift(const char *mnemonic, const Operand *ops,
                                   OutputBuffer *out)
 {
     const Operand *op = &ops[0];
-    const Operand *result = &ops[1];
-    bool has_result = result->type != OPERAND_NONE;
+    if (ops[1].type != OPERAND_NONE)
+        return fail("Z80 indexed rotate/shift result-register forms are undocumented");
     static const struct { const char *name; uint8_t base; } forms[] = {
         {"RLC", 0x00}, {"RRC", 0x08}, {"RL", 0x10}, {"RR", 0x18},
-        {"SLA", 0x20}, {"SRA", 0x28}, {"SLL", 0x30}, {"SRL", 0x38}
+        {"SLA", 0x20}, {"SRA", 0x28}, {"SRL", 0x38}
     };
-    if (z80_is_indexed_memory(op))
+    bool indexed = z80_is_indexed_memory(op);
+    if (indexed)
     {
-        int r = 6;
-        if (has_result)
-        {
-            r = z80_reg8_code(result);
-            if (result->type != OPERAND_REGISTER || r < 0 || r == 6 ||
-                z80_is_index_half(result))
-                return fail("Z80 indexed rotate/shift result must be B, C, D, E, H, L, or A");
-        }
-        int prefix = z80_indexed_prefix(op);
-        for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
-            if (strcmp(mnemonic, forms[i].name) == 0)
-            {
-                buffer_write(out, (uint8_t)prefix);
-                buffer_write(out, 0xCB);
-                if (!z80_write_index_disp(op, out)) return false;
-                buffer_write(out, (uint8_t)(forms[i].base + r));
-                return true;
-            }
+        buffer_write(out, (uint8_t)z80_indexed_prefix(op));
+        buffer_write(out, 0xCB);
+        if (!z80_write_index_disp(op, out)) return false;
     }
-    if (has_result)
-        return fail("Z80 rotate/shift result register is only valid with indexed memory");
-    int r = z80_reg8_code(op);
-    if (r < 0 || z80_is_index_half(op))
+    int r = indexed ? 6 : z80_reg8_code(op);
+    if (r < 0)
         return fail("Z80 rotate/shift requires an 8-bit register, (HL), or indexed memory");
     for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++)
         if (strcmp(mnemonic, forms[i].name) == 0)
         {
-            buffer_write(out, 0xCB);
+            if (!indexed) buffer_write(out, 0xCB);
             buffer_write(out, (uint8_t)(forms[i].base + r));
             return true;
         }
