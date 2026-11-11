@@ -1412,10 +1412,9 @@ for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R"
 done
 
 
-# Exhaustive Z80 CB-prefixed opcode coverage. The ordinary matrix checks all
-# 256 encodings: eight rotate/shift operations and every BIT/RES/SET bit/register
-# combination. The indexed matrix checks DDCB/FDCB displacement boundaries,
-# including all documented and undocumented result-register encodings.
+# Documented Z80 CB-prefixed opcode coverage. The ordinary matrix checks
+# all seven documented rotate/shift operations and every BIT/RES/SET bit/register
+# combination. The indexed matrix checks documented memory-only DDCB/FDCB forms.
 z80_cb_reg_name() {
     case "$1" in
         0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
