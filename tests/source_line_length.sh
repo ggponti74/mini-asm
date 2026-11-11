@@ -66,7 +66,7 @@ check_include() {
         printf '%1020s' ''
         printf '%s\n' "$second_instruction"
     } > "$child"
-    printf 'INCLUDE "%s"\n' "$child" > "$parent"
+    printf 'INCLUDE "%s"\n' "included-overlong-$target.asm" > "$parent"
 
     if "$ASM" -t "$target" -o "$TMP/include-$target.bin" "$parent" > /dev/null 2>"$log"; then
         echo "FAIL   $target rejects an overlong line in an included source file"
