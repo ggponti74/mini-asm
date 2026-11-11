@@ -200,7 +200,7 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
     if (too_long)
     {
       fprintf(stderr,
-              "Error in %s at line %zu: source line exceeds %zu characters\\n",
+              "Error in %s at line %zu: source line exceeds %zu characters\n",
               g_src_file, line_num, sizeof line - 1);
       errors++;
       line_num++;
