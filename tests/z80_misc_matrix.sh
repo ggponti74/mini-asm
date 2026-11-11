@@ -13,7 +13,6 @@ append_byte() {
 check_bytes() {
     name=$1
     source=$2
-    : > "$TMP/expected"
     : > "$TMP/actual"
     if ! "$ASM" -t z80 -o "$TMP/test.bin" "$source" >/dev/null 2>&1; then
         echo "FAIL   $name (assembly rejected)"
@@ -34,15 +33,19 @@ check_bytes() {
 : > "$TMP/expected"
 for spec in "B 0" "C 1" "D 2" "E 3" "H 4" "L 5" "(HL) 6" "A 7"; do
     set -- $spec
-    printf 'INC %s\nDEC %s\n' "$1" "$1" >> "$TMP/inc-dec.asm"
-    append_byte $((0x04 + $2 * 8))
-    append_byte $((0x05 + $2 * 8))
+    reg_text=$1
+    reg_code=$2
+    printf 'INC %s\nDEC %s\n' "$reg_text" "$reg_text" >> "$TMP/inc-dec.asm"
+    append_byte $((4 + reg_code * 8))
+    append_byte $((5 + reg_code * 8))
 done
 for spec in "BC 0" "DE 1" "HL 2" "SP 3"; do
     set -- $spec
-    printf 'INC %s\nDEC %s\n' "$1" "$1" >> "$TMP/inc-dec.asm"
-    append_byte $((0x03 + $2 * 0x10))
-    append_byte $((0x0B + $2 * 0x10))
+    pair_text=$1
+    pair_code=$2
+    printf 'INC %s\nDEC %s\n' "$pair_text" "$pair_text" >> "$TMP/inc-dec.asm"
+    append_byte $((3 + pair_code * 16))
+    append_byte $((11 + pair_code * 16))
 done
 cat >> "$TMP/inc-dec.asm" <<'EOF'
 INC IX
@@ -50,14 +53,14 @@ DEC IX
 INC IY
 DEC IY
 EOF
-append_byte 0xDD
-append_byte 0x23
-append_byte 0xDD
-append_byte 0x2B
-append_byte 0xFD
-append_byte 0x23
-append_byte 0xFD
-append_byte 0x2B
+append_byte 221
+append_byte 35
+append_byte 221
+append_byte 43
+append_byte 253
+append_byte 35
+append_byte 253
+append_byte 43
 check_bytes "documented Z80 INC/DEC register and pair matrix" "$TMP/inc-dec.asm"
 
 # All documented CB rotate/shift operations on registers and (HL).
@@ -65,13 +68,15 @@ check_bytes "documented Z80 INC/DEC register and pair matrix" "$TMP/inc-dec.asm"
 : > "$TMP/expected"
 for spec in "B 0" "C 1" "D 2" "E 3" "H 4" "L 5" "(HL) 6" "A 7"; do
     set -- $spec
-    for form in "RLC 0x00" "RRC 0x08" "RL 0x10" "RR 0x18" "SLA 0x20" "SRA 0x28" "SRL 0x38"; do
+    reg_text=$1
+    reg_code=$2
+    for form in "RLC 0" "RRC 8" "RL 16" "RR 24" "SLA 32" "SRA 40" "SRL 56"; do
         set -- $form
         mnemonic=$1
         base=$2
-        printf '%s %s\n' "$mnemonic" "$spec" >> "$TMP/rotate.asm"
-        append_byte 0xCB
-        append_byte $((base + $(printf '%d' "$2") ))
+        printf '%s %s\n' "$mnemonic" "$reg_text" >> "$TMP/rotate.asm"
+        append_byte 203
+        append_byte $((base + reg_code))
     done
 done
 check_bytes "documented Z80 CB rotate/shift register matrix" "$TMP/rotate.asm"
@@ -80,17 +85,20 @@ check_bytes "documented Z80 CB rotate/shift register matrix" "$TMP/rotate.asm"
 # result-register variants are deliberately excluded.
 : > "$TMP/indexed-rotate.asm"
 : > "$TMP/expected"
-for form in "RLC 0x00" "RRC 0x08" "RL 0x10" "RR 0x18" "SLA 0x20" "SRA 0x28" "SRL 0x38"; do
+for form in "RLC 0" "RRC 8" "RL 16" "RR 24" "SLA 32" "SRA 40" "SRL 56"; do
     set -- $form
     mnemonic=$1
     base=$2
-    for index in "IX DD 5" "IY FD -5"; do
+    for index in "IX 221 5" "IY 253 -5"; do
         set -- $index
-        printf '%s (%s%+d)\n' "$mnemonic" "$1" "$3" >> "$TMP/indexed-rotate.asm"
-        append_byte $((0x$2))
-        append_byte 0xCB
-        append_byte $(( $3 < 0 ? 256 + $3 : $3 ))
-        append_byte $(( $(printf '%d' "$base") + 6 ))
+        index_text=$1
+        prefix=$2
+        displacement=$3
+        printf '%s (%s%+d)\n' "$mnemonic" "$index_text" "$displacement" >> "$TMP/indexed-rotate.asm"
+        append_byte "$prefix"
+        append_byte 203
+        append_byte $((displacement < 0 ? 256 + displacement : displacement))
+        append_byte $((base + 6))
     done
 done
 check_bytes "documented Z80 indexed rotate/shift matrix" "$TMP/indexed-rotate.asm"
@@ -98,16 +106,18 @@ check_bytes "documented Z80 indexed rotate/shift matrix" "$TMP/indexed-rotate.as
 # BIT/RES/SET for every bit number and every 8-bit register/(HL) target.
 : > "$TMP/bit.asm"
 : > "$TMP/expected"
-for form in "BIT 0x40" "RES 0x80" "SET 0xC0"; do
+for form in "BIT 64" "RES 128" "SET 192"; do
     set -- $form
     mnemonic=$1
     base=$2
     for bit in 0 1 2 3 4 5 6 7; do
         for spec in "B 0" "C 1" "D 2" "E 3" "H 4" "L 5" "(HL) 6" "A 7"; do
             set -- $spec
-            printf '%s %s,%s\n' "$mnemonic" "$bit" "$1" >> "$TMP/bit.asm"
-            append_byte 0xCB
-            append_byte $(( $(printf '%d' "$base") + bit * 8 + $2 ))
+            reg_text=$1
+            reg_code=$2
+            printf '%s %s,%s\n' "$mnemonic" "$bit" "$reg_text" >> "$TMP/bit.asm"
+            append_byte 203
+            append_byte $((base + bit * 8 + reg_code))
         done
     done
 done
@@ -117,21 +127,21 @@ check_bytes "documented Z80 BIT/RES/SET register matrix" "$TMP/bit.asm"
 # variants are undocumented and are not part of this matrix.
 : > "$TMP/indexed-bit.asm"
 : > "$TMP/expected"
-for form in "BIT 0x40" "RES 0x80" "SET 0xC0"; do
+for form in "BIT 64" "RES 128" "SET 192"; do
     set -- $form
     mnemonic=$1
     base=$2
     for bit in 0 1 2 3 4 5 6 7; do
         printf '%s %s,(IX+5)\n' "$mnemonic" "$bit" >> "$TMP/indexed-bit.asm"
-        append_byte 0xDD
-        append_byte 0xCB
-        append_byte 0x05
-        append_byte $(( $(printf '%d' "$base") + bit * 8 + 6 ))
+        append_byte 221
+        append_byte 203
+        append_byte 5
+        append_byte $((base + bit * 8 + 6))
         printf '%s %s,(IY-5)\n' "$mnemonic" "$bit" >> "$TMP/indexed-bit.asm"
-        append_byte 0xFD
-        append_byte 0xCB
-        append_byte 0xFB
-        append_byte $(( $(printf '%d' "$base") + bit * 8 + 6 ))
+        append_byte 253
+        append_byte 203
+        append_byte 251
+        append_byte $((base + bit * 8 + 6))
     done
 done
 check_bytes "documented Z80 indexed BIT/RES/SET matrix" "$TMP/indexed-bit.asm"
