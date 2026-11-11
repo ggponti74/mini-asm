@@ -1266,7 +1266,8 @@ else
 fi
 
 for bad in "INC AF" "DEC AF" "INC IXH, A" "DEC (IX+128)" "INC (IY-129)" \
-           "ADD IX,IY" "ADD IY,IX" "ADC IX,BC" "SBC IY,DE" \
+           "ADD IX,IY" "ADD IY,IX" "ADD IX,HL" "ADD IY,HL" \
+           "ADC IX,BC" "SBC IY,DE" \
            "ADD A,SP" "ADC A,IX" "SUB A,B" "AND IXH, A"; do
     printf '%s\n' "$bad" > "$TMP/z80-alu-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-alu-invalid.bin" "$TMP/z80-alu-invalid.asm" >/dev/null 2>&1; then
