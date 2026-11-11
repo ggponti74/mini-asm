@@ -1,6 +1,4 @@
-$ENV:Path += ";D:\Windows\Git"
-$ENV:Path += ";D:\Windows\Git\bin"
-$ENV:Path += ";D:\Windows\mingw64\bin"
+$ENV:Path += ";D:\Windows\Git;D:\Windows\Git\bin;D:\Windows\mingw64\bin"
 
 Set-Alias -Name make -Value mingw32-make.exe
 
