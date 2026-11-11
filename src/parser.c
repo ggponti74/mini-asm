@@ -548,7 +548,8 @@ size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   memcpy(mnemonic, mnemonic_start, mnemonic_len);
   mnemonic[mnemonic_len] = '\0';
 
-  char token[64];
+  /* Leave room for the longest supported symbol plus indexed-memory syntax. */
+  char token[128];
   while (*p && count < max_ops) {
     int paren_depth = 0;
 
