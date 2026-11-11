@@ -9,7 +9,7 @@ fail=0
 for length in 30 60 61 63; do
     symbol=$(printf '%*s' "$length" '' | tr ' ' a)
     cat > "$TMP/long-symbol.asm" <<EOF
-$symbol EQU $16
+$symbol EQU 16
 LDA ($symbol,X)
 LDA ($symbol),Y
 EOF
