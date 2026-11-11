@@ -518,7 +518,8 @@ static bool emit_z80_alu(const char *mnemonic, const Operand *ops,
         int pair = z80_index_pair_code(src);
         if (index_prefix >= 0)
         {
-            if (pair < 0 || (src->value.reg == 0x17 && dst->value.reg != 0x17) ||
+            if (pair < 0 || (pair == 2 && src->value.reg != dst->value.reg) ||
+                (src->value.reg == 0x17 && dst->value.reg != 0x17) ||
                 (src->value.reg == 0x18 && dst->value.reg != 0x18))
                 return fail("Z80 ADD IX/IY source must be BC, DE, the same index register, or SP");
             buffer_write(out, (uint8_t)index_prefix);
