@@ -783,9 +783,13 @@ const char *split_label(const char *line, char *label_out, size_t label_size,
   if (len == 0)
     return start; // empty line; parse_line() will complain
 
-  char first[64];
-  if (len >= sizeof first)
-    len = sizeof first - 1;
+  /* Preserve the complete token so overlong labels are rejected rather than
+     silently truncated into a different, valid symbol name. */
+  char first[256];
+  if (len >= sizeof first) {
+    report_error(line_num, (size_t)(start - line) + 1, "Invalid label name");
+    return NULL;
+  }
   memcpy(first, start, len);
   first[len] = '\0';
 
