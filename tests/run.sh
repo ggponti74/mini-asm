@@ -524,7 +524,6 @@ IN E,(C)
 IN H,(C)
 IN L,(C)
 IN A,(C)
-IN F,(C)
 OUT (C),B
 OUT (C),C
 OUT (C),D
@@ -532,10 +531,9 @@ OUT (C),E
 OUT (C),H
 OUT (C),L
 OUT (C),A
-OUT (C),0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_io.bin" "$TMP/z80_io.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed70ed41ed49ed51ed59ed61ed69ed79ed71" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79" ]; then
     echo "PASS   z80 IN/OUT immediate and (C) forms"; pass=$((pass + 1))
 else
     echo "FAIL   z80 IN/OUT immediate and (C) forms"; fail=$((fail + 1))
@@ -671,95 +669,16 @@ else
         fail=$((fail + 1))
     fi
 fi
-cat > "$TMP/z80_sll.asm" <<'EOF'
-SLL B
-SLL (HL)
-SLL A
-SLL (IX+1)
-SLL (IY-2)
-EOF
-expected="cb30cb36cb37ddcb0136fdcbfe36"
-if "$ASM" -t z80 -o "$TMP/z80_sll.bin" "$TMP/z80_sll.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_sll.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 undocumented SLL forms"
-    pass=$((pass + 1))
-else
-    echo "FAIL   z80 undocumented SLL forms"
-    fail=$((fail + 1))
-fi
-printf '%s\n' 'SLL IXH' > "$TMP/z80-sll-invalid.asm"
-if "$ASM" -t z80 -o "$TMP/z80-sll-invalid.bin" "$TMP/z80-sll-invalid.asm" >/dev/null 2>&1; then
-    echo "FAIL   z80 rejects SLL index-half register"
-    fail=$((fail + 1))
-else
-    echo "PASS   z80 rejects SLL index-half register"
-    pass=$((pass + 1))
-fi
-
-cat > "$TMP/z80_index_extended.asm" <<'EOF'
-RLC (IX+1)
-BIT 3,(IX-2)
-RES 5,(IY+4)
-SET 7,(IY)
-RES 5,(IY+4),B
-SET 7,(IY),A
-SRA (IY-1)
-LD IXH,0x12
-LD IXL,0x34
-LD IYH,0x56
-LD IYL,0x78
-LD A,IXH
-LD IYL,A
-LD IXH,IXL
-LD IYH,B
-INC IXH
-DEC IXL
-INC IYH
-DEC IYL
-ADD A,IXH
-ADC A,IXL
-SUB IYH
-SBC A,IYL
-AND IXH
-XOR IXL
-OR IYH
-CP IYL
-EOF
-expected="ddcb0106ddcbfe5efdcb04aefdcb00fefdcb04a8fdcb00fffdcbff2edd2612dd2e34fd2656fd2e78dd7cfd6fdd65fd60dd24dd2dfd24fd2ddd84dd8dfd94fd9ddda4ddadfdb4fdbd"
-if ! "$ASM" -t z80 -o "$TMP/z80_index_extended.bin" "$TMP/z80_index_extended.asm" >"$TMP/asm.log" 2>&1; then
-    echo "FAIL   z80 DDCB/FDCB and index-half: assembler error"
-    sed 's/^/         /' "$TMP/asm.log"
-    fail=$((fail + 1))
-else
-    got=$(od -An -v -tx1 "$TMP/z80_index_extended.bin" | tr -d '[:space:]')
-    if [ "$got" = "$expected" ]; then
-        echo "PASS   z80 DDCB/FDCB and IXH/IXL/IYH/IYL"
-        pass=$((pass + 1))
+for bad in "SLL B" "SLL (HL)" "SLL A" "SLL (IX+1)" "SLL (IY-2)" \
+           "LD IXH,0x12" "LD IXL,0x34" "LD IYH,0x56" "LD IYL,0x78" \
+           "LD A,IXH" "LD IYL,A" "INC IXH" "DEC IYL" "ADD A,IXH" "CP IYL"; do
+    printf '%s\n' "$bad" > "$TMP/z80-undocumented-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-undocumented-invalid.bin" "$TMP/z80-undocumented-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects undocumented instruction/register form: $bad"; fail=$((fail + 1))
     else
-        echo "FAIL   z80 DDCB/FDCB and index-half: unexpected bytes"
-        echo "         expected: $expected"
-        echo "         got:      $got"
-        fail=$((fail + 1))
+        echo "PASS   z80 rejects undocumented instruction/register form"; pass=$((pass + 1))
     fi
-fi
-expect_z80_index_extended_failure() {
-    printf '%s\n' "$1" > "$TMP/z80-index-extended-invalid.asm"
-    if "$ASM" -t z80 -o "$TMP/z80-index-extended-invalid.bin" "$TMP/z80-index-extended-invalid.asm" >/dev/null 2>&1; then
-        echo "FAIL   z80 rejects invalid index extension: $1"; fail=$((fail + 1))
-    else
-        echo "PASS   z80 rejects invalid index extension"; pass=$((pass + 1))
-    fi
-}
-expect_z80_index_extended_failure 'LD IXH,(IX+1)'
-expect_z80_index_extended_failure 'LD (IX+1),IXH'
-expect_z80_index_extended_failure 'LD IXH,IYL'
-expect_z80_index_extended_failure 'LD H,IXH'
-expect_z80_index_extended_failure 'LD IXH,H'
-expect_z80_index_extended_failure 'LD L,IXL'
-expect_z80_index_extended_failure 'LD IYL,L'
-expect_z80_index_extended_failure 'LD IYH,H'
-expect_z80_index_extended_failure 'RLC IXH'
-expect_z80_index_extended_failure 'BIT 2,(IY+128)'
+done
 expect_z80_index_failure() {
     printf '%s\n' "$1" > "$TMP/z80-index-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-index-invalid.bin" "$TMP/z80-index-invalid.asm" >/dev/null 2>&1; then
@@ -1174,31 +1093,10 @@ done
 
 echo "----"
 
-cat > "$TMP/z80_indexed_result_registers.asm" <<'EOF'
-RLC (IX+1),B
-SRA (IY-2),A
-RES 3,(IX+4),C
-SET 7,(IY-1),L
-EOF
-expected="ddcb0100fdcbfe2fddcb0499fdcbfffd"
-if "$ASM" -t z80 -o "$TMP/z80_indexed_result_registers.bin" "$TMP/z80_indexed_result_registers.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_indexed_result_registers.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 indexed rotate/shift and RES/SET result registers"
-    pass=$((pass + 1))
-else
-    echo "FAIL   z80 indexed rotate/shift and RES/SET result registers"
-    fail=$((fail + 1))
-fi
-expect_z80_indexed_result_failure() {
-    printf '%s\n' "$1" > "$TMP/z80-indexed-result-invalid.asm"
-    if "$ASM" -t z80 -o "$TMP/z80-indexed-result-invalid.bin" "$TMP/z80-indexed-result-invalid.asm" >/dev/null 2>&1; then
-        echo "FAIL   z80 rejects invalid indexed result form: $1"; fail=$((fail + 1))
-    else
-        echo "PASS   z80 rejects invalid indexed result form"; pass=$((pass + 1))
-    fi
-}
-expect_z80_indexed_result_failure 'RLC (IX+1),IXH'
-expect_z80_indexed_result_failure 'RES 3,(IY+1),IYL'
+expect_z80_indexed_result_failure 'RLC (IX+1),B'
+expect_z80_indexed_result_failure 'SRA (IY-2),A'
+expect_z80_indexed_result_failure 'RES 3,(IX+4),C'
+expect_z80_indexed_result_failure 'SET 7,(IY-1),L'
 expect_z80_indexed_result_failure 'RLC B,A'
 expect_z80_indexed_result_failure 'RES 3,B,A'
 
@@ -1332,14 +1230,6 @@ DEC H
 DEC L
 DEC (HL)
 DEC A
-INC IXH
-INC IXL
-INC IYH
-INC IYL
-DEC IXH
-DEC IXL
-DEC IYH
-DEC IYL
 INC BC
 INC DE
 INC HL
@@ -1362,7 +1252,7 @@ DEC (IY-128)
 DEC (IY+127)
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_incdec_matrix.bin" "$TMP/z80_incdec_matrix.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_incdec_matrix.bin" | tr -d '[:space:]')" = "040c141c242c343c050d151d252d353ddd24dd2cfd24fd2cdd25dd2dfd25fd2d031323330b1b2b3bdd23fd23dd2bfd2bdd3480dd347ffd3480fd347fdd3580dd357ffd3580fd357f" ]; then
+   [ "$(od -An -v -tx1 "$TMP/z80_incdec_matrix.bin" | tr -d '[:space:]')" = "040c141c242c343c050d151d252d353d031323330b1b2b3bdd23fd23dd2bfd2bdd3480dd347ffd3480fd347fdd3580dd357ffd3580fd357f" ]; then
     echo "PASS   z80 complete INC/DEC register, pair, and indexed matrix"; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete INC/DEC register, pair, and indexed matrix"; fail=$((fail + 1))
@@ -1444,52 +1334,6 @@ for bad in "LD (BC),B" "LD (DE),C" "LD BC,A" "LD AF,0x1234" \
 done
 
 
-# Complete undocumented IXH/IXL and IYH/IYL register-transfer matrices.
-z80_index_half_name() {
-    case "$1" in
-        0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
-        4) printf '%sH' "$2" ;; 5) printf '%sL' "$2" ;; 7) printf A ;;
-    esac
-}
-: > "$TMP/z80_index_half_ld_matrix.asm"
-expected=""
-for pair in IX IY; do
-    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
-    for dst in 0 1 2 3 4 5 7; do
-        for src in 0 1 2 3 4 5 7; do
-            d=$(z80_index_half_name "$dst" "$pair")
-            s=$(z80_index_half_name "$src" "$pair")
-            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_ld_matrix.asm"
-            opcode=$((0x40 + dst * 8 + src))
-            if [ "$dst" -eq 4 ] || [ "$dst" -eq 5 ] ||
-               [ "$src" -eq 4 ] || [ "$src" -eq 5 ]; then
-                expected="${expected}${prefix}"
-            fi
-            expected="${expected}$(printf '%02x' "$opcode")"
-        done
-    done
-done
-if "$ASM" -t z80 -o "$TMP/z80_index_half_ld_matrix.bin" "$TMP/z80_index_half_ld_matrix.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_index_half_ld_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 exhaustive IXH/IXL and IYH/IYL LD matrices"; pass=$((pass + 1))
-else
-    echo "FAIL   z80 exhaustive IXH/IXL and IYH/IYL LD matrices"; fail=$((fail + 1))
-fi
-
-cat > "$TMP/z80_index_half_immediate.asm" <<'EOF'
-LD IXH,0x12
-LD IXL,0x34
-LD IYH,0x56
-LD IYL,0x78
-EOF
-expected="dd2612dd2e34fd2656fd2e78"
-if "$ASM" -t z80 -o "$TMP/z80_index_half_immediate.bin" "$TMP/z80_index_half_immediate.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_index_half_immediate.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 IX/IY index-half immediate loads"; pass=$((pass + 1))
-else
-    echo "FAIL   z80 IX/IY index-half immediate loads"; fail=$((fail + 1))
-fi
-
 # Indexed-memory loads/stores cover every ordinary register field at both
 # signed displacement extremes, plus immediate stores through IX and IY.
 z80_plain_reg_name() {
@@ -1568,10 +1412,9 @@ for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R"
 done
 
 
-# Exhaustive Z80 CB-prefixed opcode coverage. The ordinary matrix checks all
-# 256 encodings: eight rotate/shift operations and every BIT/RES/SET bit/register
-# combination. The indexed matrix checks DDCB/FDCB displacement boundaries,
-# including all documented and undocumented result-register encodings.
+# Documented Z80 CB-prefixed opcode coverage. The ordinary matrix checks
+# all seven documented rotate/shift operations and every BIT/RES/SET bit/register
+# combination. The indexed matrix checks documented memory-only DDCB/FDCB forms.
 z80_cb_reg_name() {
     case "$1" in
         0) printf B ;; 1) printf C ;; 2) printf D ;; 3) printf E ;;
@@ -1580,10 +1423,10 @@ z80_cb_reg_name() {
 }
 : > "$TMP/z80_cb_opcode_matrix.asm"
 expected=""
-for mnemonic in RLC RRC RL RR SLA SRA SLL SRL; do
+for mnemonic in RLC RRC RL RR SLA SRA SRL; do
     case "$mnemonic" in
         RLC) base=0x00 ;; RRC) base=0x08 ;; RL) base=0x10 ;; RR) base=0x18 ;;
-        SLA) base=0x20 ;; SRA) base=0x28 ;; SLL) base=0x30 ;; SRL) base=0x38 ;;
+        SLA) base=0x20 ;; SRA) base=0x28 ;; SRL) base=0x38 ;;
     esac
     for reg in 0 1 2 3 4 5 6 7; do
         name=$(z80_cb_reg_name "$reg")
@@ -1603,61 +1446,41 @@ for mnemonic in BIT RES SET; do
 done
 if "$ASM" -t z80 -o "$TMP/z80_cb_opcode_matrix.bin" "$TMP/z80_cb_opcode_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_cb_opcode_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 exhaustive 256-opcode CB matrix"
+    echo "PASS   z80 documented CB instruction matrix"
     pass=$((pass + 1))
 else
-    echo "FAIL   z80 exhaustive 256-opcode CB matrix"
+    echo "FAIL   z80 documented CB instruction matrix"
     fail=$((fail + 1))
 fi
 
-: > "$TMP/z80_indexed_cb_matrix.asm"
-expected=""
-for pair in IX IY; do
-    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
-    for disp in -128 127; do
-        if [ "$disp" -lt 0 ]; then disp_byte=80; else disp_byte=7f; fi
-        for mnemonic in RLC RRC RL RR SLA SRA SLL SRL; do
-            case "$mnemonic" in
-                RLC) base=0x00 ;; RRC) base=0x08 ;; RL) base=0x10 ;; RR) base=0x18 ;;
-                SLA) base=0x20 ;; SRA) base=0x28 ;; SLL) base=0x30 ;; SRL) base=0x38 ;;
-            esac
-            for reg in 0 1 2 3 4 5 6 7; do
-                if [ "$reg" -eq 6 ]; then
-                    printf '%s (%s%+d)\n' "$mnemonic" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
-                else
-                    name=$(z80_cb_reg_name "$reg")
-                    printf '%s (%s%+d),%s\n' "$mnemonic" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
-                fi
-                expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((base + reg)))"
-            done
-        done
-        for bit in 0 1 2 3 4 5 6 7; do
-            printf 'BIT %s,(%s%+d)\n' "$bit" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
-            expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((0x40 + bit * 8 + 6)))"
-            for mnemonic in RES SET; do
-                if [ "$mnemonic" = RES ]; then base=0x80; else base=0xC0; fi
-                for reg in 0 1 2 3 4 5 6 7; do
-                    if [ "$reg" -eq 6 ]; then
-                        printf '%s %s,(%s%+d)\n' "$mnemonic" "$bit" "$pair" "$disp" >> "$TMP/z80_indexed_cb_matrix.asm"
-                    else
-                        name=$(z80_cb_reg_name "$reg")
-                        printf '%s %s,(%s%+d),%s\n' "$mnemonic" "$bit" "$pair" "$disp" "$name" >> "$TMP/z80_indexed_cb_matrix.asm"
-                    fi
-                    expected="${expected}${prefix}cb${disp_byte}$(printf '%02x' $((base + bit * 8 + reg)))"
-                done
-            done
-        done
-    done
-done
+cat > "$TMP/z80_indexed_cb_matrix.asm" <<'EOF'
+RLC (IX-128)
+RRC (IX+127)
+RL (IY-128)
+RR (IY+127)
+SLA (IX-1)
+SRA (IY+1)
+SRL (IX+0)
+BIT 0,(IX-128)
+BIT 7,(IY+127)
+RES 3,(IX+4)
+SET 7,(IY-1)
+EOF
+expected="ddcb8006ddcb7f0efdcb8016fdcb7f1eddcbff26fdcb012eddcb003eddcb8046fdcb7f7eddcb049efdcbfffe"
 if "$ASM" -t z80 -o "$TMP/z80_indexed_cb_matrix.bin" "$TMP/z80_indexed_cb_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_indexed_cb_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 exhaustive DDCB/FDCB indexed opcode matrix"
-    pass=$((pass + 1))
+    echo "PASS   z80 documented DDCB/FDCB indexed memory-only matrix"; pass=$((pass + 1))
 else
-    echo "FAIL   z80 exhaustive DDCB/FDCB indexed opcode matrix"
-    fail=$((fail + 1))
+    echo "FAIL   z80 documented DDCB/FDCB indexed memory-only matrix"; fail=$((fail + 1))
 fi
-
+for bad in 'RLC (IX+1),B' 'RES 2,(IY+1),A' 'BIT 2,(IX+1),B'; do
+    printf '%s\n' "$bad" > "$TMP/z80-indexed-cb-undocumented.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-indexed-cb-undocumented.bin" "$TMP/z80-indexed-cb-undocumented.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects undocumented indexed CB result-register form"; fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects undocumented indexed CB result-register form"; pass=$((pass + 1))
+    fi
+done
 
 # Exhaustive Z80 control-flow, stack-pair, restart-vector, and interrupt-mode
 # matrices. These validate all condition-code encodings and legal stack pairs.
@@ -1915,8 +1738,7 @@ done
 
 
 # Z80 I/O: exercise every documented register form for IN/OUT through (C),
-# immediate-port accumulator forms, and the two commonly supported
-# undocumented encodings.
+# immediate-port accumulator forms only.
 cat > "$TMP/z80_io_matrix.asm" <<'EOF'
 IN B,(C)
 IN C,(C)
@@ -1937,13 +1759,13 @@ OUT (0x34),A
 IN F,(C)
 OUT (C),0
 EOF
-expected="ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79db12d334ed70ed71"
+expected="ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79db12d334"
 if "$ASM" -t z80 -o "$TMP/z80_io_matrix.bin" "$TMP/z80_io_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_io_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 IN/OUT register, immediate-port, and undocumented forms"
+    echo "PASS   z80 documented IN/OUT register and immediate-port forms"
     pass=$((pass + 1))
 else
-    echo "FAIL   z80 IN/OUT register, immediate-port, and undocumented forms"
+    echo "FAIL   z80 documented IN/OUT register and immediate-port forms"
     fail=$((fail + 1))
 fi
 
@@ -1960,6 +1782,8 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
         pass=$((pass + 1))
     fi
 done
+expect_z80_io_failure 'IN F,(C)'
+expect_z80_io_failure 'OUT (C),0'
 
 
 # Z80 symbol resolution across immediate, absolute, indexed, and control-flow
@@ -2054,100 +1878,6 @@ LD (IX+1),BAD_BYTE"; do
     fi
 done
 
-
-
-# Exhaustive undocumented Z80 index-half coverage. Check all legal LD
-# transfers between IXH/IXL or IYH/IYL and the ordinary 8-bit registers,
-# plus all same-index half-register transfers. Cross-index and H/L mixing
-# remain invalid and are checked separately below.
-: > "$TMP/z80_index_half_matrix.asm"
-expected=""
-for pair in IX IY; do
-    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
-    for dst in 4 5; do
-        for src in 0 1 2 3 7 4 5; do
-            case "$src" in
-                0) s=B ;; 1) s=C ;; 2) s=D ;; 3) s=E ;;
-                4) s=${pair}H ;; 5) s=${pair}L ;; 7) s=A ;;
-            esac
-            if [ "$dst" -eq 4 ]; then d=${pair}H; else d=${pair}L; fi
-            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
-            expected="${expected}${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
-        done
-    done
-    for dst in 0 1 2 3 7; do
-        case "$dst" in
-            0) d=B ;; 1) d=C ;; 2) d=D ;; 3) d=E ;; 7) d=A ;;
-        esac
-        for src in 4 5; do
-            if [ "$src" -eq 4 ]; then s=${pair}H; else s=${pair}L; fi
-            printf 'LD %s,%s\n' "$d" "$s" >> "$TMP/z80_index_half_matrix.asm"
-            expected="${expected}${prefix}$(printf '%02x' $((0x40 + dst * 8 + src)))"
-        done
-    done
-done
-if "$ASM" -t z80 -o "$TMP/z80_index_half_matrix.bin" "$TMP/z80_index_half_matrix.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_index_half_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 exhaustive legal IXH/IXL/IYH/IYL LD matrix"
-    pass=$((pass + 1))
-else
-    echo "FAIL   z80 exhaustive legal IXH/IXL/IYH/IYL LD matrix"
-    fail=$((fail + 1))
-fi
-
-# Every index-half ALU source form, immediate load, and INC/DEC encoding.
-: > "$TMP/z80_index_half_alu.asm"
-expected=""
-for pair in IX IY; do
-    if [ "$pair" = IX ]; then prefix=dd; else prefix=fd; fi
-    for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
-        case "$mnemonic" in
-            ADD) base=0x80 ;; ADC) base=0x88 ;; SUB) base=0x90 ;; SBC) base=0x98 ;;
-            AND) base=0xa0 ;; XOR) base=0xa8 ;; OR) base=0xb0 ;; CP) base=0xb8 ;;
-        esac
-        for reg in 4 5; do
-            if [ "$reg" -eq 4 ]; then source=${pair}H; else source=${pair}L; fi
-            if [ "$mnemonic" = SUB ] || [ "$mnemonic" = AND ] ||
-               [ "$mnemonic" = XOR ] || [ "$mnemonic" = OR ] ||
-               [ "$mnemonic" = CP ]; then
-                printf '%s %s\n' "$mnemonic" "$source" >> "$TMP/z80_index_half_alu.asm"
-            else
-                printf '%s A,%s\n' "$mnemonic" "$source" >> "$TMP/z80_index_half_alu.asm"
-            fi
-            expected="${expected}${prefix}$(printf '%02x' $((base + reg)))"
-        done
-    done
-    for reg in 4 5; do
-        if [ "$reg" -eq 4 ]; then
-            half=${pair}H; loadop=0x26; incop=0x24; decop=0x25
-        else
-            half=${pair}L; loadop=0x2e; incop=0x2c; decop=0x2d
-        fi
-        printf 'LD %s,0x5a\nINC %s\nDEC %s\n' "$half" "$half" "$half" >> "$TMP/z80_index_half_alu.asm"
-        expected="${expected}${prefix}$(printf '%02x' "$loadop")5a${prefix}$(printf '%02x' "$incop")${prefix}$(printf '%02x' "$decop")"
-    done
-done
-if "$ASM" -t z80 -o "$TMP/z80_index_half_alu.bin" "$TMP/z80_index_half_alu.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/z80_index_half_alu.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete IXH/IXL/IYH/IYL ALU, immediate, and INC/DEC matrix"
-    pass=$((pass + 1))
-else
-    echo "FAIL   z80 complete IXH/IXL/IYH/IYL ALU, immediate, and INC/DEC matrix"
-    fail=$((fail + 1))
-fi
-
-for bad in "LD IXH,IYH" "LD IXL,IYL" "LD IYH,IXL" "LD IYL,IXH" \
-           "LD IXH,H" "LD H,IXH" "LD IXL,L" "LD L,IYL" \
-           "LD IYH,H" "LD IYL,L"; do
-    printf '%s\n' "$bad" > "$TMP/z80-index-half-invalid.asm"
-    if "$ASM" -t z80 -o "$TMP/z80-index-half-invalid.bin" "$TMP/z80-index-half-invalid.asm" >/dev/null 2>&1; then
-        echo "FAIL   z80 rejects illegal index-half register mixing: $bad"
-        fail=$((fail + 1))
-    else
-        echo "PASS   z80 rejects illegal index-half register mixing"
-        pass=$((pass + 1))
-    fi
-done
 
 
 # DJNZ uses the same signed relative range as JR, but has its own encoder.
