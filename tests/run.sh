@@ -2141,7 +2141,7 @@ for bad in "LDI A" "LDIR 1" "LDD (HL)" "LDDR A,B" \
            "OUTI A" "OTIR 1" "OUTD B" "OTDR (HL)" \
            "NEG A" "RETN 0" "RETI B" "RRD (HL)" "RLD A" \
            "IM" "IM 3" "IM -1" "IM 0,1"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-ed-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-ed-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-ed-invalid.bin" "$TMP/z80-ed-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid ED instruction form: $bad"
         fail=$((fail + 1))
