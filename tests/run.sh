@@ -2184,5 +2184,83 @@ else
     fail=$((fail + 1))
 fi
 
+
+# Exhaustively verify the documented Z80 LD r,r' register matrix. The
+# (HL),(HL) slot is HALT, not a load, and is deliberately excluded.
+: > "$TMP/z80-ld-register-matrix.asm"
+expected=""
+for dst in B C D E H L HL A; do
+    case "$dst" in
+        B) d=0 ;; C) d=1 ;; D) d=2 ;; E) d=3 ;;
+        H) d=4 ;; L) d=5 ;; HL) d=6 ;; A) d=7 ;;
+    esac
+    for src in B C D E H L HL A; do
+        case "$src" in
+            B) s=0 ;; C) s=1 ;; D) s=2 ;; E) s=3 ;;
+            H) s=4 ;; L) s=5 ;; HL) s=6 ;; A) s=7 ;;
+        esac
+        if [ "$dst" = HL ] && [ "$src" = HL ]; then
+            continue
+        fi
+        if [ "$dst" = HL ]; then dst_text='(HL)'; else dst_text=$dst; fi
+        if [ "$src" = HL ]; then src_text='(HL)'; else src_text=$src; fi
+        printf 'LD %s,%s\n' "$dst_text" "$src_text" >> "$TMP/z80-ld-register-matrix.asm"
+        expected="\${expected}$(printf '%02x' "$((0x40 + d * 8 + s))")"
+    done
+done
+if "$ASM" -t z80 -o "$TMP/z80-ld-register-matrix.bin" "$TMP/z80-ld-register-matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80-ld-register-matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete documented LD r,r' matrix"
+    fail=$((fail + 1))
+fi
+
+# Verify all eight documented LD r,n forms, including (HL), and all six
+# documented LD rr,nn forms (BC, DE, HL, SP, IX, IY).
+: > "$TMP/z80-ld-immediate-matrix.asm"
+expected=""
+for reg in B C D E H L HL A; do
+    case "$reg" in
+        B) opcode=06 ;; C) opcode=0e ;; D) opcode=16 ;; E) opcode=1e ;;
+        H) opcode=26 ;; L) opcode=2e ;; HL) opcode=36 ;; A) opcode=3e ;;
+    esac
+    if [ "$reg" = HL ]; then reg_text='(HL)'; else reg_text=$reg; fi
+    printf 'LD %s,0x5a\n' "$reg_text" >> "$TMP/z80-ld-immediate-matrix.asm"
+    expected="\${expected}\${opcode}5a"
+done
+for pair in BC DE HL SP IX IY; do
+    case "$pair" in
+        BC) prefix=""; opcode=01 ;;
+        DE) prefix=""; opcode=11 ;;
+        HL) prefix=""; opcode=21 ;;
+        SP) prefix=""; opcode=31 ;;
+        IX) prefix=dd; opcode=21 ;;
+        IY) prefix=fd; opcode=21 ;;
+    esac
+    printf 'LD %s,0x1234\n' "$pair" >> "$TMP/z80-ld-immediate-matrix.asm"
+    expected="\${expected}\${prefix}\${opcode}3412"
+done
+if "$ASM" -t z80 -o "$TMP/z80-ld-immediate-matrix.bin" "$TMP/z80-ld-immediate-matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80-ld-immediate-matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete documented LD immediate register/pair matrix"
+    fail=$((fail + 1))
+fi
+
+for bad in "LD (HL),(HL)" "LD F,A" "LD A,F" "LD AF,1" \
+           "LD AF,(0x1234)" "LD (0x1234),AF" \
+           "LD IX,HL" "LD IY,IX" "LD HL,IX" "LD IX,IY" \
+           "LD SP,BC" "LD SP,DE"; do
+    printf '%s\n' "$bad" > "$TMP/z80-ld-matrix-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-ld-matrix-invalid.bin" "$TMP/z80-ld-matrix-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid LD matrix form: $bad"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
