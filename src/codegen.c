@@ -618,7 +618,9 @@ static bool emit_z80_io(const char *mnemonic, const Operand *ops,
     const Operand *reg = is_in ? &ops[0] : &ops[1];
 
     int r = z80_reg8_code(reg);
-    if (r < 0)
+    /* (HL) shares opcode field 6 with a register code in LD/ALU forms,
+       but documented IN/OUT (C) forms accept only B, C, D, E, H, L, or A. */
+    if (r < 0 || r == 6)
         return fail("Z80 IN/OUT requires B, C, D, E, H, L, or A");
 
     if (port->type == OPERAND_REGISTER && port->is_indirect &&
