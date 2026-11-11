@@ -190,8 +190,8 @@ static int z80_condition_code(const Operand *op)
 
 static bool z80_relative_displacement(const Operand *op, int32_t *rel)
 {
-    if (!op || op->type != OPERAND_IMMEDIATE)
-        return fail("Z80 relative branch requires a label or absolute target");
+    if (!op || op->type != OPERAND_IMMEDIATE || op->is_indirect)
+        return fail("Z80 relative branch requires a label or absolute target, not an indirect operand");
     if (op->value.imm < 0 || op->value.imm > 65535)
         return fail("Z80 relative branch target must fit in 16 bits");
     *rel = 0;
