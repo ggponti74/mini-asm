@@ -27,6 +27,7 @@ clean:
 # Regression tests (native ELF runtime tests are skipped on Windows): see tests/run.sh
 test: $(OUT)
 	sh tests/run.sh ./$(OUT)
+	sh tests/z80_alu_matrix.sh ./$(OUT)
 
 .PHONY: all clean test
 	
