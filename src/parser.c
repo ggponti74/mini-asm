@@ -467,8 +467,57 @@ int parse_size_suffix(const char *line, const OpcodeEntry *entry, OpSize *size,
 }
 
 // Very simple tokenizer for demo purposes
+/* Reject missing operands around top-level commas before tokenization.
+   Commas inside parentheses belong to the operand (for example, 6501
+   indexed-indirect syntax), but Z80 operand lists use commas only between
+   complete operands. */
+static int z80_has_empty_operand(const char *line)
+{
+  const char *p = line;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  while (*p && !isspace((unsigned char)*p))
+    p++;
+  while (*p && isspace((unsigned char)*p))
+    p++;
+
+  int depth = 0;
+  int have_operand = 0;
+  int saw_comma = 0;
+  for (; *p; p++)
+  {
+    if (*p == '(')
+    {
+      depth++;
+      have_operand = 1;
+    }
+    else if (*p == ')')
+    {
+      if (depth > 0)
+        depth--;
+      have_operand = 1;
+    }
+    else if (*p == ',' && depth == 0)
+    {
+      if (!have_operand)
+        return 1;
+      have_operand = 0;
+      saw_comma = 1;
+    }
+    else if (!isspace((unsigned char)*p))
+    {
+      have_operand = 1;
+    }
+  }
+  return saw_comma && !have_operand;
+}
+
 size_t extract_operands(const char *line, Operand *ops, size_t max_ops) {
   size_t count = 0;
+
+  /* Do not let the tokenizer silently discard empty Z80 operands. */
+  if (is_z80_arch() && z80_has_empty_operand(line))
+    return max_ops + 1;
 
   // Find where the operand list starts: skip any leading indentation,
   // then skip the mnemonic itself (the run of non-whitespace characters),
