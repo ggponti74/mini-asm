@@ -1076,7 +1076,7 @@ expect_z80_indexed_result_failure 'RES 3,B,A'
 
 # Broad Z80 ALU, 16-bit arithmetic, and INC/DEC matrices. These cover every
 # ordinary 8-bit register encoding, immediate ALU opcode, legal pair source,
-# index-half form, and signed indexed-memory boundary.
+# and signed indexed-memory boundary.
 cat > "$TMP/z80_alu_register_matrix.asm" <<'EOF'
 ADD A,B
 ADD A,C
