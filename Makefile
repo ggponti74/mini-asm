@@ -30,6 +30,7 @@ test: $(OUT)
 	sh tests/z80_alu_matrix.sh ./$(OUT)
 	sh tests/z80_long_symbol_operands.sh ./$(OUT)
 	sh tests/z80_misc_matrix.sh ./$(OUT)
+	sh tests/z80_operand_arity.sh ./$(OUT)
 
 .PHONY: all clean test
 	
