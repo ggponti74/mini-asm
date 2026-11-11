@@ -2101,8 +2101,7 @@ for bad in "LD HL,SP+0" "LD HL,SP-1" "LD HL,SP+127" "LD HL,SP-128" \
     fi
 done
 
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
+
 
 
 # Z80 block-transfer, block-search, and block-I/O instructions: verify every
@@ -2161,3 +2160,6 @@ for bad in "LDI A" "LDIR 1" "LDD (HL)" "LDDR A,B" \
         pass=$((pass + 1))
     fi
 done
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
