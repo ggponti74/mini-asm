@@ -27,37 +27,3 @@
       6501   Flat binary (official 6501/6502 instruction set and addressing modes)
 
     Example: mini-asm -t arm -l
-
-    Constants can be declared with `NAME EQU value` and used as immediate
-    operands (`MOVE #NAME,D0`) or `dc` values. Values may be decimal, `$`-hex,
-    or `0x`-hex literals.
-
-    Source files can include other files with `INCLUDE "path/to/file.asm"`.
-    Relative paths are resolved from the file containing the INCLUDE directive.
-
-    The 68K-style instruction set includes MOVEQ, CLR, TST, AND, OR, EOR, JMP, JSR,
-    ADDQ, SUBQ, and DBRA. Use `-l` for the complete target-specific listing.
-    Supported effective-address forms are listed per instruction; current
-    memory operands are `(An)`, `(An)+`, and `-(An)`.
-
-    The Z80 and 6501 targets are flat-binary encoders for their respective CPU
-    instruction sets. On Z80, indexed memory syntax is `(IX)`, `(IX+5)`,
-    or `(IY-2)`; signed offsets must fit in -128..127 and may use EQU constants.
-    The 6501 target supports official NMOS 6501/6502 opcodes
-    and implied, accumulator, immediate, zero-page, absolute, indexed, indirect,
-    and relative addressing. Use `#value` for immediates, `ASL A` for an
-    accumulator shift, `$xx` for zero-page
-    addresses, `$xxxx` for absolute addresses, `address,X`/`address,Y` for
-    indexed addressing, `($xx,X)` for indexed-indirect and `($xx),Y` for indirect-indexed addressing,
-    and `JMP ($xxxx)` for indirect jumps. Numeric addresses through `$FF`
-    select zero-page forms when that instruction has a matching zero-page
-    encoding; otherwise the assembler uses its available absolute form
-    (for example, `JMP $10` and `LDA $10,Y`). Symbolic addresses use absolute
-    forms to keep instruction sizes stable across assembly passes. `BRA` remains available as
-    a 65C02 extension for compatibility, but is not part of the original NMOS
-    6501/6502 instruction set. The test suite checks exact raw bytes across the
-    official instruction forms and validates relative-branch ranges.
-  
-  ### Feedback
-
-    Send your comments and suggestions to /dev/null
