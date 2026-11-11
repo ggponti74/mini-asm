@@ -1756,6 +1756,8 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
 done
 expect_z80_io_failure 'IN F,(C)'
 expect_z80_io_failure 'OUT (C),0'
+expect_z80_io_failure 'IN (HL),(C)'
+expect_z80_io_failure 'OUT (C),(HL)'
 
 
 # Z80 symbol resolution across immediate, absolute, indexed, and control-flow
