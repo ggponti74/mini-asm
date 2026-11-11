@@ -51,6 +51,18 @@ xfail_listed() {
     else grep -qx "$test_name" "$DIR/xfail.txt" 2>/dev/null; fi
 }
 
+expect_z80_indexed_result_failure() {   # expect_z80_indexed_result_failure <instruction>
+    instruction=$1
+    printf '%s\n' "$instruction" > "$TMP/z80-indexed-result-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-indexed-result-invalid.bin" "$TMP/z80-indexed-result-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects undocumented indexed result form: $instruction"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects undocumented indexed result form"
+        pass=$((pass + 1))
+    fi
+}
+
 report() {   # report <name> <exit code of the program>
     name=$1; code=$2
     if xfail_listed "$name"; then
