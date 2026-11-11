@@ -10,7 +10,7 @@ for length in 30 60; do
     address_label=$(printf '%*s' "$length" '' | tr ' ' a)
     displacement_label=$(printf '%*s' "$length" '' | tr ' ' b)
     cat > "$TMP/long-symbols.asm" <<EOF
-$address_label EQU $1234
+$address_label EQU 4660
 $displacement_label EQU 5
 LD A,($address_label)
 LD ($address_label),A
