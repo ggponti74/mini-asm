@@ -32,6 +32,7 @@ test: $(OUT)
 	sh tests/z80_misc_matrix.sh ./$(OUT)
 	sh tests/z80_operand_arity.sh ./$(OUT)
 	sh tests/source_line_length.sh ./$(OUT)
+	sh tests/6501_long_symbol_operands.sh ./$(OUT)
 
 .PHONY: all clean test
 	
