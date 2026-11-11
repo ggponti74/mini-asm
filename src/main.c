@@ -157,6 +157,33 @@ static char *resolve_include_path(const char *source_path,
   return resolved;
 }
 
+/* Read one complete physical source line. The assembler intentionally
+   caps lines at capacity - 1 characters, but must never treat the remainder
+   of an overlong line as a second instruction. The newline is consumed in
+   either case so the next call always starts at the next physical line. */
+static int read_source_line(FILE *src, char *line, size_t capacity,
+                            int *too_long)
+{
+  if (!fgets(line, (int)capacity, src))
+    return 0;
+
+  *too_long = 0;
+  size_t length = strlen(line);
+  if (length > 0 && line[length - 1] == '\n')
+    return 1;
+
+  /* A full buffer may still contain a complete final line, or exactly
+     capacity - 1 characters followed by a newline. */
+  int ch = fgetc(src);
+  if (ch == EOF || ch == '\n')
+    return 1;
+
+  *too_long = 1;
+  while (ch != EOF && ch != '\n')
+    ch = fgetc(src);
+  return 1;
+}
+
 static int assemble_source(FILE *src, const char *source_path, int pass,
                            OutputBuffer *buf, uint32_t code_base,
                            size_t depth, const char **include_stack)
@@ -167,8 +194,19 @@ static int assemble_source(FILE *src, const char *source_path, int pass,
   const char *outer_file = g_src_file; // restored when an INCLUDE returns
   g_src_file = source_path;
 
-  while (fgets(line, sizeof(line), src))
+  int too_long = 0;
+  while (read_source_line(src, line, sizeof line, &too_long))
   {
+    if (too_long)
+    {
+      fprintf(stderr,
+              "Error in %s at line %zu: source line exceeds %zu characters\\n",
+              g_src_file, line_num, sizeof line - 1);
+      errors++;
+      line_num++;
+      continue;
+    }
+
     strip_comment(line);
     if (line[0] == '\0')
     {
