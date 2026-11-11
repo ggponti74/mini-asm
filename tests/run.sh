@@ -2205,7 +2205,7 @@ for dst in B C D E H L HL A; do
         if [ "$dst" = HL ]; then dst_text='(HL)'; else dst_text=$dst; fi
         if [ "$src" = HL ]; then src_text='(HL)'; else src_text=$src; fi
         printf 'LD %s,%s\n' "$dst_text" "$src_text" >> "$TMP/z80-ld-register-matrix.asm"
-        expected="\${expected}$(printf '%02x' "$((0x40 + d * 8 + s))")"
+        expected="${expected}$(printf '%02x' "$((0x40 + d * 8 + s))")"
     done
 done
 if "$ASM" -t z80 -o "$TMP/z80-ld-register-matrix.bin" "$TMP/z80-ld-register-matrix.asm" >/dev/null 2>&1 &&
@@ -2227,7 +2227,7 @@ for reg in B C D E H L HL A; do
     esac
     if [ "$reg" = HL ]; then reg_text='(HL)'; else reg_text=$reg; fi
     printf 'LD %s,0x5a\n' "$reg_text" >> "$TMP/z80-ld-immediate-matrix.asm"
-    expected="\${expected}\${opcode}5a"
+    expected="${expected}${opcode}5a"
 done
 for pair in BC DE HL SP IX IY; do
     case "$pair" in
@@ -2239,7 +2239,7 @@ for pair in BC DE HL SP IX IY; do
         IY) prefix=fd; opcode=21 ;;
     esac
     printf 'LD %s,0x1234\n' "$pair" >> "$TMP/z80-ld-immediate-matrix.asm"
-    expected="\${expected}\${prefix}\${opcode}3412"
+    expected="${expected}${prefix}${opcode}3412"
 done
 if "$ASM" -t z80 -o "$TMP/z80-ld-immediate-matrix.bin" "$TMP/z80-ld-immediate-matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80-ld-immediate-matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
