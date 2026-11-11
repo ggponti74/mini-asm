@@ -33,9 +33,9 @@ label63=$(printf '%*s' 63 '' | tr ' ' c)
 label64=$(printf '%*s' 64 '' | tr ' ' d)
 for style in colon colonless; do
     if [ "$style" = colon ]; then
-        printf '%s: NOP\\nJP %s\\n' "$label63" "$label63" > "$TMP/label-boundary.asm"
+        printf '%s: NOP\nJP %s\n' "$label63" "$label63" > "$TMP/label-boundary.asm"
     else
-        printf '%s NOP\\nJP %s\\n' "$label63" "$label63" > "$TMP/label-boundary.asm"
+        printf '%s NOP\nJP %s\n' "$label63" "$label63" > "$TMP/label-boundary.asm"
     fi
     if "$ASM" -t z80 -o "$TMP/label-boundary.bin" "$TMP/label-boundary.asm" >/dev/null 2>&1 &&
        [ "$(od -An -v -tx1 "$TMP/label-boundary.bin" | tr -d '[:space:]')" = "00c30000" ]; then
@@ -48,9 +48,9 @@ done
 
 for style in colon colonless; do
     if [ "$style" = colon ]; then
-        printf '%s: NOP\\n' "$label64" > "$TMP/label-too-long.asm"
+        printf '%s: NOP\n' "$label64" > "$TMP/label-too-long.asm"
     else
-        printf '%s NOP\\n' "$label64" > "$TMP/label-too-long.asm"
+        printf '%s NOP\n' "$label64" > "$TMP/label-too-long.asm"
     fi
     if "$ASM" -t z80 -o "$TMP/label-too-long.bin" "$TMP/label-too-long.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects 64-character $style label"
