@@ -672,7 +672,7 @@ fi
 for bad in "SLL B" "SLL (HL)" "SLL A" "SLL (IX+1)" "SLL (IY-2)" \
            "LD IXH,0x12" "LD IXL,0x34" "LD IYH,0x56" "LD IYL,0x78" \
            "LD A,IXH" "LD IYL,A" "INC IXH" "DEC IYL" "ADD A,IXH" "CP IYL"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-undocumented-invalid.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-undocumented-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-undocumented-invalid.bin" "$TMP/z80-undocumented-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects undocumented instruction/register form: $bad"; fail=$((fail + 1))
     else
@@ -1475,7 +1475,7 @@ else
     echo "FAIL   z80 documented DDCB/FDCB indexed memory-only matrix"; fail=$((fail + 1))
 fi
 for bad in 'RLC (IX+1),B' 'RES 2,(IY+1),A' 'BIT 2,(IX+1),B'; do
-    printf '%s\\n' "$bad" > "$TMP/z80-indexed-cb-undocumented.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-indexed-cb-undocumented.asm"
     if "$ASM" -t z80 -o "$TMP/z80-indexed-cb-undocumented.bin" "$TMP/z80-indexed-cb-undocumented.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects undocumented indexed CB result-register form"; fail=$((fail + 1))
     else
