@@ -936,7 +936,7 @@ static bool emit_z80_instruction(const OpcodeEntry *entry, Operand *operands, Op
     if (strcmp(m, "RST") == 0)
     {
         if (operands[0].type != OPERAND_IMMEDIATE ||
-            operands[0].symbol || operands[0].is_indirect)
+            operands[0].is_indirect)
             return fail("Z80 RST requires a numeric vector immediate");
         int32_t v = operands[0].value.imm;
         if (v < 0 || v > 0x38 || (v & 7) != 0)

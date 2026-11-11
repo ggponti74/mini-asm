@@ -1004,14 +1004,22 @@ for bad in "DI A" "EI 1"; do
 done
 
 cat > "$TMP/z80_rst.asm" <<'EOF'
-RST 0
-RST 8
-RST 0x10
-RST 0x18
-RST 0x20
-RST 0x28
-RST 0x30
-RST 0x38
+VECTOR0 EQU 0
+VECTOR8 EQU 8
+VECTOR16 EQU 0x10
+VECTOR24 EQU 0x18
+VECTOR32 EQU 0x20
+VECTOR40 EQU 0x28
+VECTOR48 EQU 0x30
+VECTOR56 EQU 0x38
+RST VECTOR0
+RST VECTOR8
+RST VECTOR16
+RST VECTOR24
+RST VECTOR32
+RST VECTOR40
+RST VECTOR48
+RST VECTOR56
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_rst.bin" "$TMP/z80_rst.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_rst.bin" | tr -d '[:space:]')" = "c7cfd7dfe7eff7ff" ]; then
@@ -1021,6 +1029,19 @@ else
     echo "FAIL   z80 RST vectors"
     fail=$((fail + 1))
 fi
+# RST accepts resolved EQU constants as well as literal vectors.
+cat > "$TMP/z80_rst_equ_invalid.asm" <<'EOF'
+BAD_VECTOR EQU 9
+RST BAD_VECTOR
+EOF
+if "$ASM" -t z80 -o "$TMP/z80_rst_equ_invalid.bin" "$TMP/z80_rst_equ_invalid.asm" >/dev/null 2>&1; then
+    echo "FAIL   z80 rejects out-of-range RST EQU vector"
+    fail=$((fail + 1))
+else
+    echo "PASS   z80 rejects out-of-range RST EQU vector"
+    pass=$((pass + 1))
+fi
+
 for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
     printf '%s\n' "$bad" > "$TMP/z80-rst-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-rst-invalid.bin" "$TMP/z80-rst-invalid.asm" >/dev/null 2>&1; then
