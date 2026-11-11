@@ -2046,10 +2046,10 @@ for bad in "LD HL,SP+0" "LD HL,SP-1" "LD HL,SP+127" "LD HL,SP-128" \
            "LD DE,SP+1" "LD IX,SP+1" "LD SP,SP+1" "ADD SP,1" "ADD SP,-1"; do
     printf '%s\n' "$bad" > "$TMP/z80-sp-relative-invalid.asm"
     if "$ASM" -t z80 -o "$TMP/z80-sp-relative-invalid.bin" "$TMP/z80-sp-relative-invalid.asm" >/dev/null 2>&1; then
-        echo "FAIL   z80 rejects invalid SP-relative LD form: $bad"
+        echo "FAIL   z80 rejects Game Boy-only SP-relative form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid SP-relative LD form"
+        echo "PASS   z80 rejects Game Boy-only SP-relative form"
         pass=$((pass + 1))
     fi
 done
