@@ -58,7 +58,6 @@ expect_z80_indexed_result_failure() {   # expect_z80_indexed_result_failure <ins
         echo "FAIL   z80 rejects undocumented indexed result form: $instruction"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects undocumented indexed result form"
         pass=$((pass + 1))
     fi
 }
