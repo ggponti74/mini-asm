@@ -2165,7 +2165,7 @@ done
 for bad in "LD A,,B" "LD ,A" "LD A," "LD A,," \
            "ADD A,,B" "JP ,target" "CALL target," \
            "EX ,AF" "BIT 3,,(HL)" "IN A,,"; do
-    printf '%s\\n' "$bad" > "$TMP/z80-empty-operand.asm"
+    printf '%s\n' "$bad" > "$TMP/z80-empty-operand.asm"
     if "$ASM" -t z80 -o "$TMP/z80-empty-operand.bin" "$TMP/z80-empty-operand.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects empty operand separator: $bad"
         fail=$((fail + 1))
@@ -2175,7 +2175,7 @@ for bad in "LD A,,B" "LD ,A" "LD A," "LD A,," \
 done
 
 # Whitespace around a valid separator remains accepted.
-printf 'LD A , B\\n' > "$TMP/z80-spaced-comma.asm"
+printf 'LD A , B\n' > "$TMP/z80-spaced-comma.asm"
 if "$ASM" -t z80 -o "$TMP/z80-spaced-comma.bin" "$TMP/z80-spaced-comma.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80-spaced-comma.bin" | tr -d '[:space:]')" = "78" ]; then
     :; pass=$((pass + 1))
