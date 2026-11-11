@@ -41,7 +41,8 @@ static int parse_6501_indirect(const char *token, Operand *op)
   if (!token || !*token || token[0] != '(')
     return 0;
 
-  char inner[64];
+  /* Leave room for the maximum supported symbol plus ,X syntax. */
+  char inner[128];
   size_t len = strlen(token);
   int outside_y = len > 3 && token[len - 2] == ',' &&
                   (tolower((unsigned char)token[len - 1]) == 'y');
