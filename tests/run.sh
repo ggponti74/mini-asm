@@ -2092,3 +2092,61 @@ done
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
+
+
+# Z80 block-transfer, block-search, and block-I/O instructions: verify every
+# documented ED opcode, plus the fixed ED instruction encodings and IM modes.
+cat > "$TMP/z80_ed_instruction_matrix.asm" <<'EOF'
+LDI
+LDIR
+LDD
+LDDR
+CPI
+CPIR
+CPD
+CPDR
+INI
+INIR
+IND
+INDR
+OUTI
+OTIR
+OUTD
+OTDR
+NEG
+RETN
+RETI
+RRD
+RLD
+IM 0
+IM 1
+IM 2
+EOF
+expected="eda0edb0eda8edb8eda1edb1eda9edb9eda2edb2eda aedbaeda3edb3edabedbbed44ed45ed4ded67ed6fed46ed56ed5e"
+expected=$(printf '%s' "$expected" | tr -d ' ')
+if "$ASM" -t z80 -o "$TMP/z80_ed_instruction_matrix.bin" "$TMP/z80_ed_instruction_matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/z80_ed_instruction_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
+    echo "PASS   z80 complete documented block and ED-special opcode matrix"
+    pass=$((pass + 1))
+else
+    echo "FAIL   z80 complete documented block and ED-special opcode matrix"
+    fail=$((fail + 1))
+fi
+
+# These instructions have fixed, operand-free forms. IM takes exactly one
+# immediate mode; reject extra operands and invalid mode values.
+for bad in "LDI A" "LDIR 1" "LDD (HL)" "LDDR A,B" \
+           "CPI A" "CPIR 0" "CPD B" "CPDR (HL)" \
+           "INI A" "INIR 1" "IND B" "INDR (HL)" \
+           "OUTI A" "OTIR 1" "OUTD B" "OTDR (HL)" \
+           "NEG A" "RETN 0" "RETI B" "RRD (HL)" "RLD A" \
+           "IM" "IM 3" "IM -1" "IM 0,1"; do
+    printf '%s\\n' "$bad" > "$TMP/z80-ed-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-ed-invalid.bin" "$TMP/z80-ed-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects invalid ED instruction form: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects invalid ED instruction form"
+        pass=$((pass + 1))
+    fi
+done
