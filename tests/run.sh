@@ -71,7 +71,7 @@ report() {   # report <name> <exit code of the program>
             echo "XFAIL  $name   (expected: test $code)"; pass=$((pass + 1))
         fi
     elif [ "$code" -eq 0 ]; then
-        echo "PASS   $name"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     else
         echo "FAIL   $name   (test $code failed)"; fail=$((fail + 1))
     fi
@@ -119,7 +119,7 @@ for src in "$DIR"/errors/*.asm; do
     if "$ASM" -t elf -o "$TMP/err" "$src" >/dev/null 2>"$TMP/err.log"; then
         echo "FAIL   $name   (assembled, but an error was expected)"; fail=$((fail + 1))
     elif grep -Eq "$want" "$TMP/err.log"; then
-        echo "PASS   $name"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     else
         echo "FAIL   $name   (message did not match: $want)"; sed 's/^/         got: /' "$TMP/err.log"; fail=$((fail + 1))
     fi
@@ -148,7 +148,7 @@ if [ "$WINDOWS_HOST" -eq 0 ] && command -v qemu-arm >/dev/null 2>&1; then
             echo "FAIL   $name   (did not assemble)"; fail=$((fail + 1)); continue
         fi
         qemu-arm "$TMP/arm.bin" 2>/dev/null; got=$?
-        if [ "$got" -eq "$want" ]; then echo "PASS   $name"; pass=$((pass + 1))
+        if [ "$got" -eq "$want" ]; then :; pass=$((pass + 1))
         else echo "FAIL   $name   (exit $got, expected $want)"; fail=$((fail + 1)); fi
     done
 else
@@ -204,7 +204,7 @@ EOC
 then
     if gcc -m32 -Wall -Wextra -I"$DIR/../src" -o "$TMP/pe_test" "$DIR/trap/pe_dispatch_test.c" "$DIR/../src/core.c" >"$TMP/asm.log" 2>&1; then
         (cd "$TMP/work" && "$TMP/pe_test" </dev/null >"$TMP/pe.log" 2>&1); code=$?
-        if [ "$code" -eq 0 ]; then echo "PASS   trap/pe_dispatcher (fake kernel32)"; pass=$((pass + 1))
+        if [ "$code" -eq 0 ]; then :; pass=$((pass + 1))
         else echo "FAIL   trap/pe_dispatcher"; sed 's/^/         /' "$TMP/pe.log" | grep FAIL; fail=$((fail + 1)); fi
     else
         echo "FAIL   trap/pe_dispatcher   (did not compile)"; sed 's/^/         /' "$TMP/asm.log" | head -5; fail=$((fail + 1))
@@ -215,7 +215,7 @@ fi
 
 # 5. other x86 output format: assembly only (a PE file cannot run here)
 if "$ASM" -t x86 -o "$TMP/main.exe" "$DIR/main.asm" >/dev/null 2>&1; then
-    echo "PASS   main (x86/PE assembles)"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   main (x86/PE does not assemble)"; fail=$((fail + 1))
 fi
@@ -224,14 +224,14 @@ fi
 printf 'nop\nret\n' > "$TMP/z80.asm"
 if "$ASM" -t z80 -o "$TMP/z80.bin" "$TMP/z80.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/z80.bin" | tr -d ' \n')" = "00c9" ]; then
-    echo "PASS   z80 opcode scaffold"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 opcode scaffold"; fail=$((fail + 1))
 fi
 printf 'nop\nld a, 5\nld hl, 0x1234\nret\n' > "$TMP/z80_real.asm"
 if "$ASM" -t z80 -o "$TMP/z80_real.bin" "$TMP/z80_real.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/z80_real.bin" | tr -d ' \n')" = "003e05213412c9" ]; then
-    echo "PASS   z80 basic encoding"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 basic encoding"; fail=$((fail + 1))
 fi
@@ -248,7 +248,7 @@ LD (HL),C
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_ld_memory.bin" "$TMP/z80_ld_memory.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_ld_memory.bin" | tr -d ' \n')" = "3a341232341236420a1a02124671" ]; then
-    echo "PASS   z80 LD memory addressing"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 LD memory addressing"; fail=$((fail + 1))
 fi
@@ -256,13 +256,13 @@ printf 'LD A,256\n' > "$TMP/z80_ld_bad_imm.asm"
 if "$ASM" -t z80 -o "$TMP/z80_ld_bad_imm.bin" "$TMP/z80_ld_bad_imm.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range 8-bit LD immediate"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects out-of-range 8-bit LD immediate"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 printf 'LD A,(0x10000)\n' > "$TMP/z80_ld_bad_addr.asm"
 if "$ASM" -t z80 -o "$TMP/z80_ld_bad_addr.bin" "$TMP/z80_ld_bad_addr.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range absolute memory address"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects out-of-range absolute memory address"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 
 cat > "$TMP/z80_control_flow.asm" <<'EOF'
@@ -285,7 +285,7 @@ start: NOP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_control_flow.bin" "$TMP/z80_control_flow.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_control_flow.bin" | tr -d ' \n')" = "181d201b2819301738151013c31f00c21f00fa1f00cd1f00ec1f00c9c0f8e900" ]; then
-    echo "PASS   z80 conditional control flow"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 conditional control flow"; fail=$((fail + 1))
 fi
@@ -317,7 +317,7 @@ RET M
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_all_conditions.bin" "$TMP/z80_all_conditions.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_all_conditions.bin" | tr -d ' \n')" = "c23412ca3412d23412da3412e23412ea3412f23412fa3412c43412cc3412d43412dc3412e43412ec3412f43412fc3412c0c8d0d8e0e8f0f8" ]; then
-    echo "PASS   z80 all conditional opcode families"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 all conditional opcode families"; fail=$((fail + 1))
 fi
@@ -325,13 +325,13 @@ printf 'JP 0x10000\n' > "$TMP/z80_bad_jump.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_jump.bin" "$TMP/z80_bad_jump.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range JP target"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects out-of-range JP target"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 printf 'JR PO, target\ndc.b 0\n' > "$TMP/z80_bad_condition.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_condition.bin" "$TMP/z80_bad_condition.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects unsupported JR condition"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects unsupported JR condition"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 
 # Relative branch targets are addresses, never parenthesized memory operands.
@@ -341,7 +341,7 @@ for bad in "JR (0x1000)" "JR NZ,(0x1000)" "DJNZ (0x1000)"; do
         echo "FAIL   z80 rejects indirect relative branch target: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects indirect relative branch target"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -358,7 +358,7 @@ target: NOP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_relative_branch_matrix.bin" "$TMP/z80_relative_branch_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_relative_branch_matrix.bin" | tr -d '[:space:]')" = "2008280630043802100000" ]; then
-    echo "PASS   z80 all relative branch conditions with forward labels"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 all relative branch conditions with forward labels"
@@ -374,7 +374,7 @@ fi
 if "$ASM" -t z80 -o "$TMP/z80-jr-forward-limit.bin" "$TMP/z80-jr-forward-limit.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 -N2 "$TMP/z80-jr-forward-limit.bin" | tr -d '[:space:]')" = "187f" ] &&
    [ "$(wc -c < "$TMP/z80-jr-forward-limit.bin" | tr -d ' ')" = "130" ]; then
-    echo "PASS   z80 accepts +127 relative branch"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 accepts +127 relative branch"
@@ -390,7 +390,7 @@ fi
 if "$ASM" -t z80 -o "$TMP/z80-jr-backward-limit.bin" "$TMP/z80-jr-backward-limit.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 -j126 -N2 "$TMP/z80-jr-backward-limit.bin" | tr -d '[:space:]')" = "1880" ] &&
    [ "$(wc -c < "$TMP/z80-jr-backward-limit.bin" | tr -d ' ')" = "128" ]; then
-    echo "PASS   z80 accepts -128 relative branch"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 accepts -128 relative branch"
@@ -417,7 +417,7 @@ for direction in forward backward; do
         echo "FAIL   z80 rejects $direction branch outside signed range"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects $direction branch outside signed range"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -425,7 +425,7 @@ done
 printf 'JR $0000\n' > "$TMP/z80-jr-wrap.asm"
 if "$ASM" -t z80 --base 65534 -o "$TMP/z80-jr-wrap.bin" "$TMP/z80-jr-wrap.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80-jr-wrap.bin" | tr -d '[:space:]')" = "1800" ]; then
-    echo "PASS   z80 relative branch wraps at 16-bit address boundary"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 relative branch wraps at 16-bit address boundary"
@@ -452,7 +452,7 @@ DEC SP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu.bin" "$TMP/z80_alu.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_alu.bin" | tr -d ' \n')" = "808689929ba4adb6bf0939ed5aed62343d033b" ]; then
-    echo "PASS   z80 arithmetic and logical register forms"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 arithmetic and logical register forms"; fail=$((fail + 1))
 fi
@@ -472,7 +472,7 @@ SBC HL,SP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_16bit_hl_arithmetic.bin" "$TMP/z80_16bit_hl_arithmetic.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_16bit_hl_arithmetic.bin" | tr -d ' \n')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72" ]; then
-    echo "PASS   z80 16-bit HL arithmetic pair matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 16-bit HL arithmetic pair matrix"; fail=$((fail + 1))
 fi
@@ -488,7 +488,7 @@ CP 0xF0
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu_immediate.bin" "$TMP/z80_alu_immediate.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_alu_immediate.bin" | tr -d ' \n')" = "c612ce34d656de78e69aeebcf6defef0" ]; then
-    echo "PASS   z80 arithmetic and logical immediate forms"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 arithmetic and logical immediate forms"; fail=$((fail + 1))
 fi
@@ -511,7 +511,7 @@ CCF
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_rotate_shift.bin" "$TMP/z80_rotate_shift.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_rotate_shift.bin" | tr -d ' \n')" = "070f171fcb00cb09cb12cb1bcb24cb2dcb3e2f27373f" ]; then
-    echo "PASS   z80 accumulator rotates and CB shifts"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 accumulator rotates and CB shifts"; fail=$((fail + 1))
 fi
@@ -527,7 +527,7 @@ CPDR
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_block_transfer_search.bin" "$TMP/z80_block_transfer_search.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_block_transfer_search.bin" | tr -d ' \n')" = "eda0edb0eda8edb8eda1edb1eda9edb9" ]; then
-    echo "PASS   z80 block transfer and search instructions"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 block transfer and search instructions"; fail=$((fail + 1))
 fi
@@ -535,7 +535,7 @@ printf 'LDI A\n' > "$TMP/z80_bad_block_operand.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_block_operand.bin" "$TMP/z80_bad_block_operand.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects operands on block instructions"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects operands on block instructions"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 cat > "$TMP/z80_io.asm" <<'EOF'
 IN A,(0x12)
@@ -557,7 +557,7 @@ OUT (C),A
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_io.bin" "$TMP/z80_io.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_io.bin" | tr -d ' \n')" = "db12d334ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79" ]; then
-    echo "PASS   z80 IN/OUT immediate and (C) forms"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 IN/OUT immediate and (C) forms"; fail=$((fail + 1))
 fi
@@ -573,7 +573,7 @@ OTDR
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_block_io.bin" "$TMP/z80_block_io.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_block_io.bin" | tr -d ' \n')" = "eda2edb2edaaedbaeda3edb3edabedbb" ]; then
-    echo "PASS   z80 block I/O instructions"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 block I/O instructions"; fail=$((fail + 1))
 fi
@@ -582,7 +582,7 @@ expect_z80_io_failure() {   # expect_z80_io_failure <source>
     if "$ASM" -t z80 -o "$TMP/z80-io-invalid.bin" "$TMP/z80-io-invalid.asm" >"$TMP/asm.log" 2>&1; then
         echo "FAIL   z80 rejects invalid I/O form: $1"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid I/O form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_z80_io_failure 'IN B,(0x12)'
@@ -625,7 +625,7 @@ if ! "$ASM" -t z80 -o "$TMP/z80_ed_special.bin" "$TMP/z80_ed_special.asm" >"$TMP
 else
     got=$(od -An -v -tx1 "$TMP/z80_ed_special.bin" | tr -d '[:space:]')
     if [ "$got" = "$expected" ]; then
-        echo "PASS   z80 ED special and absolute pair instructions"
+        :
         pass=$((pass + 1))
     else
         echo "FAIL   z80 ED special: unexpected bytes"
@@ -683,7 +683,7 @@ if ! "$ASM" -t z80 -o "$TMP/z80_index.bin" "$TMP/z80_index.asm" >"$TMP/asm.log" 
 else
     got=$(od -An -v -tx1 "$TMP/z80_index.bin" | tr -d '[:space:]')
     if [ "$got" = "$expected" ]; then
-        echo "PASS   z80 IX/IY pairs and indexed-memory operations"
+        :
         pass=$((pass + 1))
     else
         echo "FAIL   z80 IX/IY and indexed-memory: unexpected bytes"
@@ -699,7 +699,7 @@ for bad in "SLL B" "SLL (HL)" "SLL A" "SLL (IX+1)" "SLL (IY-2)" \
     if "$ASM" -t z80 -o "$TMP/z80-undocumented-invalid.bin" "$TMP/z80-undocumented-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects undocumented instruction/register form: $bad"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects undocumented instruction/register form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 expect_z80_index_failure() {
@@ -707,7 +707,7 @@ expect_z80_index_failure() {
     if "$ASM" -t z80 -o "$TMP/z80-index-invalid.bin" "$TMP/z80-index-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid IX/IY form: $1"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid IX/IY form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_z80_index_failure 'LD A,(IX+128)'
@@ -734,7 +734,7 @@ EOF
 expected="c5d5e5f5dde5fde5c1d1e1f1dde1fde1"
 if "$ASM" -t z80 -o "$TMP/z80_stack_pairs.bin" "$TMP/z80_stack_pairs.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_stack_pairs.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 PUSH/POP supported register pairs"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 PUSH/POP supported register pairs"
@@ -746,7 +746,7 @@ for bad in "PUSH SP" "POP SP" "PUSH IXH" "POP IYL"; do
         echo "FAIL   z80 rejects invalid stack pair: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid stack pair"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -756,7 +756,7 @@ expect_z80_ed_failure() {
     if "$ASM" -t z80 -o "$TMP/z80-ed-invalid.bin" "$TMP/z80-ed-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid ED form: $1"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid ED form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_z80_ed_failure 'IM 3'
@@ -781,7 +781,7 @@ SET 3,(HL)
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_bit_ops.bin" "$TMP/z80_bit_ops.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_bit_ops.bin" | tr -d ' \n')" = "cb40cb7fcb51cb52cb53cb54cb55cb5ecb81cbbecbc2cbffcbde" ]; then
-    echo "PASS   z80 BIT/RES/SET register and (HL) forms"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 BIT/RES/SET register and (HL) forms"; fail=$((fail + 1))
 fi
@@ -790,7 +790,7 @@ expect_z80_failure() {   # expect_z80_failure <source>
     if "$ASM" -t z80 -o "$TMP/z80-invalid.bin" "$TMP/z80-invalid.asm" >"$TMP/asm.log" 2>&1; then
         echo "FAIL   z80 rejects invalid bit form: $1"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid bit form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_z80_failure 'BIT 8,A'
@@ -800,25 +800,25 @@ printf 'ADD A,256\n' > "$TMP/z80_bad_alu_imm.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_alu_imm.bin" "$TMP/z80_bad_alu_imm.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects out-of-range ALU immediate"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects out-of-range ALU immediate"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 printf 'ADD DE,BC\n' > "$TMP/z80_bad_alu_dest.asm"
 if "$ASM" -t z80 -o "$TMP/z80_bad_alu_dest.bin" "$TMP/z80_bad_alu_dest.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects unsupported 16-bit ALU destination"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects unsupported 16-bit ALU destination"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 printf 'nop\nrts\n' > "$TMP/6501.asm"
 if "$ASM" -t 6501 -o "$TMP/6501.bin" "$TMP/6501.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501.bin" | tr -d ' \n')" = "ea60" ]; then
-    echo "PASS   6501 NOP and RTS"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   6501 NOP and RTS"; fail=$((fail + 1))
 fi
 printf 'lda #$42\nsta $10\n' > "$TMP/6501_core.asm"
 if "$ASM" -t 6501 -o "$TMP/6501_core.bin" "$TMP/6501_core.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501_core.bin" | tr -d ' \n')" = "a9428510" ]; then
-    echo "PASS   6501 immediate and zero-page"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   6501 immediate and zero-page"; fail=$((fail + 1))
 fi
@@ -828,7 +828,7 @@ check_6501_bytes() {   # check_6501_bytes <name> <source> <expected hex>
     if "$ASM" -t 6501 -o "$TMP/6501.bin" "$2" >"$TMP/asm.log" 2>&1; then
         got=$(od -An -v -tx1 "$TMP/6501.bin" | tr -d ' \n')
         if [ "$got" = "$expected" ]; then
-            echo "PASS   $name"; pass=$((pass + 1))
+            :; pass=$((pass + 1))
         else
             echo "FAIL   $name   (unexpected bytes)"
             echo "         expected: $expected"
@@ -875,7 +875,7 @@ expect_6501_failure() {   # expect_6501_failure <source>
     if "$ASM" -t 6501 -o "$TMP/6501-invalid.bin" "$TMP/6501-invalid.asm" >"$TMP/asm.log" 2>&1; then
         echo "FAIL   6501 rejects: $1"; fail=$((fail + 1))
     else
-        echo "PASS   6501 rejects invalid form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_6501_failure 'LDA #$100'
@@ -907,7 +907,7 @@ expect_6501_failure 'STY $10,Y'
 if "$ASM" -t 6501 -o "$TMP/6501-far-branch.bin" "$TMP/6501-far-branch.asm" >"$TMP/asm.log" 2>&1; then
     echo "FAIL   6501 rejects out-of-range branch"; fail=$((fail + 1))
 else
-    echo "PASS   6501 rejects out-of-range branch"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 {
     echo 'BNE far'
@@ -921,7 +921,7 @@ fi
 if "$ASM" -t 6501 -o "$TMP/6501-forward-limit.bin" "$TMP/6501-forward-limit.asm" >"$TMP/asm.log" 2>&1 &&
    [ "$(od -An -tx1 -N2 "$TMP/6501-forward-limit.bin" | tr -d ' \n')" = "d07f" ] &&
    [ "$(wc -c < "$TMP/6501-forward-limit.bin" | tr -d ' ')" = "130" ]; then
-    echo "PASS   6501 accepts +127 branch"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   6501 accepts +127 branch"; fail=$((fail + 1))
 fi
@@ -936,7 +936,7 @@ fi
 } > "$TMP/6501-backward-limit.asm"
 if "$ASM" -t 6501 -o "$TMP/6501-backward-limit.bin" "$TMP/6501-backward-limit.asm" >"$TMP/asm.log" 2>&1 &&
    [ "$(od -An -tx1 -j126 "$TMP/6501-backward-limit.bin" | tr -d ' \n')" = "d080" ]; then
-    echo "PASS   6501 accepts -128 branch"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   6501 accepts -128 branch"; fail=$((fail + 1))
 fi
@@ -944,7 +944,7 @@ fi
 printf 'BNE $0000\n' > "$TMP/6501-wrap-branch.asm"
 if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-branch.bin" "$TMP/6501-wrap-branch.asm" >"$TMP/asm.log" 2>&1 &&
    [ "$(od -An -tx1 "$TMP/6501-wrap-branch.bin" | tr -d ' \n')" = "d000" ]; then
-    echo "PASS   6501 branch wraps at 16-bit address boundary"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   6501 branch wraps at 16-bit address boundary"; fail=$((fail + 1))
     sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
@@ -956,7 +956,7 @@ check_6501_wrap_bytes() {   # check_6501_wrap_bytes <name> <source> <expected he
     name=$1
     if "$ASM" -t 6501 --base 65535 -o "$TMP/6501-wrap.bin" "$2" >"$TMP/asm.log" 2>&1 &&
        [ "$(od -An -tx1 "$TMP/6501-wrap.bin" | tr -d ' \n')" = "$3" ]; then
-        echo "PASS   $name"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     else
         echo "FAIL   $name"; sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
         fail=$((fail + 1))
@@ -981,7 +981,7 @@ EXX
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_exchange.bin" "$TMP/z80_exchange.asm" >"$TMP/asm.log" 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_exchange.bin" | tr -d '[:space:]')" = "08ebe3dde3fde3d9" ]; then
-    echo "PASS   z80 exchange instructions"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 exchange instructions"
@@ -993,7 +993,7 @@ expect_z80_exchange_failure() {
     if "$ASM" -t z80 -o "$TMP/z80-exchange-invalid.bin" "$TMP/z80-exchange-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid exchange form: $1"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid exchange form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 }
 expect_z80_exchange_failure 'EX'
@@ -1009,7 +1009,7 @@ DI
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_interrupt_control.bin" "$TMP/z80_interrupt_control.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_interrupt_control.bin" | tr -d '[:space:]')" = "f3fbf3" ]; then
-    echo "PASS   z80 interrupt control instructions"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 interrupt control instructions"
@@ -1021,7 +1021,7 @@ for bad in "DI A" "EI 1"; do
         echo "FAIL   z80 rejects operands on DI/EI: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects operands on DI/EI"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1046,7 +1046,7 @@ RST VECTOR56
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_rst.bin" "$TMP/z80_rst.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_rst.bin" | tr -d '[:space:]')" = "c7cfd7dfe7eff7ff" ]; then
-    echo "PASS   z80 RST vectors"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 RST vectors"
@@ -1061,7 +1061,7 @@ if "$ASM" -t z80 -o "$TMP/z80_rst_equ_invalid.bin" "$TMP/z80_rst_equ_invalid.asm
     echo "FAIL   z80 rejects out-of-range RST EQU vector"
     fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects out-of-range RST EQU vector"
+    :
     pass=$((pass + 1))
 fi
 
@@ -1071,7 +1071,7 @@ for bad in "RST 1" "RST 7" "RST 0x40" "RST -8"; do
         echo "FAIL   z80 rejects invalid RST vector: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid RST vector"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1081,7 +1081,7 @@ for bad in "RST A" "RST (0x08)" "RST destination"; do
         echo "FAIL   z80 rejects non-numeric RST operand: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects non-numeric RST operand"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1093,7 +1093,7 @@ JP (IY)
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_indirect_jp.bin" "$TMP/z80_indirect_jp.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_indirect_jp.bin" | tr -d '[:space:]')" = "e9dde9fde9" ]; then
-    echo "PASS   z80 indirect JP through HL/IX/IY"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 indirect JP through HL/IX/IY"
@@ -1104,7 +1104,7 @@ if "$ASM" -t z80 -o "$TMP/z80-indirect-jp-invalid.bin" "$TMP/z80-indirect-jp-inv
     echo "FAIL   z80 rejects displaced indirect JP"
     fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects displaced indirect JP"
+    :
     pass=$((pass + 1))
 fi
 
@@ -1197,7 +1197,7 @@ CP 0x88
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu_register_matrix.bin" "$TMP/z80_alu_register_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_alu_register_matrix.bin" | tr -d '[:space:]')" = "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc611ce22d633de44e655ee66f677fe88" ]; then
-    echo "PASS   z80 complete 8-bit ALU register and immediate matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete 8-bit ALU register and immediate matrix"; fail=$((fail + 1))
 fi
@@ -1226,7 +1226,7 @@ ADD IY,SP
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_alu_pair_matrix.bin" "$TMP/z80_alu_pair_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_alu_pair_matrix.bin" | tr -d '[:space:]')" = "09192939ed4aed5aed6aed7aed42ed52ed62ed72dd09dd19dd29dd39fd09fd19fd29fd39" ]; then
-    echo "PASS   z80 complete 16-bit HL/IX/IY arithmetic matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete 16-bit HL/IX/IY arithmetic matrix"; fail=$((fail + 1))
 fi
@@ -1271,7 +1271,7 @@ DEC (IY+127)
 EOF
 if "$ASM" -t z80 -o "$TMP/z80_incdec_matrix.bin" "$TMP/z80_incdec_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_incdec_matrix.bin" | tr -d '[:space:]')" = "040c141c242c343c050d151d252d353d031323330b1b2b3bdd23fd23dd2bfd2bdd3480dd347ffd3480fd347fdd3580dd357ffd3580fd357f" ]; then
-    echo "PASS   z80 complete INC/DEC register, pair, and indexed matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete INC/DEC register, pair, and indexed matrix"; fail=$((fail + 1))
 fi
@@ -1284,7 +1284,7 @@ for bad in "INC AF" "DEC AF" "INC IXH, A" "DEC (IX+128)" "INC (IY-129)" \
     if "$ASM" -t z80 -o "$TMP/z80-alu-invalid.bin" "$TMP/z80-alu-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid arithmetic form: $bad"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid arithmetic form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 
@@ -1312,7 +1312,7 @@ for dst in 0 1 2 3 4 5 6 7; do
 done
 if "$ASM" -t z80 -o "$TMP/z80_ld_register_matrix.bin" "$TMP/z80_ld_register_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_ld_register_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 exhaustive 8-bit LD register/memory matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 exhaustive 8-bit LD register/memory matrix"; fail=$((fail + 1))
 fi
@@ -1336,7 +1336,7 @@ EOF
 expected="06120e2316341e4526562e6736783e89013412114523215634316745dd217856fd218967"
 if "$ASM" -t z80 -o "$TMP/z80_ld_immediate_matrix.bin" "$TMP/z80_ld_immediate_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_ld_immediate_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete 8-bit and 16-bit LD immediate matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete 8-bit and 16-bit LD immediate matrix"; fail=$((fail + 1))
 fi
@@ -1348,7 +1348,7 @@ for bad in "LD (BC),B" "LD (DE),C" "LD BC,A" "LD AF,0x1234" \
     if "$ASM" -t z80 -o "$TMP/z80-ld-invalid.bin" "$TMP/z80-ld-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid LD form: $bad"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid LD form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 
@@ -1377,7 +1377,7 @@ printf 'LD (IX+0),0xA5\nLD (IY-1),0x5A\n' >> "$TMP/z80_indexed_ld_matrix.asm"
 expected="${expected}dd3600a5fd36ff5a"
 if "$ASM" -t z80 -o "$TMP/z80_indexed_ld_matrix.bin" "$TMP/z80_indexed_ld_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_indexed_ld_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete IX/IY indexed LD register and immediate matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete IX/IY indexed LD register and immediate matrix"; fail=$((fail + 1))
 fi
@@ -1415,7 +1415,7 @@ EOF
 expected="ed433412ed533412223412ed733412dd223412fd223412ed4b3412ed5b34122a3412ed7b3412dd2a3412fd2a3412f9ddf9fdf90a1a02123a3412323412ed47ed4fed57ed5f"
 if "$ASM" -t z80 -o "$TMP/z80_absolute_and_special_ld.bin" "$TMP/z80_absolute_and_special_ld.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_absolute_and_special_ld.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 absolute, pair, stack-pointer, and special-register LD forms"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 absolute, pair, stack-pointer, and special-register LD forms"; fail=$((fail + 1))
 fi
@@ -1426,7 +1426,7 @@ for bad in "LD AF,(0x1234)" "LD (0x1234),AF" "LD I,B" "LD B,I" "LD R,C" "LD C,R"
     if "$ASM" -t z80 -o "$TMP/z80-absolute-ld-invalid.bin" "$TMP/z80-absolute-ld-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid absolute/special LD form: $bad"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid absolute/special LD form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 
@@ -1465,7 +1465,7 @@ for mnemonic in BIT RES SET; do
 done
 if "$ASM" -t z80 -o "$TMP/z80_cb_opcode_matrix.bin" "$TMP/z80_cb_opcode_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_cb_opcode_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 documented CB instruction matrix"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 documented CB instruction matrix"
@@ -1488,7 +1488,7 @@ EOF
 expected="ddcb8006ddcb7f0efdcb8016fdcb7f1eddcbff26fdcb012eddcb003eddcb8046fdcb7f7eddcb049efdcbfffe"
 if "$ASM" -t z80 -o "$TMP/z80_indexed_cb_matrix.bin" "$TMP/z80_indexed_cb_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_indexed_cb_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 documented DDCB/FDCB indexed memory-only matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 documented DDCB/FDCB indexed memory-only matrix"; fail=$((fail + 1))
 fi
@@ -1497,7 +1497,7 @@ for bad in 'RLC (IX+1),B' 'RES 2,(IY+1),A' 'BIT 2,(IX+1),B'; do
     if "$ASM" -t z80 -o "$TMP/z80-indexed-cb-undocumented.bin" "$TMP/z80-indexed-cb-undocumented.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects undocumented indexed CB result-register form"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects undocumented indexed CB result-register form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 
@@ -1538,7 +1538,7 @@ EOF
 expected="c23412ca3412d23412da3412e23412ea3412f23412fa3412c33412e9dde9fde9c43412cc3412d43412dc3412e43412ec3412f43412fc3412cd3412c0c8d0d8e0e8f0f8c9"
 if "$ASM" -t z80 -o "$TMP/z80_control_flow_matrix.bin" "$TMP/z80_control_flow_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_control_flow_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete conditional JP/CALL/RET and indirect JP matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete conditional JP/CALL/RET and indirect JP matrix"; fail=$((fail + 1))
 fi
@@ -1560,7 +1560,7 @@ EOF
 expected="c5d5e5f5dde5fde5c1d1e1f1dde1fde1"
 if "$ASM" -t z80 -o "$TMP/z80_stack_pair_matrix.bin" "$TMP/z80_stack_pair_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_stack_pair_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete PUSH/POP pair and index-register matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete PUSH/POP pair and index-register matrix"; fail=$((fail + 1))
 fi
@@ -1581,7 +1581,7 @@ EOF
 expected="c7cfd7dfe7eff7ffed46ed56ed5e"
 if "$ASM" -t z80 -o "$TMP/z80_rst_im_matrix.bin" "$TMP/z80_rst_im_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_rst_im_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete RST vector and interrupt-mode matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 complete RST vector and interrupt-mode matrix"; fail=$((fail + 1))
 fi
@@ -1591,7 +1591,7 @@ for bad in "PUSH SP" "POP SP" "PUSH A" "POP BC,DE" "RST 3" "RST 0x40" "RST -8" "
     if "$ASM" -t z80 -o "$TMP/z80-control-invalid.bin" "$TMP/z80-control-invalid.asm" >/dev/null 2>&1; then
         echo "FAIL   z80 rejects invalid control/stack form: $bad"; fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid control/stack form"; pass=$((pass + 1))
+        :; pass=$((pass + 1))
     fi
 done
 
@@ -1615,7 +1615,7 @@ EOF
 expected="002100003a0000320000c30000cd0000c31f00cd1f00211f003a1f00321f0000"
 if "$ASM" -t z80 -o "$TMP/z80_absolute_symbol_matrix.bin" "$TMP/z80_absolute_symbol_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_absolute_symbol_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 forward/backward absolute symbol resolution matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 forward/backward absolute symbol resolution matrix"; fail=$((fail + 1))
 fi
@@ -1635,7 +1635,7 @@ EOF
 expected="ed4b0000ed5bffff220000ed73ffff3a000032ffffdd2afffffd220000"
 if "$ASM" -t z80 -o "$TMP/z80_absolute_address_limits.bin" "$TMP/z80_absolute_address_limits.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_absolute_address_limits.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 absolute address zero/65535 boundary matrix"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 else
     echo "FAIL   z80 absolute address zero/65535 boundary matrix"; fail=$((fail + 1))
 fi
@@ -1644,7 +1644,7 @@ printf 'JP missing_z80_symbol\n' > "$TMP/z80_unresolved_absolute_symbol.asm"
 if "$ASM" -t z80 -o "$TMP/z80_unresolved_absolute_symbol.bin" "$TMP/z80_unresolved_absolute_symbol.asm" >/dev/null 2>&1; then
     echo "FAIL   z80 rejects unresolved absolute symbol"; fail=$((fail + 1))
 else
-    echo "PASS   z80 rejects unresolved absolute symbol"; pass=$((pass + 1))
+    :; pass=$((pass + 1))
 fi
 
 
@@ -1669,7 +1669,7 @@ EOF
 expected="76070f171f2f27373fed44ed45ed4ded67ed6f"
 if "$ASM" -t z80 -o "$TMP/z80_fixed_and_ed_special.bin" "$TMP/z80_fixed_and_ed_special.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_fixed_and_ed_special.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 HALT, accumulator operations, and ED special instructions"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 HALT, accumulator operations, and ED special instructions"
@@ -1687,7 +1687,7 @@ for bad in "HALT A" "RLCA 1" "RRCA A" "RLA 0" "RRA B" \
         echo "FAIL   z80 rejects invalid fixed/ED instruction form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid fixed/ED instruction form"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1703,7 +1703,7 @@ EOF
 expected="00f3fbd9"
 if "$ASM" -t z80 -o "$TMP/z80_fixed_control.bin" "$TMP/z80_fixed_control.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_fixed_control.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 NOP, DI, EI, and EXX fixed encodings"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 NOP, DI, EI, and EXX fixed encodings"
@@ -1716,7 +1716,7 @@ for bad in "NOP A" "DI 1" "EI B" "EXX 0"; do
         echo "FAIL   z80 rejects invalid fixed control instruction form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid fixed control instruction form"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1736,7 +1736,7 @@ EOF
 expected="7f0100001234000c1234567800"
 if "$ASM" -t z80 -o "$TMP/z80_directives.bin" "$TMP/z80_directives.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_directives.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 EQU, dc.b/dc.w/dc.l, and forward-label data directives"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 EQU, dc.b/dc.w/dc.l, and forward-label data directives"
@@ -1749,7 +1749,7 @@ for bad in "dc.b 256" "dc.b -129" "dc.w 65536" "dc.w -32769" "dc.l 4294967296" "
         echo "FAIL   z80 rejects invalid data directive: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid data directive"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1779,7 +1779,7 @@ EOF
 expected="ed40ed48ed50ed58ed60ed68ed78ed41ed49ed51ed59ed61ed69ed79db12d334"
 if "$ASM" -t z80 -o "$TMP/z80_io_matrix.bin" "$TMP/z80_io_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_io_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 documented IN/OUT register and immediate-port forms"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 documented IN/OUT register and immediate-port forms"
@@ -1795,7 +1795,7 @@ for bad in "IN IXH,(C)" "IN IXL,(C)" "IN IYH,(C)" "IN IYL,(C)" \
         echo "FAIL   z80 rejects invalid I/O form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid I/O form"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1828,7 +1828,7 @@ EOF
 expected="3e42213412c6423234123a3412dd4605fdcbfb5ec31900180000"
 if "$ASM" -t z80 -o "$TMP/z80_symbol_operands.bin" "$TMP/z80_symbol_operands.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_symbol_operands.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 EQU symbols in immediate, absolute, indexed, and branch operands"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 EQU symbols in immediate, absolute, indexed, and branch operands"
@@ -1844,7 +1844,7 @@ JP WORD_VALUE"; do
         echo "FAIL   z80 rejects out-of-range EQU operand"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects out-of-range EQU operand"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1875,7 +1875,7 @@ expected="ed434523ed4b4523ed534523ed5b45232245232a4523ed734523ed7b45233a45233245
 expected=$(printf '%s' "$expected" | tr -d ' ')
 if "$ASM" -t z80 -o "$TMP/z80_symbol_addressing.bin" "$TMP/z80_symbol_addressing.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_symbol_addressing.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 EQU symbols in absolute pair, indexed, and conditional forms"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 EQU symbols in absolute pair, indexed, and conditional forms"
@@ -1892,7 +1892,7 @@ LD (IX+1),BAD_BYTE"; do
         echo "FAIL   z80 rejects out-of-range EQU address/displacement"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects out-of-range EQU address/displacement"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1910,7 +1910,7 @@ done
 if "$ASM" -t z80 -o "$TMP/z80-djnz-forward-limit.bin" "$TMP/z80-djnz-forward-limit.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 -N2 "$TMP/z80-djnz-forward-limit.bin" | tr -d '[:space:]')" = "107f" ] &&
    [ "$(wc -c < "$TMP/z80-djnz-forward-limit.bin" | tr -d ' ')" = "130" ]; then
-    echo "PASS   z80 DJNZ accepts +127 relative displacement"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 DJNZ accepts +127 relative displacement"
@@ -1926,7 +1926,7 @@ fi
 if "$ASM" -t z80 -o "$TMP/z80-djnz-backward-limit.bin" "$TMP/z80-djnz-backward-limit.asm" >/dev/null 2>&1 &&
    [ "$(od -An -tx1 -j126 -N2 "$TMP/z80-djnz-backward-limit.bin" | tr -d '[:space:]')" = "1080" ] &&
    [ "$(wc -c < "$TMP/z80-djnz-backward-limit.bin" | tr -d ' ')" = "128" ]; then
-    echo "PASS   z80 DJNZ accepts -128 relative displacement"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 DJNZ accepts -128 relative displacement"
@@ -1953,7 +1953,7 @@ for direction in forward backward; do
         echo "FAIL   z80 DJNZ rejects $direction displacement outside signed range"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 DJNZ rejects $direction displacement outside signed range"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -1961,7 +1961,7 @@ done
 printf 'DJNZ $0000\n' > "$TMP/z80-djnz-wrap.asm"
 if "$ASM" -t z80 --base 65534 -o "$TMP/z80-djnz-wrap.bin" "$TMP/z80-djnz-wrap.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80-djnz-wrap.bin" | tr -d '[:space:]')" = "1000" ]; then
-    echo "PASS   z80 DJNZ relative branch wraps at 16-bit address boundary"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 DJNZ relative branch wraps at 16-bit address boundary"
@@ -2009,7 +2009,7 @@ for mnemonic in ADD ADC SUB SBC AND XOR OR CP; do
 done
 if "$ASM" -t z80 -o "$TMP/z80_immediate_boundaries.bin" "$TMP/z80_immediate_boundaries.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_immediate_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 signed/unsigned byte and 16-bit immediate boundaries"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 signed/unsigned byte and 16-bit immediate boundaries"
@@ -2028,7 +2028,7 @@ for bad in \
         echo "FAIL   z80 rejects out-of-range immediate: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects out-of-range immediate"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -2067,7 +2067,7 @@ for index in IX IY; do
 done
 if "$ASM" -t z80 -o "$TMP/z80_indexed_alu_boundaries.bin" "$TMP/z80_indexed_alu_boundaries.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_indexed_alu_boundaries.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete IX/IY indexed ALU and INC/DEC displacement matrix"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 complete IX/IY indexed ALU and INC/DEC displacement matrix"
@@ -2083,7 +2083,7 @@ for bad in \
         echo "FAIL   z80 rejects out-of-range indexed ALU/INC/DEC displacement"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects out-of-range indexed ALU/INC/DEC displacement"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -2096,7 +2096,7 @@ for bad in "LD HL,SP+0" "LD HL,SP-1" "LD HL,SP+127" "LD HL,SP-128" \
         echo "FAIL   z80 rejects Game Boy-only SP-relative form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects Game Boy-only SP-relative form"
+        :
         pass=$((pass + 1))
     fi
 done
@@ -2137,7 +2137,7 @@ expected="eda0edb0eda8edb8eda1edb1eda9edb9eda2edb2eda aedbaeda3edb3edabedbbed44e
 expected=$(printf '%s' "$expected" | tr -d ' ')
 if "$ASM" -t z80 -o "$TMP/z80_ed_instruction_matrix.bin" "$TMP/z80_ed_instruction_matrix.asm" >/dev/null 2>&1 &&
    [ "$(od -An -v -tx1 "$TMP/z80_ed_instruction_matrix.bin" | tr -d '[:space:]')" = "$expected" ]; then
-    echo "PASS   z80 complete documented block and ED-special opcode matrix"
+    :
     pass=$((pass + 1))
 else
     echo "FAIL   z80 complete documented block and ED-special opcode matrix"
@@ -2157,7 +2157,7 @@ for bad in "LDI A" "LDIR 1" "LDD (HL)" "LDDR A,B" \
         echo "FAIL   z80 rejects invalid ED instruction form: $bad"
         fail=$((fail + 1))
     else
-        echo "PASS   z80 rejects invalid ED instruction form"
+        :
         pass=$((pass + 1))
     fi
 done
