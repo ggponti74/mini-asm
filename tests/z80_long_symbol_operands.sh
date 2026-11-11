@@ -6,7 +6,7 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0
 fail=0
 
-for length in 30 60; do
+for length in 30 60 61 63; do
     address_label=$(printf '%*s' "$length" '' | tr ' ' a)
     displacement_label=$(printf '%*s' "$length" '' | tr ' ' b)
     cat > "$TMP/long-symbols.asm" <<EOF
