@@ -159,7 +159,7 @@ static int parse_z80_memory(const char *token, Operand *op)
   if (len < 3 || token[0] != '(' || token[len - 1] != ')')
     return 0;
 
-  char inner[64];
+  char inner[128];
   size_t n = len - 2;
   if (n >= sizeof(inner))
     return 0;
