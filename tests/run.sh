@@ -323,6 +323,18 @@ else
     echo "PASS   z80 rejects unsupported JR condition"; pass=$((pass + 1))
 fi
 
+# Relative branch targets are addresses, never parenthesized memory operands.
+for bad in "JR (0x1000)" "JR NZ,(0x1000)" "DJNZ (0x1000)"; do
+    printf '%s\n' "$bad" > "$TMP/z80-relative-indirect-invalid.asm"
+    if "$ASM" -t z80 -o "$TMP/z80-relative-indirect-invalid.bin" "$TMP/z80-relative-indirect-invalid.asm" >/dev/null 2>&1; then
+        echo "FAIL   z80 rejects indirect relative branch target: $bad"
+        fail=$((fail + 1))
+    else
+        echo "PASS   z80 rejects indirect relative branch target"
+        pass=$((pass + 1))
+    fi
+done
+
 # Z80 relative branches: verify every JR condition and DJNZ with resolved
 # forward labels, plus the exact signed displacement boundaries and wraparound.
 cat > "$TMP/z80_relative_branch_matrix.asm" <<'EOF'
