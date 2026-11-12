@@ -866,6 +866,10 @@ check_6501_bytes "6501 indexed addressing boundaries" "$TMP/6501-indexed-boundar
     "b500b5ffbd0001b6ffb4ff95ff96ff94ff"
 check_6501_bytes "6501 absolute and indexed address limits" "$DIR/6501/addressing_boundaries.asm" \
     "a500a5ffad0001adffffbdffffb9ffffa200a0ffa980a100a1ffb100b1ff"
+check_6501_bytes "6501 X/Y indexed zero-page and absolute boundaries" "$DIR/6501/indexed_xy_boundaries.asm" \
+    "b600b6ffbe0001b400b4ffbc0001960096ff9e0001940094ff9c0001"
+check_6501_bytes "6501 indirect pointer boundaries and EQU symbols" "$DIR/6501/indirect_boundaries.asm" \
+    "a100a1ffb100b1ff610071ff810091ffa100b1ff"
 for bad in \
     'LDA #-129' 'LDA -1' 'LDA $10000' 'LDA $10000,X' \
     'LDA (-1,X)' 'LDA (256,X)' 'LDA (-1),Y' 'LDA (256),Y' \
