@@ -964,7 +964,7 @@ fi
 # Relative branches also use the wrapped 16-bit address of the next instruction.
 printf 'BNE $FF82\n' > "$TMP/6501-wrap-backward-limit.asm"
 if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-backward-limit.bin" "$TMP/6501-wrap-backward-limit.asm" >"$TMP/asm.log" 2>&1 &&
-   [ "$(od -An -tx1 "$TMP/6501-wrap-backward-limit.bin" | tr -d ' \\n')" = "d082" ]; then
+   [ "$(od -An -tx1 "$TMP/6501-wrap-backward-limit.bin" | tr -d ' \n')" = "d082" ]; then
     :; pass=$((pass + 1))
 else
     echo "FAIL   6501 accepts -126 branch across address wrap"; fail=$((fail + 1))
@@ -972,7 +972,7 @@ else
 fi
 printf 'BNE $007F\n' > "$TMP/6501-wrap-forward-limit.asm"
 if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-forward-limit.bin" "$TMP/6501-wrap-forward-limit.asm" >"$TMP/asm.log" 2>&1 &&
-   [ "$(od -An -tx1 "$TMP/6501-wrap-forward-limit.bin" | tr -d ' \\n')" = "d07f" ]; then
+   [ "$(od -An -tx1 "$TMP/6501-wrap-forward-limit.bin" | tr -d ' \n')" = "d07f" ]; then
     :; pass=$((pass + 1))
 else
     echo "FAIL   6501 accepts +127 branch across address wrap"; fail=$((fail + 1))
