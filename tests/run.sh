@@ -876,6 +876,23 @@ check_6501_bytes "6501 official addressing modes" "$DIR/6501/addressing.asm" \
     "6912651275126d34127d3412793412611271122912251235122d34123d341239341221123112c912c512d512cd3412dd3412d93412c112d1124912451255124d34125d3412593412411251120912051215120d34121d341219341201121112e912e512f512ed3412fd3412f93412e112f112ad1b01a912a512b512ad3412bd3412b93412a112b112a120b120851295128d34129d341299341281129112a212a612b612ae3412be3412861296128e3412a012a412b412ac3412bc3412841294128c341224122c3412e012e412ec3412c012c412cc3412061216120e34121e3412461256124e34125e3412261236122e34123e3412661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de34124c34126c3412201b01ea"
 check_6501_bytes "6501 relative branches" "$DIR/6501/branches.asm" \
     "101030fc900cb0f8f008d0f4500470f0800060"
+
+# Absolute 16-bit branch targets use the same relative displacement encoding.
+for branch in "BRA:80" "BCC:90" "BCS:B0" "BEQ:F0" "BMI:30" \
+              "BNE:D0" "BPL:10" "BVC:50" "BVS:70"; do
+    mnemonic=${branch%%:*}
+    opcode=${branch#*:}
+    printf '%s $1004\\n' "$mnemonic" > "$TMP/6501-absolute-branch.asm"
+    if "$ASM" -t 6501 --base 4096 -o "$TMP/6501-absolute-branch.bin" \
+        "$TMP/6501-absolute-branch.asm" >"$TMP/asm.log" 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-absolute-branch.bin" | tr -d '[:space:]')" = "${opcode}02" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic absolute branch target"
+        sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+        fail=$((fail + 1))
+    fi
+done
 check_6501_branch_edge() {   # check_6501_branch_edge <name> <forward|backward> <padding> <expected> <valid|invalid>
     name=$1 direction=$2 padding=$3 expected=$4 validity=$5
     source="$TMP/6501-branch-edge.asm"
