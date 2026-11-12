@@ -950,7 +950,14 @@ for bad in \
     'STA (256),Y' 'JMP (-1)' 'JMP ($10000)' \
     'STX $0100,Y' 'STY $0100,X' 'BRA -1' 'BNE $10000' \
     'ADC ($10)' 'LDA ($10),X' 'STA ($10,X),Y' 'BIT #$10' \
-    'BIT $10,X' 'INC A' 'ASL #$01' 'JSR ($1234)' 'NOP $10' 'RTI #$00'; do
+    'BIT $10,X' 'INC A' 'ASL #$01' 'JSR ($1234)' 'NOP $10' 'RTI #$00' \
+    'LDX $10,X' 'LDY $10,Y' 'STX $10,X' 'STY $10,Y' \
+    'LDX ($10,X)' 'LDY ($10)' 'CPX $10,X' 'CPY $10,Y' \
+    'BIT $10,Y' 'JMP $10,X' 'JMP ($10,X)' \
+    'ASL $10,Y' 'LSR $10,Y' 'ROL $10,Y' 'ROR $10,Y' \
+    'INC $10,Y' 'DEC $10,Y' 'DEC A' 'ASL ($10,X)' \
+    'ADC ($10),X' 'LDA ($10),X' 'STA ($10),X' \
+    'LDA ($10,X),Y' 'STA ($10,X),Y' 'LDA $10,Z'; do
     expect_6501_failure "$bad"
 done
 expect_6501_failure 'LDA #$100'
