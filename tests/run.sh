@@ -2387,5 +2387,58 @@ for bad in "LD (HL),(HL)" "LD F,A" "LD A,F" "LD AF,1" \
     fi
 done
 
+
+# 6501 implied instructions: verify the complete one-byte opcode family.
+cat > "$TMP/6501-implied-matrix.asm" <<'EOF'
+NOP
+BRK
+RTI
+RTS
+PHP
+PLP
+PHA
+PLA
+TAX
+TXA
+TAY
+TYA
+TSX
+TXS
+INX
+DEX
+INY
+DEY
+CLC
+SEC
+CLI
+SEI
+CLV
+CLD
+SED
+EOF
+if "$ASM" -t 6501 -o "$TMP/6501-implied-matrix.bin" "$TMP/6501-implied-matrix.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-implied-matrix.bin" | tr -d '[:space:]')" = "ea00406008284868aa8aa898ba9ae8cac88818385878b8d8f8" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 complete implied-instruction opcode matrix"
+    fail=$((fail + 1))
+fi
+
+# Mnemonics are case-insensitive; mixed-case source and spacing retain exact encodings.
+cat > "$TMP/6501-mixed-case.asm" <<'EOF'
+lda #$2a
+Sta   $10
+bNe target
+NOP
+target: rTs
+EOF
+if "$ASM" -t 6501 -o "$TMP/6501-mixed-case.bin" "$TMP/6501-mixed-case.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-mixed-case.bin" | tr -d '[:space:]')" = "a92a8510d001ea60" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 mixed-case mnemonics and operand spacing"
+    fail=$((fail + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
