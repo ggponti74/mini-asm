@@ -895,6 +895,17 @@ expect_6501_failure 'LDX $10,X'
 expect_6501_failure 'LDY $10,Y'
 expect_6501_failure 'STX $10,X'
 expect_6501_failure 'STY $10,Y'
+
+# Operand-count and operand-direction checks across the 6501 instruction families.
+for bad in \
+    'NOP A' 'RTS #1' 'BRK A' 'CLC #1' \
+    'LDA' 'LDA #$10,#$20' 'LDA $10,X,Y' \
+    'STA' 'STA $10,X,Y' \
+    'ASL' 'ASL A,X' \
+    'JMP' 'JMP ($10),X' \
+    'BNE' 'BNE $0000,#1'; do
+    expect_6501_failure "$bad"
+done
 {
     echo 'BNE far'
     i=0
@@ -948,6 +959,38 @@ if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-branch.bin" "$TMP/6501-wrap-br
 else
     echo "FAIL   6501 branch wraps at 16-bit address boundary"; fail=$((fail + 1))
     sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+fi
+
+# Relative branches also use the wrapped 16-bit address of the next instruction.
+printf 'BNE $FF82\n' > "$TMP/6501-wrap-backward-limit.asm"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-backward-limit.bin" "$TMP/6501-wrap-backward-limit.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/6501-wrap-backward-limit.bin" | tr -d ' \\n')" = "d082" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts -126 branch across address wrap"; fail=$((fail + 1))
+    sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+fi
+printf 'BNE $007F\n' > "$TMP/6501-wrap-forward-limit.asm"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-wrap-forward-limit.bin" "$TMP/6501-wrap-forward-limit.asm" >"$TMP/asm.log" 2>&1 &&
+   [ "$(od -An -tx1 "$TMP/6501-wrap-forward-limit.bin" | tr -d ' \\n')" = "d07f" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts +127 branch across address wrap"; fail=$((fail + 1))
+    sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+fi
+{
+    echo 'back:'
+    i=0
+    while [ "$i" -lt 127 ]; do
+        echo 'dc.b 0'
+        i=$((i + 1))
+    done
+    echo 'BNE back'
+} > "$TMP/6501-backward-out-of-range.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-backward-out-of-range.bin" "$TMP/6501-backward-out-of-range.asm" >"$TMP/asm.log" 2>&1; then
+    echo "FAIL   6501 rejects -129 branch"; fail=$((fail + 1))
+else
+    :; pass=$((pass + 1))
 fi
 
 # Code labels on the 6501 wrap with its 16-bit address bus, including
