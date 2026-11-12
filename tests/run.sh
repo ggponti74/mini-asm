@@ -882,7 +882,7 @@ for branch in "BRA:80" "BCC:90" "BCS:B0" "BEQ:F0" "BMI:30" \
               "BNE:D0" "BPL:10" "BVC:50" "BVS:70"; do
     mnemonic=${branch%%:*}
     opcode=${branch#*:}
-    printf '%s $1004\\n' "$mnemonic" > "$TMP/6501-absolute-branch.asm"
+    printf '%s $1004\n' "$mnemonic" > "$TMP/6501-absolute-branch.asm"
     if "$ASM" -t 6501 --base 4096 -o "$TMP/6501-absolute-branch.bin" \
         "$TMP/6501-absolute-branch.asm" >"$TMP/asm.log" 2>&1 &&
        [ "$(od -An -v -tx1 "$TMP/6501-absolute-branch.bin" | tr -d '[:space:]')" = "${opcode}02" ]; then
