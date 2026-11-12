@@ -1,0 +1,12 @@
+PTR0 EQU $00
+PTRF EQU $FF
+LDA ($00,X)
+LDA ($FF,X)
+LDA ($00),Y
+LDA ($FF),Y
+ADC ($00,X)
+ADC ($FF),Y
+STA ($00,X)
+STA ($FF),Y
+LDA (PTR0,X)
+LDA (PTRF),Y
