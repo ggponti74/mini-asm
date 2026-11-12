@@ -878,8 +878,8 @@ check_6501_bytes "6501 relative branches" "$DIR/6501/branches.asm" \
     "101030fc900cb0f8f008d0f4500470f0800060"
 
 # Absolute 16-bit branch targets use the same relative displacement encoding.
-for branch in "BRA:80" "BCC:90" "BCS:B0" "BEQ:F0" "BMI:30" \
-              "BNE:D0" "BPL:10" "BVC:50" "BVS:70"; do
+for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
+              "BNE:d0" "BPL:10" "BVC:50" "BVS:70"; do
     mnemonic=${branch%%:*}
     opcode=${branch#*:}
     printf '%s $1004\n' "$mnemonic" > "$TMP/6501-absolute-branch.asm"
