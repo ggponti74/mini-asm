@@ -929,7 +929,7 @@ for bad in \
     'LDA #-129' 'LDA -1' 'LDA $10000' 'LDA $10000,X' \
     'LDA (-1,X)' 'LDA (256,X)' 'LDA (-1),Y' 'LDA (256),Y' \
     'STA (256),Y' 'JMP (-1)' 'JMP ($10000)' \
-    'STX $0100,Y' 'STY $0100,X'; do
+    'STX $0100,Y' 'STY $0100,X' 'BRA -1' 'BNE $10000'; do
     expect_6501_failure "$bad"
 done
 expect_6501_failure 'LDA #$100'
