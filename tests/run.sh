@@ -876,6 +876,47 @@ check_6501_bytes "6501 official addressing modes" "$DIR/6501/addressing.asm" \
     "6912651275126d34127d3412793412611271122912251235122d34123d341239341221123112c912c512d512cd3412dd3412d93412c112d1124912451255124d34125d3412593412411251120912051215120d34121d341219341201121112e912e512f512ed3412fd3412f93412e112f112ad1b01a912a512b512ad3412bd3412b93412a112b112a120b120851295128d34129d341299341281129112a212a612b612ae3412be3412861296128e3412a012a412b412ac3412bc3412841294128c341224122c3412e012e412ec3412c012c412cc3412061216120e34121e3412461256124e34125e3412261236122e34123e3412661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de34124c34126c3412201b01ea"
 check_6501_bytes "6501 relative branches" "$DIR/6501/branches.asm" \
     "101030fc900cb0f8f008d0f4500470f0800060"
+check_6501_branch_edge() {   # check_6501_branch_edge <name> <forward|backward> <padding> <expected> <valid|invalid>
+    name=$1 direction=$2 padding=$3 expected=$4 validity=$5
+    source="$TMP/6501-branch-edge.asm"
+    if [ "$direction" = "forward" ]; then
+        printf 'BRA target\nDC.B "' > "$source"
+    else
+        printf 'target:\nDC.B "' > "$source"
+    fi
+    printf '%*s' "$padding" '' | tr ' ' A >> "$source"
+    if [ "$direction" = "forward" ]; then
+        printf '"\ntarget:\n' >> "$source"
+    else
+        printf '"\nBRA target\n' >> "$source"
+    fi
+    if "$ASM" -t 6501 -o "$TMP/6501-branch-edge.bin" "$source" >"$TMP/asm.log" 2>&1; then
+        if [ "$validity" = "valid" ]; then
+            if [ "$direction" = "forward" ]; then
+                got=$(od -An -N2 -tx1 "$TMP/6501-branch-edge.bin" | tr -d '[:space:]')
+            else
+                got=$(od -An -v -tx1 -j "$padding" -N2 "$TMP/6501-branch-edge.bin" | tr -d '[:space:]')
+            fi
+            if [ "$got" = "$expected" ]; then
+                :; pass=$((pass + 1))
+            else
+                echo "FAIL   $name   (unexpected bytes: $got; expected $expected)"; fail=$((fail + 1))
+            fi
+        else
+            echo "FAIL   $name   (out-of-range branch assembled)"; fail=$((fail + 1))
+        fi
+    elif [ "$validity" = "valid" ]; then
+        echo "FAIL   $name   (did not assemble)"
+        sed 's/^/         /' "$TMP/asm.log" | grep 'Error'
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+}
+check_6501_branch_edge "6501 branch maximum forward displacement" forward 127 807f valid
+check_6501_branch_edge "6501 branch maximum backward displacement" backward 126 8080 valid
+check_6501_branch_edge "6501 rejects forward displacement +128" forward 128 "" invalid
+check_6501_branch_edge "6501 rejects backward displacement -129" backward 127 "" invalid
 expect_6501_failure() {   # expect_6501_failure <source>
     printf '%s\n' "$1" > "$TMP/6501-invalid.asm"
     if "$ASM" -t 6501 -o "$TMP/6501-invalid.bin" "$TMP/6501-invalid.asm" >"$TMP/asm.log" 2>&1; then
