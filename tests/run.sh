@@ -2559,5 +2559,139 @@ for bad in 'BIT #$01' 'BIT $12,X' 'CPX $12,X' 'CPY $12,Y' \
     expect_6501_failure "$bad"
 done
 
+
+# JMP and JSR use absolute addresses; JMP also supports the 6501 indirect form.
+cat > "$TMP/6501-jump-subroutine-modes.asm" <<'EOF'
+JMP $1234
+JMP ($5678)
+JSR $9ABC
+EOF
+check_6501_bytes "6501 JMP/JSR absolute and indirect encodings" "$TMP/6501-jump-subroutine-modes.asm" \
+    "4c34126c785620bc9a"
+
+# Forward labels must remain absolute for JMP/JSR, even when their address
+# is in zero page. The indirect JMP operand is always a 16-bit pointer.
+cat > "$TMP/6501-jump-forward-labels.asm" <<'EOF'
+JSR target
+JMP target
+JMP ($0010)
+target: RTS
+EOF
+check_6501_bytes "6501 forward JMP/JSR labels remain absolute" "$TMP/6501-jump-forward-labels.asm" \
+    "20094c09006c100060"
+
+# Verify every documented branch opcode with a forward target. Each
+# displacement accounts for the remaining branch instructions.
+cat > "$TMP/6501-branch-forward-matrix.asm" <<'EOF'
+BRA target
+BCC target
+BCS target
+BEQ target
+BMI target
+BNE target
+BPL target
+BVC target
+BVS target
+target: RTS
+EOF
+check_6501_bytes "6501 all branch opcodes with forward label" "$TMP/6501-branch-forward-matrix.asm" \
+    "8010900eb00cf00a3008d00610045002700060"
+
+# Repeat the complete branch family with a backward target.
+cat > "$TMP/6501-branch-backward-matrix.asm" <<'EOF'
+target:
+BRA target
+BCC target
+BCS target
+BEQ target
+BMI target
+BNE target
+BPL target
+BVC target
+BVS target
+EOF
+check_6501_bytes "6501 all branch opcodes with backward label" "$TMP/6501-branch-backward-matrix.asm" \
+    "80fe90fcb0faf0f830f6d0f410f250f070ee"
+
+# The signed displacement limits are inclusive: +127 and -128.
+{
+    echo 'BRA target'
+    i=0
+    while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'target: NOP'
+} > "$TMP/6501-branch-forward-limit.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-branch-forward-limit.bin" "$TMP/6501-branch-forward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 -N2 "$TMP/6501-branch-forward-limit.bin" | tr -d '[:space:]')" = "807f" ] &&
+   [ "$(wc -c < "$TMP/6501-branch-forward-limit.bin" | tr -d ' ')" = "130" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts +127 branch displacement"
+    fail=$((fail + 1))
+fi
+
+{
+    echo 'target:'
+    i=0
+    while [ "$i" -lt 126 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+    echo 'BRA target'
+} > "$TMP/6501-branch-backward-limit.asm"
+if "$ASM" -t 6501 -o "$TMP/6501-branch-backward-limit.bin" "$TMP/6501-branch-backward-limit.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 -j126 -N2 "$TMP/6501-branch-backward-limit.bin" | tr -d '[:space:]')" = "8080" ] &&
+   [ "$(wc -c < "$TMP/6501-branch-backward-limit.bin" | tr -d ' ')" = "128" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 accepts -128 branch displacement"
+    fail=$((fail + 1))
+fi
+
+# Reject both sides just beyond the signed branch range.
+for direction in forward backward; do
+    if [ "$direction" = forward ]; then
+        {
+            echo 'BRA target'
+            i=0
+            while [ "$i" -lt 128 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'target: NOP'
+        } > "$TMP/6501-branch-out-of-range.asm"
+    else
+        {
+            echo 'target:'
+            i=0
+            while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+            echo 'BRA target'
+        } > "$TMP/6501-branch-out-of-range.asm"
+    fi
+    if "$ASM" -t 6501 -o "$TMP/6501-branch-out-of-range.bin" "$TMP/6501-branch-out-of-range.asm" >/dev/null 2>&1; then
+        echo "FAIL   6501 rejects $direction branch outside signed range"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+done
+
+# Absolute branch targets wrap the 16-bit program counter before measuring
+# the signed displacement.
+printf 'BRA $0000\n' > "$TMP/6501-branch-wrap.asm"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-branch-wrap.bin" "$TMP/6501-branch-wrap.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-wrap.bin" | tr -d '[:space:]')" = "8000" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 branch wraps at 16-bit address boundary"
+    fail=$((fail + 1))
+fi
+
+# Branches accept labels and absolute targets, but not immediate or indirect
+# operands, and every target must fit in the 16-bit address space.
+for bad in 'BRA #$10' 'BCC ($1234)' 'BCS -1' 'BEQ $10000' \
+           'BMI ($10,X)' 'BNE ($10),Y' 'BPL #0' 'BVC -1' 'BVS $10000'; do
+    expect_6501_failure "$bad"
+done
+
+# JMP/JSR have only their documented absolute/indirect forms.
+for bad in 'JMP #$1234' 'JMP ($10,X)' 'JMP ($10),Y' 'JMP $1234,X' \
+           'JSR #$1234' 'JSR ($1234)' 'JSR $1234,X' 'JMP $10000' 'JSR -1'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
