@@ -2440,5 +2440,68 @@ else
     fail=$((fail + 1))
 fi
 
+
+# Complete load/store mode matrices: accumulator and index-register variants.
+cat > "$TMP/6501-lda-sta-modes.asm" <<'EOF'
+LDA #$12
+LDA $12
+LDA $12,X
+LDA $1234
+LDA $1234,X
+LDA $1234,Y
+LDA ($12,X)
+LDA ($12),Y
+STA $12
+STA $12,X
+STA $1234
+STA $1234,X
+STA $1234,Y
+STA ($12,X)
+STA ($12),Y
+EOF
+check_6501_bytes "6501 LDA/STA complete addressing-mode matrix" "$TMP/6501-lda-sta-modes.asm" \
+    "a912a512b512ad3412bd3412b93412a112b112851295128d34129d341299341281129112"
+
+cat > "$TMP/6501-index-register-modes.asm" <<'EOF'
+LDX #$12
+LDX $12
+LDX $12,Y
+LDX $1234
+LDX $1234,Y
+STX $12
+STX $12,Y
+STX $1234
+LDY #$34
+LDY $12
+LDY $12,X
+LDY $1234
+LDY $1234,X
+STY $12
+STY $12,X
+STY $1234
+EOF
+check_6501_bytes "6501 LDX/STX/LDY/STY addressing-mode matrix" "$TMP/6501-index-register-modes.asm" \
+    "a212a612b612ae3412be3412861296128ea034a412b412ac3412bc3412841294128c34"
+
+cat > "$TMP/6501-compare-arithmetic-immediates.asm" <<'EOF'
+ADC #$12
+SBC #$34
+AND #$56
+ORA #$78
+EOR #$9A
+CMP #$BC
+CPX #$DE
+CPY #$F0
+EOF
+check_6501_bytes "6501 arithmetic and compare immediate opcode matrix" "$TMP/6501-compare-arithmetic-immediates.asm" \
+    "6912e93429560978499ac9bce0dec0f0"
+
+# Immediate operands are unsigned bytes for all load/arithmetic/compare families.
+for bad in 'LDX #$100' 'LDY #-129' 'ADC #$100' 'SBC #-129' \
+           'AND #$100' 'ORA #-129' 'EOR #$100' 'CMP #-129' \
+           'CPX #$100' 'CPY #-129'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
