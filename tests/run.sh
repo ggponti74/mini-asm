@@ -2481,7 +2481,7 @@ STY $12,X
 STY $1234
 EOF
 check_6501_bytes "6501 LDX/STX/LDY/STY addressing-mode matrix" "$TMP/6501-index-register-modes.asm" \
-    "a212a612b612ae3412be3412861296128ea034a412b412ac3412bc3412841294128c34"
+    "a212a612b612ae3412be3412861296128e3412a034a412b412ac3412bc3412841294128c3412"
 
 cat > "$TMP/6501-compare-arithmetic-immediates.asm" <<'EOF'
 ADC #$12
