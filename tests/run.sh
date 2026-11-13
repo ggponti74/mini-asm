@@ -2503,5 +2503,61 @@ for bad in 'LDX #$100' 'LDY #-129' 'ADC #$100' 'SBC #-129' \
     expect_6501_failure "$bad"
 done
 
+# Complete the remaining 6501 compare and bit-test opcode forms.
+cat > "$TMP/6501-bit-compare-modes.asm" <<'EOF'
+BIT $12
+BIT $1234
+CPX #$56
+CPX $12
+CPX $1234
+CPY #$78
+CPY $12
+CPY $1234
+EOF
+check_6501_bytes "6501 BIT/CPX/CPY addressing-mode matrix" "$TMP/6501-bit-compare-modes.asm" \
+    "24122c3412e056e412ec3412c078c412cc3412"
+
+# Verify accumulator, zero-page, zero-page-X, absolute, and absolute-X
+# forms for every memory shift/rotate, plus all INC/DEC memory forms.
+cat > "$TMP/6501-shift-increment-modes.asm" <<'EOF'
+ASL A
+ASL $12
+ASL $12,X
+ASL $1234
+ASL $1234,X
+LSR A
+LSR $12
+LSR $12,X
+LSR $1234
+LSR $1234,X
+ROL A
+ROL $12
+ROL $12,X
+ROL $1234
+ROL $1234,X
+ROR A
+ROR $12
+ROR $12,X
+ROR $1234
+ROR $1234,X
+INC $12
+INC $12,X
+INC $1234
+INC $1234,X
+DEC $12
+DEC $12,X
+DEC $1234
+DEC $1234,X
+EOF
+check_6501_bytes "6501 shift/rotate and INC/DEC addressing-mode matrix" "$TMP/6501-shift-increment-modes.asm" \
+    "0a061216120e34121e34124a461256124e34125e34122a261236122e34123e34126a661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de3412"
+
+# Reject addressing modes that the 6501 instruction set does not define.
+for bad in 'BIT #$01' 'BIT $12,X' 'CPX $12,X' 'CPY $12,Y' \
+           'INC #$01' 'DEC #$01' 'ASL #$01' 'LSR $12,Y' \
+           'ROL ($12,X)' 'ROR ($12),Y' 'INC $12,Y' 'DEC ($12,X)'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
