@@ -2599,7 +2599,7 @@ check_6501_bytes "6501 all branch opcodes with forward label" "$TMP/6501-branch-
 
 # Repeat the complete branch family with a backward target.
 cat > "$TMP/6501-branch-backward-matrix.asm" <<'EOF'
-target: NOP
+target:
 BRA target
 BCC target
 BCS target
@@ -2611,7 +2611,7 @@ BVC target
 BVS target
 EOF
 check_6501_bytes "6501 all branch opcodes with backward label" "$TMP/6501-branch-backward-matrix.asm" \
-    "ea80fe90fcb0faf0f830f6d0f410f250f070ee"
+    "80fe90fcb0faf0f830f6d0f410f250f070ee"
 
 # The signed displacement limits are inclusive: +127 and -128.
 {
