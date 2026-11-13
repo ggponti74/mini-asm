@@ -2578,7 +2578,7 @@ JMP ($0010)
 target: RTS
 EOF
 check_6501_bytes "6501 forward JMP/JSR labels remain absolute" "$TMP/6501-jump-forward-labels.asm" \
-    "20094c09006c100060"
+    "2009004c09006c100060"
 
 # Verify every documented branch opcode with a forward target. Each
 # displacement accounts for the remaining branch instructions.
