@@ -2789,13 +2789,25 @@ SBC ($12,X)
 SBC ($12),Y
 EOF
 check_6501_bytes "6501 ADC/AND/CMP/EOR/ORA/SBC full addressing-mode matrix" "$TMP/6501-alu-addressing-modes.asm" \
-    "6912651275126d34127d3412793412611271122912251235122d34123d341239341221123112c912c512d512cd3412dd3412d93412c112d1124912451255124d34125d3412593412411251120912051205120d34121d341219341201120112e912e512f512ed3412fd3412f93412e112f112"
+    "6912651275126d34127d3412793412611271122912251235122d34123d341239341221123112c912c512d512cd3412dd3412d93412c112d1124912451235124d34125d3412593412411251120912051215120d34121d341219341201121112e912e512f512ed3412fd3412f93412e112f112"
 
-# These accumulator ALU operations have no zero-page-Y or indirect forms
-# beyond (zp,X) and (zp),Y; reject all unsupported alternatives.
-for bad in 'ADC $12,Y' 'AND $12,Y' 'CMP $12,Y' 'EOR $12,Y' \
-           'ORA $12,Y' 'SBC $12,Y' 'ADC ($12)' 'AND ($12)' \
-           'CMP ($12)' 'EOR ($12)' 'ORA ($12)' 'SBC ($12)'; do
+# These accumulator ALU operations have absolute-Y forms but no zero-page-Y
+# forms. A low address with ,Y must therefore retain the 16-bit absolute-Y
+# encoding rather than being rejected or shortened to a nonexistent opcode.
+cat > "$TMP/6501-alu-absolute-y-low-address.asm" <<'EOF'
+ADC $12,Y
+AND $12,Y
+CMP $12,Y
+EOR $12,Y
+ORA $12,Y
+SBC $12,Y
+EOF
+check_6501_bytes "6501 ALU low addresses retain absolute-Y encoding" "$TMP/6501-alu-absolute-y-low-address.asm" \
+    "791200391200d91200591200191200f91200"
+
+# Plain indirect operands are not supported by these accumulator ALU
+# instructions; only (zp,X) and (zp),Y are valid indirect forms.
+for bad in 'ADC ($12)' 'AND ($12)' 'CMP ($12)' 'EOR ($12)' 'ORA ($12)' 'SBC ($12)'; do
     expect_6501_failure "$bad"
 done
 
