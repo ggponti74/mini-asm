@@ -2693,5 +2693,47 @@ for bad in 'JMP #$1234' 'JMP ($10,X)' 'JMP ($10),Y' 'JMP $1234,X' \
     expect_6501_failure "$bad"
 done
 
+
+# Verify immediate-byte endpoints and address-width selection. Instructions
+# without a zero-page form must retain their absolute encoding even for $00..$FF.
+cat > "$TMP/6501-address-width-matrix.asm" <<'EOF'
+LDA #-128
+LDA #$FF
+LDA $00
+LDA $FF
+LDA $0100
+LDA $FFFF
+LDX $FF,Y
+LDX $0100,Y
+LDY $FF,X
+LDY $0100,X
+LDA $12,Y
+STA $12,Y
+JMP $12
+JSR $34
+EOF
+check_6501_bytes "6501 immediate/address endpoints and zero-page selection" "$TMP/6501-address-width-matrix.asm" \
+    "a980a9ffa500a5ffad0001adffffb6ffbe0001b4ffbc0001b912009912004c1200203400"
+
+# Indexed-indirect and indirect-indexed operands are always zero-page pointers.
+cat > "$TMP/6501-indirect-pointer-boundaries.asm" <<'EOF'
+LDA ($00,X)
+LDA ($FF,X)
+LDA ($00),Y
+LDA ($FF),Y
+STA ($00,X)
+STA ($FF,X)
+STA ($00),Y
+STA ($FF),Y
+EOF
+check_6501_bytes "6501 indexed-indirect pointer endpoints" "$TMP/6501-indirect-pointer-boundaries.asm" \
+    "a100a1ffb100b1ff810081ff910091ff"
+
+# Reject values immediately outside byte, address, and pointer ranges.
+for bad in 'LDA #-129' 'LDA #$100' 'LDA $10000' 'LDA (-1,X)' \
+           'LDA ($100,X)' 'LDA ($100),Y' 'STA ($100,X)' 'STA ($100),Y'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
