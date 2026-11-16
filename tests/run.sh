@@ -3060,5 +3060,57 @@ BRA TARGET' 'BRA $FF7F'; do
 done
 
 
+# Every branch mnemonic shares the same signed 8-bit displacement limits.
+# Exercise +127 and -128 for each opcode, not only BRA.
+for mnemonic in BRA BCC BCS BEQ BMI BNE BPL BVC BVS; do
+    {
+        echo "$mnemonic target"
+        i=0
+        while [ "$i" -lt 127 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+        echo 'target: NOP'
+    } > "$TMP/6501-branch-limit.asm"
+    if "$ASM" -t 6501 -o "$TMP/6501-branch-limit.bin" "$TMP/6501-branch-limit.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 -N2 "$TMP/6501-branch-limit.bin" | tr -d '[:space:]')" = "$(case "$mnemonic" in BRA) echo 807f;; BCC) echo 907f;; BCS) echo b07f;; BEQ) echo f07f;; BMI) echo 307f;; BNE) echo d07f;; BPL) echo 107f;; BVC) echo 507f;; BVS) echo 707f;; esac)" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic accepts +127 displacement"
+        fail=$((fail + 1))
+    fi
+
+    {
+        echo 'target:'
+        i=0
+        while [ "$i" -lt 126 ]; do echo 'dc.b 0'; i=$((i + 1)); done
+        echo "$mnemonic target"
+    } > "$TMP/6501-branch-limit.asm"
+    if "$ASM" -t 6501 -o "$TMP/6501-branch-limit.bin" "$TMP/6501-branch-limit.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 -j126 -N2 "$TMP/6501-branch-limit.bin" | tr -d '[:space:]')" = "$(case "$mnemonic" in BRA) echo 8080;; BCC) echo 9080;; BCS) echo b080;; BEQ) echo f080;; BMI) echo 3080;; BNE) echo d080;; BPL) echo 1080;; BVC) echo 5080;; BVS) echo 7080;; esac)" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic accepts -128 displacement"
+        fail=$((fail + 1))
+    fi
+done
+
+# Relative displacement calculation wraps across both ends of the 16-bit PC.
+printf 'BNE $0001\n' > "$TMP/6501-branch-forward-wrap.asm"
+if "$ASM" -t 6501 --base 65408 -o "$TMP/6501-branch-forward-wrap.bin" "$TMP/6501-branch-forward-wrap.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-forward-wrap.bin" | tr -d '[:space:]')" = "d07f" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 forward branch displacement wraps across $FFFF"
+    fail=$((fail + 1))
+fi
+
+printf 'BVC $FF82\n' > "$TMP/6501-branch-backward-wrap.asm"
+if "$ASM" -t 6501 --base 0 -o "$TMP/6501-branch-backward-wrap.bin" "$TMP/6501-branch-backward-wrap.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-backward-wrap.bin" | tr -d '[:space:]')" = "5080" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 backward branch displacement wraps across $0000"
+    fail=$((fail + 1))
+fi
+
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
