@@ -3300,5 +3300,15 @@ for mnemonic in NOP BRK RTI RTS PHP PLP PHA PLA TAX TXA TAY TYA TSX TXS \
     done
 done
 
+# Reject malformed or unsupported 6501 parenthesized addressing forms.
+for bad in \
+    'LDA ($12)' 'LDA ($12,Y)' 'LDA ($12),X' 'LDA ($12,X),Y' \
+    'STA ($12)' 'STA ($12,Y)' 'STA ($12),X' 'STA ($12,X),Y' \
+    'ADC ($12)' 'ADC ($12,Y)' 'ADC ($12),X' 'ADC ($12,X),Y' \
+    'JMP ($12,X)' 'JMP ($12),Y' 'JSR ($12)' 'JSR ($12,X)' \
+    'BIT ($12,X)' 'INC ($12),Y' 'ASL ($12,X)' 'ROR ($12),Y'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
