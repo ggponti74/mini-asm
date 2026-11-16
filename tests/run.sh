@@ -2980,7 +2980,7 @@ LDA (PTR),Y
 STA (PTR,X)
 STA (PTR),Y
 EOF
-check_6501_bytes "6501 EQU constants select legal addressing modes" "$TMP/6501-equ-addressing.asm" \
+check_6501_bytes "6501 EQU symbols retain absolute addressing" "$TMP/6501-equ-addressing.asm" \
     "ad1200ad3412be1200bc12008d12006d12002d1200cd12004d12000d1200ed12004c1200203412a112b11281129112"
 
 # EQU-defined indirect pointers obey the same zero-page bounds as literals.
@@ -3050,7 +3050,7 @@ check_6501_bytes "6501 EQU constants as absolute branch targets" "$TMP/6501-bran
 # including EQU-defined targets.
 for source in 'BRA $0082' 'TARGET EQU $0082
 BRA TARGET' 'BRA $FF7F'; do
-    printf '%s\\n' "$source" > "$TMP/6501-absolute-branch-range.asm"
+    printf '%s\n' "$source" > "$TMP/6501-absolute-branch-range.asm"
     if "$ASM" -t 6501 --base 0 -o "$TMP/6501-absolute-branch-range.bin" "$TMP/6501-absolute-branch-range.asm" >/dev/null 2>&1; then
         echo "FAIL   6501 rejects out-of-range absolute branch target: $source"
         fail=$((fail + 1))
