@@ -3030,7 +3030,7 @@ BVC $1000
 BVS $1000
 EOF
 if "$ASM" -t 6501 --base 4114 -o "$TMP/6501-branch-absolute-backward.bin" "$TMP/6501-branch-absolute-backward.asm" >/dev/null 2>&1 &&
-   [ "$(od -An -v -tx1 "$TMP/6501-branch-absolute-backward.bin" | tr -d '[:space:]')" = "80ec90eab0e8f0e630e4d0e210e050de" ]; then
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-absolute-backward.bin" | tr -d '[:space:]')" = "80ec90eab0e8f0e630e4d0e210e050de70dc" ]; then
     :; pass=$((pass + 1))
 else
     echo "FAIL   6501 all branch opcodes with absolute backward target"
