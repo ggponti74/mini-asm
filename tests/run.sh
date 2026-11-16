@@ -2955,9 +2955,9 @@ else
 fi
 
 
-# EQU constants are numeric values: ordinary memory operands select the
-# shortest legal mode, while control-flow addresses remain absolute and
-# indirect operands use the constant as a zero-page pointer.
+# EQU constants are symbols: ordinary memory operands retain absolute
+# addressing, control-flow addresses remain absolute, and indirect operands
+# use the constant as a zero-page pointer.
 cat > "$TMP/6501-equ-addressing.asm" <<'EOF'
 ZP EQU $12
 ABS EQU $1234
@@ -2996,6 +2996,69 @@ STA (PTR,X)'; do
         :; pass=$((pass + 1))
     fi
 done
+
+# Absolute branch operands are target addresses. Verify every branch opcode
+# in both directions with the PC based at a nonzero address.
+cat > "$TMP/6501-branch-absolute-forward.asm" <<'EOF'
+BRA $1012
+BCC $1012
+BCS $1012
+BEQ $1012
+BMI $1012
+BNE $1012
+BPL $1012
+BVC $1012
+BVS $1012
+EOF
+if "$ASM" -t 6501 --base 4096 -o "$TMP/6501-branch-absolute-forward.bin" "$TMP/6501-branch-absolute-forward.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-absolute-forward.bin" | tr -d '[:space:]')" = "8010900eb00cf00a3008d006100450027000" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 all branch opcodes with absolute forward target"
+    fail=$((fail + 1))
+fi
+
+cat > "$TMP/6501-branch-absolute-backward.asm" <<'EOF'
+BRA $1000
+BCC $1000
+BCS $1000
+BEQ $1000
+BMI $1000
+BNE $1000
+BPL $1000
+BVC $1000
+BVS $1000
+EOF
+if "$ASM" -t 6501 --base 4114 -o "$TMP/6501-branch-absolute-backward.bin" "$TMP/6501-branch-absolute-backward.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-absolute-backward.bin" | tr -d '[:space:]')" = "80ec90eab0e8f0e630e4d0e210e050de" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 all branch opcodes with absolute backward target"
+    fail=$((fail + 1))
+fi
+
+# EQU branch targets are absolute addresses, not relative displacements.
+cat > "$TMP/6501-branch-equ-target.asm" <<'EOF'
+TARGET EQU $0006
+BRA TARGET
+BNE TARGET
+EOF
+check_6501_bytes "6501 EQU constants as absolute branch targets" "$TMP/6501-branch-equ-target.asm" \
+    "8004d002"
+
+# Absolute targets outside the signed displacement range must be rejected,
+# including EQU-defined targets.
+for source in 'BRA $0082' 'TARGET EQU $0082
+BRA TARGET' 'BRA $FF7F'; do
+    printf '%s\\n' "$source" > "$TMP/6501-absolute-branch-range.asm"
+    if "$ASM" -t 6501 --base 0 -o "$TMP/6501-absolute-branch-range.bin" "$TMP/6501-absolute-branch-range.asm" >/dev/null 2>&1; then
+        echo "FAIL   6501 rejects out-of-range absolute branch target: $source"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+done
+
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
