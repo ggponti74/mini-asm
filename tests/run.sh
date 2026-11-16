@@ -2938,5 +2938,48 @@ check_6501_bytes "6501 backward symbols retain absolute memory instruction forms
     "$TMP/6501-memory-symbolic-backward.asm" \
     "eabe0000bc00008e00008c00002c0000ec0000cc0000ee0000ce00000e00004e00002e00006e0000"
 
+
+# EQU constants are numeric values: ordinary memory operands select the
+# shortest legal mode, while control-flow addresses remain absolute and
+# indirect operands use the constant as a zero-page pointer.
+cat > "$TMP/6501-equ-addressing.asm" <<'EOF'
+ZP EQU $12
+ABS EQU $1234
+PTR EQU $12
+LDA ZP
+LDA ABS
+LDX ZP,Y
+LDY ZP,X
+STA ZP
+ADC ZP
+AND ZP
+CMP ZP
+EOR ZP
+ORA ZP
+SBC ZP
+JMP ZP
+JSR ABS
+LDA (PTR,X)
+LDA (PTR),Y
+STA (PTR,X)
+STA (PTR),Y
+EOF
+check_6501_bytes "6501 EQU constants select legal addressing modes" "$TMP/6501-equ-addressing.asm" \
+    "a512ad3412b612b412851265122512c51245120512e5124c1200203412a112b11281129112"
+
+# EQU-defined indirect pointers obey the same zero-page bounds as literals.
+for bad in 'PTR EQU $100
+LDA (PTR,X)' 'PTR EQU $100
+LDA (PTR),Y' 'PTR EQU -1
+STA (PTR,X)'; do
+    printf '%s\\n' "$bad" > "$TMP/6501-equ-invalid-pointer.asm"
+    if "$ASM" -t 6501 -o "$TMP/6501-equ-invalid-pointer.bin" "$TMP/6501-equ-invalid-pointer.asm" >/dev/null 2>&1; then
+        echo "FAIL   6501 rejects out-of-range EQU indirect pointer"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
