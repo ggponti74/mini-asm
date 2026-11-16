@@ -3395,7 +3395,14 @@ check_6501_bytes "6501 indexed zero-page and absolute boundary selection" "$TMP/
 
 # Indexed modes are instruction-specific: reject registers or index directions
 # for which no opcode exists, including addresses that would otherwise fit.
-for bad in 'LDX $10,X' 'LDY $10,Y' 'STA $10,Y' \
+# STA has no zero-page,Y form, but a low-valued operand still uses legal absolute,Y.
+cat > "$TMP/6501-sta-absolute-y-low.asm" <<'EOF'
+STA $10,Y
+EOF
+check_6501_bytes "6501 STA low address selects absolute-Y" "$TMP/6501-sta-absolute-y-low.asm" \
+    "991000"
+
+for bad in 'LDX $10,X' 'LDY $10,Y' \
            'STX $10,X' 'STX $100,Y' 'STY $10,Y' 'STY $100,X' \
            'BIT $10,X' 'CPX $10,Y' 'CPY $10,X' 'INC $10,Y' \
            'DEC $10,Y' 'ASL $10,Y' 'LSR $10,Y' 'ROL $10,Y' 'ROR $10,Y'; do
