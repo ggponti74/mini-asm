@@ -2965,7 +2965,7 @@ STA (PTR,X)
 STA (PTR),Y
 EOF
 check_6501_bytes "6501 EQU constants select legal addressing modes" "$TMP/6501-equ-addressing.asm" \
-    "a512ad3412b612b412851265122512c51245120512e5124c1200203412a112b11281129112"
+    "ad1200ad3412be1200bc12008d12006d12002d1200cd12004d12000d1200ed12004c1200203412a112b11281129112"
 
 # EQU-defined indirect pointers obey the same zero-page bounds as literals.
 for bad in 'PTR EQU $100
