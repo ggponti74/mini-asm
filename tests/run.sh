@@ -3232,7 +3232,7 @@ JMP ($00FF)
 JMP ($0100)
 JMP ($FFFF)
 EOF
-check_6501_bytes "6501 JMP absolute and indirect full 16-bit address boundaries" "$TMP/6501-jmp-address-boundaries.asm" \\
+check_6501_bytes "6501 JMP absolute and indirect full 16-bit address boundaries" "$TMP/6501-jmp-address-boundaries.asm" \
     "4c00004cff004c00014cffff6c00006cff006c00016cffff"
 
 for bad in 'JMP $10000' 'JMP ($10000)' 'JMP ($-1)' 'JMP ($10,X)' 'JSR ($1234)'; do
