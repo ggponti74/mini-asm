@@ -3126,5 +3126,51 @@ for bad in \
     expect_6501_failure "$bad"
 done
 
+
+# BIT, CPX/CPY, memory shifts, and INC/DEC also treat labels as absolute
+# addresses, including labels that resolve into zero page. Exercise both
+# forward and backward references across every supported form.
+cat > "$TMP/6501-symbolic-bit-shift-forward.asm" <<'EOF'
+BIT target
+CPX target
+CPY target
+ASL target
+ASL target,X
+LSR target
+LSR target,X
+ROL target
+ROL target,X
+ROR target
+ROR target,X
+INC target
+INC target,X
+DEC target
+DEC target,X
+target: NOP
+EOF
+check_6501_bytes "6501 forward BIT/compare/shift symbols retain absolute addressing" "$TMP/6501-symbolic-bit-shift-forward.asm" \
+    "2c2d00ec2d00cc2d000e2d001e2d004e2d005e2d002e2d003e2d006e2d007e2d00ee2d00fe2d00ce2d00de2d00ea"
+
+cat > "$TMP/6501-symbolic-bit-shift-backward.asm" <<'EOF'
+target: NOP
+BIT target
+CPX target
+CPY target
+ASL target
+ASL target,X
+LSR target
+LSR target,X
+ROL target
+ROL target,X
+ROR target
+ROR target,X
+INC target
+INC target,X
+DEC target
+DEC target,X
+EOF
+check_6501_bytes "6501 backward BIT/compare/shift symbols retain absolute addressing" "$TMP/6501-symbolic-bit-shift-backward.asm" \
+    "ea2c0000ec0000cc00000e00001e00004e00005e00002e00003e00006e00007e0000ee0000fe0000ce0000de0000"
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
