@@ -2894,5 +2894,52 @@ EOF
 check_6501_bytes "6501 backward ALU symbols retain absolute addressing" "$TMP/6501-alu-symbolic-backward.asm" \
     "ea6d00007d00007900002d00003d0000390000cd0000dd0000d900004d00005d00005900000d00001d0000190000ed0000fd0000f90000"
 
+
+# Symbolic indirect operands resolve to 8-bit zero-page pointers for
+# (zp,X)/(zp),Y, while indirect JMP retains its full 16-bit pointer address.
+cat > "$TMP/6501-symbolic-indirect-forward.asm" <<'EOF'
+LDA (ptr_x,X)
+LDA (ptr_y),Y
+JMP (vector)
+ptr_x: NOP
+ptr_y: NOP
+vector: NOP
+EOF
+check_6501_bytes "6501 forward symbolic indirect pointers" "$TMP/6501-symbolic-indirect-forward.asm" \
+    "a107b1086c0900eaeaea"
+
+cat > "$TMP/6501-symbolic-indirect-backward.asm" <<'EOF'
+ptr_x: NOP
+ptr_y: NOP
+vector: NOP
+LDA (ptr_x,X)
+LDA (ptr_y),Y
+JMP (vector)
+EOF
+check_6501_bytes "6501 backward symbolic indirect pointers" "$TMP/6501-symbolic-indirect-backward.asm" \
+    "eaeaeaa100b1016c0200"
+
+# EQU constants are valid zero-page pointer values in both indirect forms.
+cat > "$TMP/6501-equ-indirect-pointers.asm" <<'EOF'
+PTR_X EQU $00
+PTR_Y EQU $FF
+LDA (PTR_X,X)
+LDA (PTR_Y),Y
+JMP (PTR_Y)
+EOF
+check_6501_bytes "6501 EQU constants in indirect operands" "$TMP/6501-equ-indirect-pointers.asm" \
+    "a100b1ff6cff00"
+
+# A symbolic label used as an indirect zero-page pointer must resolve inside
+# page zero; the same address remains valid for the 16-bit indirect JMP form.
+printf 'LDA (pointer,X)\npointer: NOP\n' > "$TMP/6501-symbolic-indirect-out-of-page.asm"
+if "$ASM" -t 6501 --base 256 -o "$TMP/6501-symbolic-indirect-out-of-page.bin" \
+   "$TMP/6501-symbolic-indirect-out-of-page.asm" >/dev/null 2>&1; then
+    echo "FAIL   6501 rejects symbolic indirect pointer outside zero page"
+    fail=$((fail + 1))
+else
+    :; pass=$((pass + 1))
+fi
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
