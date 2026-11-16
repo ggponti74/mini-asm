@@ -2894,5 +2894,49 @@ EOF
 check_6501_bytes "6501 backward ALU symbols retain absolute addressing" "$TMP/6501-alu-symbolic-backward.asm" \
     "ea6d00007d00007900002d00003d0000390000cd0000dd0000d900004d00005d00005900000d00001d0000190000ed0000fd0000f90000"
 
+
+# Complete symbolic absolute-address coverage for the remaining 6501
+# memory instruction families. These labels resolve into page zero, but
+# symbolic operands must retain their 16-bit absolute encodings.
+cat > "$TMP/6501-memory-symbolic-forward.asm" <<'EOF'
+LDX target,Y
+LDY target,X
+STX target
+STY target
+BIT target
+CPX target
+CPY target
+INC target
+DEC target
+ASL target
+LSR target
+ROL target
+ROR target
+target: NOP
+EOF
+check_6501_bytes "6501 forward symbols retain absolute memory instruction forms" \
+    "$TMP/6501-memory-symbolic-forward.asm" \
+    "be2700bc27008e27008c27002c2700ec2700cc2700ee2700ce27000e27004e27002e27006e2700ea"
+
+cat > "$TMP/6501-memory-symbolic-backward.asm" <<'EOF'
+target: NOP
+LDX target,Y
+LDY target,X
+STX target
+STY target
+BIT target
+CPX target
+CPY target
+INC target
+DEC target
+ASL target
+LSR target
+ROL target
+ROR target
+EOF
+check_6501_bytes "6501 backward symbols retain absolute memory instruction forms" \
+    "$TMP/6501-memory-symbolic-backward.asm" \
+    "eabe0000bc00008e00008c00002c0000ec0000cc0000ee0000ce00000e00004e00002e00006e0000"
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
