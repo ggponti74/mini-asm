@@ -2841,5 +2841,58 @@ EOF
 check_6501_bytes "6501 backward symbolic operands retain absolute addressing" "$TMP/6501-symbolic-backward-addresses.asm" \
     "eaad0000be0000bc00008d00007d0000f900004c0000"
 
+
+
+# Symbolic accumulator-ALU operands must remain absolute for every supported
+# unindexed, absolute-X, and absolute-Y form, even when the label is in page zero.
+cat > "$TMP/6501-alu-symbolic-forward.asm" <<'EOF'
+ADC target
+ADC target,X
+ADC target,Y
+AND target
+AND target,X
+AND target,Y
+CMP target
+CMP target,X
+CMP target,Y
+EOR target
+EOR target,X
+EOR target,Y
+ORA target
+ORA target,X
+ORA target,Y
+SBC target
+SBC target,X
+SBC target,Y
+target: NOP
+EOF
+check_6501_bytes "6501 forward ALU symbols retain absolute addressing" "$TMP/6501-alu-symbolic-forward.asm" \
+    "6d36007d36007936002d36003d3600393600cd3600dd3600d936004d36005d36005936000d36001d3600193600ed3600fd3600f93600ea"
+
+# Repeat the same complete matrix with a backward label at address zero.
+cat > "$TMP/6501-alu-symbolic-backward.asm" <<'EOF'
+target: NOP
+ADC target
+ADC target,X
+ADC target,Y
+AND target
+AND target,X
+AND target,Y
+CMP target
+CMP target,X
+CMP target,Y
+EOR target
+EOR target,X
+EOR target,Y
+ORA target
+ORA target,X
+ORA target,Y
+SBC target
+SBC target,X
+SBC target,Y
+EOF
+check_6501_bytes "6501 backward ALU symbols retain absolute addressing" "$TMP/6501-alu-symbolic-backward.asm" \
+    "ea6d00007d00007900002d00003d0000390000cd0000dd0000d900004d00005d00005900000d00001d0000190000ed0000fd0000f900"
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
