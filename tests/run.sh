@@ -2825,7 +2825,7 @@ SBC target,Y
 JMP target
 target: NOP
 EOF
-check_6501_bytes "6501 forward symbolic operands retain absolute addressing" "$TMP/6501-symbolic-forward-addresses.asm" \\
+check_6501_bytes "6501 forward symbolic operands retain absolute addressing" "$TMP/6501-symbolic-forward-addresses.asm" \
     "ad1500be1500bc15008d15007d1500f915004c1500ea"
 
 cat > "$TMP/6501-symbolic-backward-addresses.asm" <<'EOF'
@@ -2838,7 +2838,7 @@ ADC target,X
 SBC target,Y
 JMP target
 EOF
-check_6501_bytes "6501 backward symbolic operands retain absolute addressing" "$TMP/6501-symbolic-backward-addresses.asm" \\
+check_6501_bytes "6501 backward symbolic operands retain absolute addressing" "$TMP/6501-symbolic-backward-addresses.asm" \
     "eaad0000be0000bc00008d00007d0000f900004c0000"
 
 echo "$pass ok, $fail failed"
