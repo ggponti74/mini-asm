@@ -2892,7 +2892,7 @@ SBC target,X
 SBC target,Y
 EOF
 check_6501_bytes "6501 backward ALU symbols retain absolute addressing" "$TMP/6501-alu-symbolic-backward.asm" \
-    "ea6d00007d00007900002d00003d0000390000cd0000dd0000d900004d00005d00005900000d00001d0000190000ed0000fd0000f900"
+    "ea6d00007d00007900002d00003d0000390000cd0000dd0000d900004d00005d00005900000d00001d0000190000ed0000fd0000f90000"
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
