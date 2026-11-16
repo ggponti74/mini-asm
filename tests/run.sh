@@ -3216,7 +3216,7 @@ DEC $12,X
 DEC $1234
 DEC $1234,X
 EOF
-check_6501_bytes "6501 BIT/compare/shift/incdec literal opcode matrix" "$TMP/6501-bit-compare-shift-matrix.asm" \\
+check_6501_bytes "6501 BIT/compare/shift/incdec literal opcode matrix" "$TMP/6501-bit-compare-shift-matrix.asm" \
     "24122c3412e056e412ec3412c078c412cc34120a061216120e34121e34124a461256124e34125e34122a261236122e34123e34126a661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de3412"
 
 echo "$pass ok, $fail failed"
