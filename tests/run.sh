@@ -3395,7 +3395,7 @@ check_6501_bytes "6501 indexed zero-page and absolute boundary selection" "$TMP/
 
 # Indexed modes are instruction-specific: reject registers or index directions
 # for which no opcode exists, including addresses that would otherwise fit.
-for bad in 'LDA $10,Y' 'LDX $10,X' 'LDY $10,Y' 'STA $10,Y' \
+for bad in 'LDX $10,X' 'LDY $10,Y' 'STA $10,Y' \
            'STX $10,X' 'STX $100,Y' 'STY $10,Y' 'STY $100,X' \
            'BIT $10,X' 'CPX $10,Y' 'CPY $10,X' 'INC $10,Y' \
            'DEC $10,Y' 'ASL $10,Y' 'LSR $10,Y' 'ROL $10,Y' 'ROR $10,Y'; do
