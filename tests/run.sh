@@ -3289,5 +3289,16 @@ for mnemonic in ASL LSR ROL ROR; do
     expect_6501_failure "$mnemonic A,Y"
 done
 
+# 6501 instructions have fixed encodings and do not accept 68K-style
+# .b/.w/.l size suffixes. Check every mnemonic in the implemented table.
+for mnemonic in NOP BRK RTI RTS PHP PLP PHA PLA TAX TXA TAY TYA TSX TXS \
+                INX DEX INY DEY CLC SEC CLI SEI CLV CLD SED JMP JSR \
+                LDA LDX LDY STA STX STY ADC SBC AND ORA EOR CMP CPX CPY \
+                BIT INC DEC ASL LSR ROL ROR BRA BCC BCS BEQ BMI BNE BPL BVC BVS; do
+    for suffix in b w l; do
+        expect_6501_failure "$mnemonic.$suffix"
+    done
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
