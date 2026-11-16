@@ -3112,5 +3112,19 @@ else
 fi
 
 
+
+# Reject missing, extra, and structurally invalid operands across the 6501
+# instruction families. This guards the parser/codegen boundary as opcode
+# coverage grows: implied instructions take none, ordinary operations take
+# one, and no 6501 instruction in this subset takes two explicit operands.
+for bad in \
+    'NOP $10' 'RTS #$01' 'CLC A' 'BRK $1234' \
+    'LDA' 'STA' 'ADC' 'JMP' 'JSR' 'BRA' \
+    'LDA $10,$20' 'ADC #$01,#$02' 'STA $10,$20' \
+    'ASL $10,$20' 'BRA target,$10' 'JMP $1234,$5678' \
+    'STA #$10' 'BIT #$10' 'ASL A,X'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
