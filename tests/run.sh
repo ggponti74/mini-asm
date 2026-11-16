@@ -3310,5 +3310,52 @@ for bad in \
     expect_6501_failure "$bad"
 done
 
+# Zero-page indirect pointer operands accept both endpoints for every
+# instruction with indexed-indirect and indirect-indexed forms.
+cat > "$TMP/6501-indirect-pointer-boundaries.asm" <<'EOF'
+LDA ($00,X)
+LDA ($00),Y
+LDA ($FF,X)
+LDA ($FF),Y
+STA ($00,X)
+STA ($00),Y
+STA ($FF,X)
+STA ($FF),Y
+ADC ($00,X)
+ADC ($00),Y
+ADC ($FF,X)
+ADC ($FF),Y
+AND ($00,X)
+AND ($00),Y
+AND ($FF,X)
+AND ($FF),Y
+CMP ($00,X)
+CMP ($00),Y
+CMP ($FF,X)
+CMP ($FF),Y
+EOR ($00,X)
+EOR ($00),Y
+EOR ($FF,X)
+EOR ($FF),Y
+ORA ($00,X)
+ORA ($00),Y
+ORA ($FF,X)
+ORA ($FF),Y
+SBC ($00,X)
+SBC ($00),Y
+SBC ($FF,X)
+SBC ($FF),Y
+EOF
+check_6501_bytes "6501 indirect pointer zero-page boundaries across all supported opcodes" "$TMP/6501-indirect-pointer-boundaries.asm" \
+    "a100b100a1ffb1ff8100910081ff91ff6100710061ff71ff2100310021ff31ffc100d100c1ffd1ff4100510041ff51ff0100110001ff11ffe100f100e1fff1ff"
+
+# Both indexed-indirect forms require an unsigned 8-bit zero-page pointer.
+for mnemonic in LDA STA ADC AND CMP EOR ORA SBC; do
+    for bad in '-1' '$100'; do
+        expect_6501_failure "$mnemonic ($bad,X)"
+        expect_6501_failure "$mnemonic ($bad),Y"
+    done
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
