@@ -3402,5 +3402,21 @@ for bad in 'LDX $10,X' 'LDY $10,Y' 'STA $10,Y' \
     expect_6501_failure "$bad"
 done
 
+# 6501 mnemonics and index/accumulator registers are case-insensitive.
+cat > "$TMP/6501-case-insensitive.asm" <<'EOF'
+lda #$12
+lDx $34,y
+sTa $56,x
+aSl a
+bNe target
+nop
+target: rTs
+jMp ($1234)
+jSr $5678
+eOr ($12),y
+EOF
+check_6501_bytes "6501 mixed-case mnemonics and registers" "$TMP/6501-case-insensitive.asm" \
+    "a912b63495560ad001ea606c34122078565112"
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
