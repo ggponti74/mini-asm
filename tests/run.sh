@@ -3273,5 +3273,21 @@ for mnemonic in LDA LDX LDY ADC SBC AND ORA EOR CMP CPX CPY; do
     expect_6501_failure "$mnemonic #$100"
 done
 
+# Every implied 6501 instruction is operand-free. Check the whole family,
+# rather than relying on a handful of representative arity failures.
+for mnemonic in NOP BRK RTI RTS PHP PLP PHA PLA TAX TXA TAY TYA TSX TXS \
+                INX DEX INY DEY CLC SEC CLI SEI CLV CLD SED; do
+    expect_6501_failure "$mnemonic \$10"
+done
+
+# Accumulator shifts accept only the explicit A register, not X/Y or an
+# indexed accumulator form.
+for mnemonic in ASL LSR ROL ROR; do
+    expect_6501_failure "$mnemonic X"
+    expect_6501_failure "$mnemonic Y"
+    expect_6501_failure "$mnemonic A,X"
+    expect_6501_failure "$mnemonic A,Y"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
