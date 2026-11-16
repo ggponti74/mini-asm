@@ -3239,5 +3239,39 @@ for bad in 'JMP $10000' 'JMP ($10000)' 'JMP ($-1)' 'JMP ($10,X)' 'JSR ($1234)'; 
     expect_6501_failure "$bad"
 done
 
+# All immediate-byte instruction families accept the signed lower endpoint
+# and unsigned upper endpoint, and reject values outside the encoded byte.
+cat > "$TMP/6501-immediate-opcode-boundaries.asm" <<'EOF'
+LDA #-128
+LDA #$FF
+LDX #-128
+LDX #$FF
+LDY #-128
+LDY #$FF
+ADC #-128
+ADC #$FF
+SBC #-128
+SBC #$FF
+AND #-128
+AND #$FF
+ORA #-128
+ORA #$FF
+EOR #-128
+EOR #$FF
+CMP #-128
+CMP #$FF
+CPX #-128
+CPX #$FF
+CPY #-128
+CPY #$FF
+EOF
+check_6501_bytes "6501 immediate-byte limits across all supported opcodes" "$TMP/6501-immediate-opcode-boundaries.asm" \
+    "a980a9ffa280a2ffa080a0ff698069ffe980e9ff298029ff098009ff498049ffc980c9ffe080e0ffc080c0ff"
+
+for mnemonic in LDA LDX LDY ADC SBC AND ORA EOR CMP CPX CPY; do
+    expect_6501_failure "$mnemonic #-129"
+    expect_6501_failure "$mnemonic #$100"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
