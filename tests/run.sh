@@ -3172,5 +3172,52 @@ EOF
 check_6501_bytes "6501 backward BIT/compare/shift symbols retain absolute addressing" "$TMP/6501-symbolic-bit-shift-backward.asm" \
     "ea2c0000ec0000cc00000e00001e00004e00005e00002e00003e00006e00007e0000ee0000fe0000ce0000de0000"
 
+
+# Complete literal-addressing opcode matrix for BIT, CPX/CPY, memory
+# increment/decrement, and all four 6501 shift/rotate instructions.
+# This complements the symbolic-label tests by checking each opcode and
+# operand-byte order for immediate, zero-page, absolute, indexed, and
+# accumulator forms.
+cat > "$TMP/6501-bit-compare-shift-matrix.asm" <<'EOF'
+BIT $12
+BIT $1234
+CPX #$56
+CPX $12
+CPX $1234
+CPY #$78
+CPY $12
+CPY $1234
+ASL A
+ASL $12
+ASL $12,X
+ASL $1234
+ASL $1234,X
+LSR A
+LSR $12
+LSR $12,X
+LSR $1234
+LSR $1234,X
+ROL A
+ROL $12
+ROL $12,X
+ROL $1234
+ROL $1234,X
+ROR A
+ROR $12
+ROR $12,X
+ROR $1234
+ROR $1234,X
+INC $12
+INC $12,X
+INC $1234
+INC $1234,X
+DEC $12
+DEC $12,X
+DEC $1234
+DEC $1234,X
+EOF
+check_6501_bytes "6501 BIT/compare/shift/incdec literal opcode matrix" "$TMP/6501-bit-compare-shift-matrix.asm" \\
+    "24122c3412e056e412ec3412c078c412cc34120a061216120e34121e34124a461256124e34125e34122a261236122e34123e34126a661276126e34127e3412e612f612ee3412fe3412c612d612ce3412de3412"
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
