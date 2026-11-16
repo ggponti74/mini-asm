@@ -3357,5 +3357,51 @@ for mnemonic in LDA STA ADC AND CMP EOR ORA SBC; do
     done
 done
 
+# Address-size selection must use zero-page indexed forms only where the
+# instruction provides them. Boundary values also verify that $0100 switches
+# to absolute encoding and that low addresses with no zero-page variant remain
+# absolute (for example LDA $12,Y and BIT $12,X).
+cat > "$TMP/6501-indexed-address-boundaries.asm" <<'EOF'
+LDA $00,X
+LDA $FF,X
+LDA $0100,X
+LDA $FFFF,X
+LDX $00,Y
+LDX $FF,Y
+LDX $0100
+LDX $FFFF
+LDY $00,X
+LDY $FF,X
+LDY $0100
+LDY $FFFF
+STA $00,X
+STA $FF,X
+STA $0100,X
+STA $FFFF,X
+STX $00,Y
+STX $FF,Y
+STX $0100
+STX $FFFF
+STY $00,X
+STY $FF,X
+STY $0100
+STY $FFFF
+LDA $12,Y
+ADC $12,Y
+BIT $12,X
+JMP $12
+EOF
+check_6501_bytes "6501 indexed zero-page and absolute boundary selection" "$TMP/6501-indexed-address-boundaries.asm" \\
+    "b500b5ffbd0001bdffffb600b6ffae0001aeffffb400b4ffac0001acffff950095ff9d00019dffff960096ff8e00018effff940094ff8c00018cffffb912007912002c12004c1200"
+
+# Indexed modes are instruction-specific: reject registers or index directions
+# for which no opcode exists, including addresses that would otherwise fit.
+for bad in 'LDA $10,Y' 'LDX $10,X' 'LDY $10,Y' 'STA $10,Y' \\
+           'STX $10,X' 'STX $100,Y' 'STY $10,Y' 'STY $100,X' \\
+           'BIT $10,X' 'CPX $10,Y' 'CPY $10,X' 'INC $10,Y' \\
+           'DEC $10,Y' 'ASL $10,Y' 'LSR $10,Y' 'ROL $10,Y' 'ROR $10,Y'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
