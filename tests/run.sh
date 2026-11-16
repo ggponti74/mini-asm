@@ -2945,8 +2945,14 @@ fi
 # Indirect JMP takes a 16-bit pointer address, unlike the zero-page
 # pointer operands used by the two indexed-indirect load forms.
 printf 'JMP (pointer)\npointer: NOP\n' > "$TMP/6501-symbolic-indirect-jmp.asm"
-check_6501_bytes "6501 symbolic indirect JMP accepts full 16-bit address" \
-    "$TMP/6501-symbolic-indirect-jmp.asm" "6c0301ea"
+if "$ASM" -t 6501 --base 256 -o "$TMP/6501-symbolic-indirect-jmp.bin" \
+   "$TMP/6501-symbolic-indirect-jmp.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-indirect-jmp.bin" | tr -d '[:space:]')" = "6c0301ea" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 symbolic indirect JMP accepts full 16-bit address"
+    fail=$((fail + 1))
+fi
 
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
