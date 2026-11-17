@@ -3471,5 +3471,34 @@ for bad in 'LDA #256' 'LDA #-129' 'LDA #0x100000000'; do
     expect_6501_failure "$bad"
 done
 
+
+# Every relative branch opcode must calculate displacement across the 16-bit
+# program-counter boundary in both directions, not just BRA.
+for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
+              "BNE:d0" "BPL:10" "BVC:50" "BVS:70"; do
+    mnemonic=${branch%%:*}
+    opcode=${branch#*:}
+
+    printf '%s $0000\n' "$mnemonic" > "$TMP/6501-branch-wrap-forward.asm"
+    if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-branch-wrap-forward.bin" \
+        "$TMP/6501-branch-wrap-forward.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-branch-wrap-forward.bin" | tr -d '[:space:]')" = "${opcode}00" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic forward branch across 16-bit PC wrap"
+        fail=$((fail + 1))
+    fi
+
+    printf '%s $FFFE\n' "$mnemonic" > "$TMP/6501-branch-wrap-backward.asm"
+    if "$ASM" -t 6501 --base 0 -o "$TMP/6501-branch-wrap-backward.bin" \
+        "$TMP/6501-branch-wrap-backward.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-branch-wrap-backward.bin" | tr -d '[:space:]')" = "${opcode}fc" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic backward branch across 16-bit PC wrap"
+        fail=$((fail + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
