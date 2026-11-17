@@ -3430,6 +3430,7 @@ check_6501_bytes "6501 mixed-case mnemonics and registers" "$TMP/6501-case-insen
 # Include the zero-page/absolute boundary and indexed-indirect pointer forms.
 cat > "$TMP/6501-numeric-radices.asm" <<'EOF'
 LDA #+18
+LDA #4294967295
 LDA #255
 LDA 18
 LDA 255
@@ -3442,7 +3443,7 @@ STA ($18,X)
 STA ($FF),Y
 EOF
 check_6501_bytes "6501 decimal and hexadecimal operand spellings" "$TMP/6501-numeric-radices.asm" \
-    "a912a9ffa512a5ffad0001ad3412a512ad0001ad3412811891ff"
+    "a912a9ffa9ffa5ffa512a5ffad0001ad3412a512ad0001ad3412811891ff"
 
 # Numeric branch targets are absolute addresses, regardless of radix. A
 # leading plus is accepted; immediate-prefix syntax is not a branch target.
@@ -3466,7 +3467,7 @@ for bad in 'BNE #-1' 'BNE #$10' 'BNE -1' 'BNE 65536' \
 done
 
 # Decimal immediates obey the same byte limits as hexadecimal immediates.
-for bad in 'LDA #256' 'LDA #-129' 'LDA #4294967295' 'LDA #0x100000000'; do
+for bad in 'LDA #256' 'LDA #-129' 'LDA #0x100000000'; do
     expect_6501_failure "$bad"
 done
 
