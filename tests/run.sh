@@ -3425,5 +3425,50 @@ EOF
 check_6501_bytes "6501 mixed-case mnemonics and registers" "$TMP/6501-case-insensitive.asm" \
     "a912b63495560ad001ea606c34122078565112"
 
+
+# Numeric operands accept decimal, $-hex, and 0x-hex spellings consistently.
+# Include the zero-page/absolute boundary and indexed-indirect pointer forms.
+cat > "$TMP/6501-numeric-radices.asm" <<'EOF'
+LDA #+18
+LDA #255
+LDA 18
+LDA 255
+LDA 256
+LDA 4660
+LDA 0x12
+LDA 0x100
+LDA 0x1234
+STA ($18,X)
+STA ($FF),Y
+EOF
+check_6501_bytes "6501 decimal and hexadecimal operand spellings" "$TMP/6501-numeric-radices.asm" \
+    "a912a9ffa512a5ffad0001ad3412a512ad0001ad3412811891ff"
+
+# Numeric branch targets are absolute addresses, regardless of radix. A
+# leading plus is accepted; immediate-prefix syntax is not a branch target.
+cat > "$TMP/6501-branch-numeric-radices.asm" <<'EOF'
+BNE 4
+BNE $0006
+BNE 0x0008
+BNE +10
+EOF
+if "$ASM" -t 6501 --base 0 -o "$TMP/6501-branch-numeric-radices.bin" "$TMP/6501-branch-numeric-radices.asm" >/dev/null 2>&1 &&
+   [ "$(od -An -v -tx1 "$TMP/6501-branch-numeric-radices.bin" | tr -d '[:space:]')" = "d002d002d002d002" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 decimal and hexadecimal absolute branch targets"
+    fail=$((fail + 1))
+fi
+
+for bad in 'BNE #-1' 'BNE #$10' 'BNE -1' 'BNE 65536' \
+           'BNE 0x10000' 'BNE 4294967295' 'BNE 0x100000000'; do
+    expect_6501_failure "$bad"
+done
+
+# Decimal immediates obey the same byte limits as hexadecimal immediates.
+for bad in 'LDA #256' 'LDA #-129' 'LDA #4294967295' 'LDA #0x100000000'; do
+    expect_6501_failure "$bad"
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
