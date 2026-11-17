@@ -3500,5 +3500,52 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
     fi
 done
 
+
+# The signed displacement endpoints must remain valid across 16-bit PC wrap.
+# Also reject +128 and -129 there for every implemented branch opcode.
+for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
+              "BNE:d0" "BPL:10" "BVC:50" "BVS:70"; do
+    mnemonic=${branch%%:*}
+    opcode=${branch#*:}
+
+    printf '%s $007F\n' "$mnemonic" > "$TMP/6501-branch-wrap-edge.asm"
+    if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-branch-wrap-edge.bin" \
+        "$TMP/6501-branch-wrap-edge.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-branch-wrap-edge.bin" | tr -d '[:space:]')" = "${opcode}7f" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic accepts +127 across PC wrap"
+        fail=$((fail + 1))
+    fi
+
+    printf '%s $FF82\n' "$mnemonic" > "$TMP/6501-branch-wrap-edge.asm"
+    if "$ASM" -t 6501 --base 0 -o "$TMP/6501-branch-wrap-edge.bin" \
+        "$TMP/6501-branch-wrap-edge.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-branch-wrap-edge.bin" | tr -d '[:space:]')" = "${opcode}80" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic accepts -128 across PC wrap"
+        fail=$((fail + 1))
+    fi
+
+    printf '%s $0080\n' "$mnemonic" > "$TMP/6501-branch-wrap-edge.asm"
+    if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-branch-wrap-edge.bin" \
+        "$TMP/6501-branch-wrap-edge.asm" >/dev/null 2>&1; then
+        echo "FAIL   6501 $mnemonic rejects +128 across PC wrap"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+
+    printf '%s $FF81\n' "$mnemonic" > "$TMP/6501-branch-wrap-edge.asm"
+    if "$ASM" -t 6501 --base 0 -o "$TMP/6501-branch-wrap-edge.bin" \
+        "$TMP/6501-branch-wrap-edge.asm" >/dev/null 2>&1; then
+        echo "FAIL   6501 $mnemonic rejects -129 across PC wrap"
+        fail=$((fail + 1))
+    else
+        :; pass=$((pass + 1))
+    fi
+done
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
