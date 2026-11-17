@@ -3443,7 +3443,7 @@ STA ($18,X)
 STA ($FF),Y
 EOF
 check_6501_bytes "6501 decimal and hexadecimal operand spellings" "$TMP/6501-numeric-radices.asm" \
-    "a912a9ffa9ffa5ffa512a5ffad0001ad3412a512ad0001ad3412811891ff"
+    "a912a9ffa9ffa512a5ffad0001ad3412a512ad0001ad3412811891ff"
 
 # Numeric branch targets are absolute addresses, regardless of radix. A
 # leading plus is accepted; immediate-prefix syntax is not a branch target.
