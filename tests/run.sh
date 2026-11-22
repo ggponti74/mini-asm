@@ -3587,7 +3587,7 @@ JMP target
 target: NOP
 EOF
 if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-address-wrap-forward.bin" "$TMP/6501-symbolic-address-wrap-forward.asm" >/dev/null 2>&1 && \
-   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-forward.bin" | tr -d '[:space:]')" = "ad03004c0300ea" ]; then
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-forward.bin" | tr -d '[:space:]')" = "ad04004c0400ea" ]; then
     :; pass=$((pass + 1))
 else
     echo "FAIL   6501 forward absolute symbols wrap at $FFFF"
