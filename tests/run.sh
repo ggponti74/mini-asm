@@ -3547,5 +3547,35 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
     fi
 done
 
+# Symbolic branch labels must wrap with the 6501's 16-bit address bus.
+# The first label is exactly at $10000 (therefore $0000); the second is at
+# $FFFF, with the branch instruction itself beginning at the wrapped $0000.
+for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
+              "BNE:d0" "BPL:10" "BVC:50" "BVS:70"; do
+    mnemonic=${branch%%:*}
+    opcode=${branch#*:}
+
+    printf '%s target\ntarget: NOP\n' "$mnemonic" > "$TMP/6501-symbolic-branch-wrap-forward.asm"
+    if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-branch-wrap-forward.bin" \
+        "$TMP/6501-symbolic-branch-wrap-forward.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-symbolic-branch-wrap-forward.bin" | tr -d '[:space:]')" = "${opcode}00ea" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic forward symbolic label wraps from $10000 to $0000"
+        fail=$((fail + 1))
+    fi
+
+    printf 'target: NOP\n%s target\n' "$mnemonic" > "$TMP/6501-symbolic-branch-wrap-backward.asm"
+    if "$ASM" -t 6501 --base 65535 -o "$TMP/6501-symbolic-branch-wrap-backward.bin" \
+        "$TMP/6501-symbolic-branch-wrap-backward.asm" >/dev/null 2>&1 &&
+       [ "$(od -An -v -tx1 "$TMP/6501-symbolic-branch-wrap-backward.bin" | tr -d '[:space:]')" = "ea${opcode}fd" ]; then
+        :; pass=$((pass + 1))
+    else
+        echo "FAIL   6501 $mnemonic backward symbolic label wraps across $FFFF"
+        fail=$((fail + 1))
+    fi
+done
+
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
