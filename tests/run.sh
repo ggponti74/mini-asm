@@ -3577,5 +3577,48 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
 done
 
 
+
+# Non-branch symbolic operands must resolve labels through the 6501's
+# 16-bit address bus too. Exercise absolute data references, JMP, and the
+# zero-page indirect pointer form when forward labels wrap to page zero.
+cat > "$TMP/6501-symbolic-address-wrap-forward.asm" <<'EOF'
+LDA target
+JMP target
+target: NOP
+EOF
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-address-wrap-forward.bin" "$TMP/6501-symbolic-address-wrap-forward.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-forward.bin" | tr -d '[:space:]')" = "ad04004c0400ea" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 forward absolute symbols wrap at $FFFF"
+    fail=$((fail + 1))
+fi
+
+cat > "$TMP/6501-symbolic-address-wrap-backward.asm" <<'EOF'
+target: NOP
+LDA target
+JMP target
+EOF
+if "$ASM" -t 6501 --base 65535 -o "$TMP/6501-symbolic-address-wrap-backward.bin" "$TMP/6501-symbolic-address-wrap-backward.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-backward.bin" | tr -d '[:space:]')" = "eaadffff4cffff" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 backward absolute symbols retain wrapped address"
+    fail=$((fail + 1))
+fi
+
+cat > "$TMP/6501-symbolic-indirect-wrap.asm" <<'EOF'
+LDA (target,X)
+target: NOP
+EOF
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-indirect-wrap.bin" "$TMP/6501-symbolic-indirect-wrap.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-indirect-wrap.bin" | tr -d '[:space:]')" = "a100ea" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 forward indirect pointer symbol wraps into zero page"
+    fail=$((fail + 1))
+fi
+
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
