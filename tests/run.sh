@@ -3586,23 +3586,38 @@ LDA target
 JMP target
 target: NOP
 EOF
-check_6501_bytes "6501 forward absolute symbols wrap at $FFFF" "$TMP/6501-symbolic-address-wrap-forward.asm" \
-    "ad03004c0300ea"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-address-wrap-forward.bin" "$TMP/6501-symbolic-address-wrap-forward.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-forward.bin" | tr -d '[:space:]')" = "ad03004c0300ea" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 forward absolute symbols wrap at $FFFF"
+    fail=$((fail + 1))
+fi
 
 cat > "$TMP/6501-symbolic-address-wrap-backward.asm" <<'EOF'
 target: NOP
 LDA target
 JMP target
 EOF
-check_6501_bytes "6501 backward absolute symbols retain wrapped address" "$TMP/6501-symbolic-address-wrap-backward.asm" \
-    "eaadffff4cffff"
+if "$ASM" -t 6501 --base 65535 -o "$TMP/6501-symbolic-address-wrap-backward.bin" "$TMP/6501-symbolic-address-wrap-backward.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-address-wrap-backward.bin" | tr -d '[:space:]')" = "eaadffff4cffff" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 backward absolute symbols retain wrapped address"
+    fail=$((fail + 1))
+fi
 
 cat > "$TMP/6501-symbolic-indirect-wrap.asm" <<'EOF'
 LDA (target,X)
 target: NOP
 EOF
-check_6501_bytes "6501 forward indirect pointer symbol wraps into zero page" "$TMP/6501-symbolic-indirect-wrap.asm" \
-    "a100ea"
+if "$ASM" -t 6501 --base 65534 -o "$TMP/6501-symbolic-indirect-wrap.bin" "$TMP/6501-symbolic-indirect-wrap.asm" >/dev/null 2>&1 && \
+   [ "$(od -An -v -tx1 "$TMP/6501-symbolic-indirect-wrap.bin" | tr -d '[:space:]')" = "a100ea" ]; then
+    :; pass=$((pass + 1))
+else
+    echo "FAIL   6501 forward indirect pointer symbol wraps into zero page"
+    fail=$((fail + 1))
+fi
 
 
 echo "$pass ok, $fail failed"
