@@ -3547,10 +3547,6 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
     fi
 done
 
-echo "$pass ok, $fail failed"
-[ "$fail" -eq 0 ]
-
-
 # Symbolic branch labels must wrap with the 6501's 16-bit address bus.
 # The first label is exactly at $10000 (therefore $0000); the second is at
 # $FFFF, with the branch instruction itself beginning at the wrapped $0000.
@@ -3579,3 +3575,7 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
         fail=$((fail + 1))
     fi
 done
+
+
+echo "$pass ok, $fail failed"
+[ "$fail" -eq 0 ]
