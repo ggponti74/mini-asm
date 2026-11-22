@@ -3577,5 +3577,33 @@ for branch in "BRA:80" "BCC:90" "BCS:b0" "BEQ:f0" "BMI:30" \
 done
 
 
+
+# Non-branch symbolic operands must resolve labels through the 6501's
+# 16-bit address bus too. Exercise absolute data references, JMP, and the
+# zero-page indirect pointer form when forward labels wrap to page zero.
+cat > "$TMP/6501-symbolic-address-wrap-forward.asm" <<'EOF'
+LDA target
+JMP target
+target: NOP
+EOF
+check_6501_bytes "6501 forward absolute symbols wrap at $FFFF" "$TMP/6501-symbolic-address-wrap-forward.asm" \
+    "ad03004c0300ea"
+
+cat > "$TMP/6501-symbolic-address-wrap-backward.asm" <<'EOF'
+target: NOP
+LDA target
+JMP target
+EOF
+check_6501_bytes "6501 backward absolute symbols retain wrapped address" "$TMP/6501-symbolic-address-wrap-backward.asm" \
+    "eaadffff4cffff"
+
+cat > "$TMP/6501-symbolic-indirect-wrap.asm" <<'EOF'
+LDA (target,X)
+target: NOP
+EOF
+check_6501_bytes "6501 forward indirect pointer symbol wraps into zero page" "$TMP/6501-symbolic-indirect-wrap.asm" \
+    "a100ea"
+
+
 echo "$pass ok, $fail failed"
 [ "$fail" -eq 0 ]
