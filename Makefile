@@ -27,6 +27,7 @@ clean:
 # Regression tests (native ELF runtime tests are skipped on Windows): see tests/run.sh
 test: $(OUT)
 	sh tests/run.sh ./$(OUT)
+	sh tests/6501_invalid_mode_matrix.sh ./$(OUT)
 	sh tests/z80_alu_matrix.sh ./$(OUT)
 	sh tests/z80_long_symbol_operands.sh ./$(OUT)
 	sh tests/z80_misc_matrix.sh ./$(OUT)
